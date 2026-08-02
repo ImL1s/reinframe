@@ -297,6 +297,19 @@ func TestValidateEvent_ValidPayloads(t *testing.T) {
 			},
 		},
 		{
+			name:       "AgentSession_RESUME",
+			schemaType: "agent_session",
+			payload: AgentSession{
+				SessionID:        "sess-resume",
+				AgentID:          "claude-code",
+				AdapterType:      "cli_process",
+				IntegrationLevel: 2,
+				WorkspacePath:    "/tmp",
+				Status:           "RESUME",
+				StartedAt:        time.Now().UTC(),
+			},
+		},
+		{
 			name:       "Checkpoint",
 			schemaType: "Checkpoint",
 			payload: Checkpoint{
@@ -445,6 +458,18 @@ func TestValidateEvent_InvalidPayloads(t *testing.T) {
 			schemaType: "agent_session",
 			payload:    `{"session_id": "sess-1", "agent_id": "claude", "adapter_type": "cli_process", "integration_level": 99, "workspace_path": "/tmp", "status": "EXECUTE", "started_at": "2026-08-02T13:00:00Z"}`,
 			wantErrSub: "validation error",
+		},
+		{
+			name:       "MaxDepthExceeded_TaskEnvelope",
+			schemaType: "task_envelope",
+			payload:    `{"task_id":"t1","session_id":"s1","prompt":"p","max_depth":2,"timeout_seconds":10,"created_at":"2026-08-02T13:00:00Z"}`,
+			wantErrSub: "validation error",
+		},
+		{
+			name:       "PayloadExceedsMaxSize",
+			schemaType: "agent_session",
+			payload:    strings.Repeat("x", 1024*1024+10),
+			wantErrSub: "exceeds maximum limit",
 		},
 	}
 
@@ -895,3 +920,117 @@ func BenchmarkValidateEvent(b *testing.B) {
 		}
 	}
 }
+
+func TestCapability_JSONRoundTrip_Lossless(t *testing.T) {
+	manifest := CapabilityManifest{
+		AgentID:                "test-agent",
+		Version:                "1.0.0",
+		IntegrationLevel:       2,
+		SupportsEventStream:    true,
+		SupportsToolInspection: true,
+		SupportsDiffInspection: true,
+		SupportsCostTracking:   true,
+		SupportsHooks:          true,
+		SupportsHeadless:       true,
+		SupportsCLIControl:     true,
+		SupportsPause:          true,
+		SupportsCancel:         true,
+		SupportsResume:         true,
+		SupportsCheckpoint:     true,
+		SupportsRollback:       true,
+		SupportsMCP:            true,
+		SupportsSubagents:      true,
+		SupportsExtensions:     true,
+		SupportsSwitchModel:    true,
+		SupportsCustomProvider: true,
+		SupportsOpenAICompat:   true,
+		SupportsLocalModels:    true,
+		SupportsSDK:            true,
+	}
+
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("failed to marshal CapabilityManifest: %v", err)
+	}
+
+	if err := ValidateEvent(data, "capability_manifest"); err != nil {
+		t.Fatalf("ValidateEvent failed for full CapabilityManifest: %v", err)
+	}
+
+	var restored CapabilityManifest
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("failed to unmarshal CapabilityManifest: %v", err)
+	}
+
+	if restored.SupportsEventStream != manifest.SupportsEventStream ||
+		restored.SupportsToolInspection != manifest.SupportsToolInspection ||
+		restored.SupportsDiffInspection != manifest.SupportsDiffInspection ||
+		restored.SupportsCostTracking != manifest.SupportsCostTracking ||
+		restored.SupportsHooks != manifest.SupportsHooks ||
+		restored.SupportsHeadless != manifest.SupportsHeadless ||
+		restored.SupportsCLIControl != manifest.SupportsCLIControl ||
+		restored.SupportsPause != manifest.SupportsPause ||
+		restored.SupportsCancel != manifest.SupportsCancel ||
+		restored.SupportsResume != manifest.SupportsResume ||
+		restored.SupportsCheckpoint != manifest.SupportsCheckpoint ||
+		restored.SupportsRollback != manifest.SupportsRollback ||
+		restored.SupportsMCP != manifest.SupportsMCP ||
+		restored.SupportsSubagents != manifest.SupportsSubagents ||
+		restored.SupportsExtensions != manifest.SupportsExtensions ||
+		restored.SupportsSwitchModel != manifest.SupportsSwitchModel ||
+		restored.SupportsCustomProvider != manifest.SupportsCustomProvider ||
+		restored.SupportsOpenAICompat != manifest.SupportsOpenAICompat ||
+		restored.SupportsLocalModels != manifest.SupportsLocalModels ||
+		restored.SupportsSDK != manifest.SupportsSDK {
+		t.Fatalf("JSON roundtrip lost capability boolean flags: got %+v, want %+v", restored, manifest)
+	}
+
+	expectedMask := uint64((1 << 20) - 1)
+	if mask := restored.ToBitmask(); mask != expectedMask {
+		t.Errorf("ToBitmask mismatch after JSON roundtrip: got 0x%x, want 0x%x", mask, expectedMask)
+	}
+}
+
+func TestValidateEvent_TrailingContent(t *testing.T) {
+	baseJSON := `{"session_id":"s1","agent_id":"a1","adapter_type":"cli_process","workspace_path":"/tmp","status":"OBSERVE","started_at":"2024-01-01T00:00:00Z","integration_level":0}`
+
+	tests := []struct {
+		name    string
+		payload string
+		wantErr bool
+	}{
+		{
+			name:    "Valid JSON + second JSON object",
+			payload: baseJSON + `{"extra":true}`,
+			wantErr: true,
+		},
+		{
+			name:    "Valid JSON + trailing text",
+			payload: baseJSON + ` trailing text`,
+			wantErr: true,
+		},
+		{
+			name:    "Valid JSON + trailing whitespace only",
+			payload: baseJSON + "  \n\t ",
+			wantErr: false,
+		},
+		{
+			name:    "Single valid JSON",
+			payload: baseJSON,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateEvent([]byte(tt.payload), "agent_session")
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error for payload %q, got nil", tt.payload)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error for payload %q: %v", tt.payload, err)
+			}
+		})
+	}
+}
+

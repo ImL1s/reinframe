@@ -7,12 +7,26 @@
     "agent_id",
     "version",
     "integration_level",
+    "supports_event_stream",
+    "supports_tool_inspection",
+    "supports_diff_inspection",
+    "supports_cost_tracking",
+    "supports_hooks",
+    "supports_headless",
+    "supports_cli_control",
     "supports_pause",
     "supports_cancel",
     "supports_resume",
     "supports_checkpoint",
     "supports_rollback",
-    "supports_mcp"
+    "supports_mcp",
+    "supports_subagents",
+    "supports_extensions",
+    "supports_switch_model",
+    "supports_custom_provider",
+    "supports_openai_compat",
+    "supports_local_models",
+    "supports_sdk"
   ],
   "properties": {
     "agent_id": {
@@ -27,6 +41,27 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 3
+    },
+    "supports_event_stream": {
+      "type": "boolean"
+    },
+    "supports_tool_inspection": {
+      "type": "boolean"
+    },
+    "supports_diff_inspection": {
+      "type": "boolean"
+    },
+    "supports_cost_tracking": {
+      "type": "boolean"
+    },
+    "supports_hooks": {
+      "type": "boolean"
+    },
+    "supports_headless": {
+      "type": "boolean"
+    },
+    "supports_cli_control": {
+      "type": "boolean"
     },
     "supports_pause": {
       "type": "boolean"
@@ -44,6 +79,27 @@
       "type": "boolean"
     },
     "supports_mcp": {
+      "type": "boolean"
+    },
+    "supports_subagents": {
+      "type": "boolean"
+    },
+    "supports_extensions": {
+      "type": "boolean"
+    },
+    "supports_switch_model": {
+      "type": "boolean"
+    },
+    "supports_custom_provider": {
+      "type": "boolean"
+    },
+    "supports_openai_compat": {
+      "type": "boolean"
+    },
+    "supports_local_models": {
+      "type": "boolean"
+    },
+    "supports_sdk": {
       "type": "boolean"
     }
   },

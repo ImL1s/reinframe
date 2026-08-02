@@ -30,7 +30,7 @@ func TestChallenger2_BitFlips(t *testing.T) {
 	t.Run("Level2_SingleBitFlips", func(t *testing.T) {
 		level2Flags := []CapabilityFlag{
 			CapEventStream, CapToolInspection, CapDiffInspection,
-			CapPause, CapCancel, CapResume, CapCheckpoint, CapRollback,
+			CapPause, CapCancel, CapResume,
 		}
 
 		for _, flag := range level2Flags {
@@ -45,7 +45,7 @@ func TestChallenger2_BitFlips(t *testing.T) {
 
 	t.Run("Level1_SingleBitFlips", func(t *testing.T) {
 		level1Flags := []CapabilityFlag{
-			CapEventStream, CapToolInspection, CapPause, CapCancel, CapResume,
+			CapEventStream, CapToolInspection,
 		}
 
 		for _, flag := range level1Flags {
@@ -119,13 +119,13 @@ func TestChallenger2_ZeroMasks(t *testing.T) {
 		}
 	})
 
-	t.Run("ZeroValueStruct_Returns_Level0", func(t *testing.T) {
-		m := CapabilityManifest{} // IntegrationLevel: 0, hasRawBitmask: false
-		if m.ToBitmask() != Level0RequiredMask {
-			t.Errorf("expected ToBitmask() to return Level0RequiredMask (0x1), got 0x%x", m.ToBitmask())
+	t.Run("ZeroValueStruct_Returns_Minus1_And_ErrUnsupportedAgent", func(t *testing.T) {
+		m := CapabilityManifest{} // IntegrationLevel: 0, no booleans set
+		if m.ToBitmask() != 0 {
+			t.Errorf("expected ToBitmask() to return 0x0 for zero value struct, got 0x%x", m.ToBitmask())
 		}
-		if level := EvaluateAchievableLevel(&m); level != 0 {
-			t.Errorf("expected EvaluateAchievableLevel to return 0 for struct zero value, got %d", level)
+		if level := EvaluateAchievableLevel(&m); level != -1 {
+			t.Errorf("expected EvaluateAchievableLevel to return -1 for struct zero value without booleans, got %d", level)
 		}
 
 		req := &HandshakeRequest{
@@ -134,11 +134,8 @@ func TestChallenger2_ZeroMasks(t *testing.T) {
 			Manifest:       m,
 		}
 		resp, err := NegotiateLevel(req)
-		if err != nil {
-			t.Fatalf("unexpected error for zero struct manifest: %v", err)
-		}
-		if resp.NegotiatedLevel != 0 || resp.IsDegraded {
-			t.Errorf("unexpected response: %+v", resp)
+		if err != ErrUnsupportedAgent {
+			t.Fatalf("expected ErrUnsupportedAgent for zero struct manifest without booleans, got err=%v, resp=%+v", err, resp)
 		}
 	})
 
@@ -167,7 +164,7 @@ func TestChallenger2_WeirdRequestedLevels(t *testing.T) {
 		4, 5, 10, 100, math.MaxInt32,
 	}
 
-	validManifest := CapabilityManifest{IntegrationLevel: 3}
+	validManifest := FromBitmask(Level3RequiredMask)
 
 	for _, lvl := range invalidLevels {
 		t.Run(fmt.Sprintf("RequestedLevel_%d", lvl), func(t *testing.T) {
@@ -191,7 +188,7 @@ func TestChallenger2_WeirdRequestedLevels(t *testing.T) {
 		req := &HandshakeRequest{
 			SessionID:      "sess-overcapable-0",
 			RequestedLevel: 0,
-			Manifest:       CapabilityManifest{IntegrationLevel: 3},
+			Manifest:       FromBitmask(Level3RequiredMask),
 		}
 		resp, err := NegotiateLevel(req)
 		if err != nil {
@@ -206,7 +203,7 @@ func TestChallenger2_WeirdRequestedLevels(t *testing.T) {
 		req := &HandshakeRequest{
 			SessionID:      "sess-undercapable-3-to-0",
 			RequestedLevel: 3,
-			Manifest:       CapabilityManifest{IntegrationLevel: 0},
+			Manifest:       FromBitmask(Level0RequiredMask),
 		}
 		resp, err := NegotiateLevel(req)
 		if err != nil {
@@ -227,13 +224,16 @@ func TestChallenger2_MissingFlagSortingAndDeterminism(t *testing.T) {
 	req := &HandshakeRequest{
 		SessionID:      "sess-missing-flags-sort",
 		RequestedLevel: 3,
-		Manifest:       CapabilityManifest{IntegrationLevel: 1},
+		Manifest:       FromBitmask(Level1RequiredMask),
 	}
 
 	expectedMissing := []string{
 		"CapDiffInspection",
 		"CapHeadless",
 		"CapCLIControl",
+		"CapPause",
+		"CapCancel",
+		"CapResume",
 		"CapCheckpoint",
 		"CapRollback",
 		"CapMCP",

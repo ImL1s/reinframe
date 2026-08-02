@@ -194,18 +194,29 @@ type BudgetState struct {
 
 // CapabilityManifest declares capabilities by target agent adapter during session handshake.
 type CapabilityManifest struct {
-	AgentID            string `json:"agent_id" redact:"none"`
-	Version            string `json:"version" redact:"none"`
-	IntegrationLevel   int    `json:"integration_level" redact:"none"`
-	SupportsPause      bool   `json:"supports_pause" redact:"none"`
-	SupportsCancel     bool   `json:"supports_cancel" redact:"none"`
-	SupportsResume     bool   `json:"supports_resume" redact:"none"`
-	SupportsCheckpoint bool   `json:"supports_checkpoint" redact:"none"`
-	SupportsRollback   bool   `json:"supports_rollback" redact:"none"`
-	SupportsMCP        bool   `json:"supports_mcp" redact:"none"`
-
-	rawBitmask    uint64
-	hasRawBitmask bool
+	AgentID                string `json:"agent_id" redact:"none"`
+	Version                string `json:"version" redact:"none"`
+	IntegrationLevel       int    `json:"integration_level" redact:"none"`
+	SupportsEventStream    bool   `json:"supports_event_stream" redact:"none"`
+	SupportsToolInspection bool   `json:"supports_tool_inspection" redact:"none"`
+	SupportsDiffInspection bool   `json:"supports_diff_inspection" redact:"none"`
+	SupportsCostTracking   bool   `json:"supports_cost_tracking" redact:"none"`
+	SupportsHooks          bool   `json:"supports_hooks" redact:"none"`
+	SupportsHeadless       bool   `json:"supports_headless" redact:"none"`
+	SupportsCLIControl     bool   `json:"supports_cli_control" redact:"none"`
+	SupportsPause          bool   `json:"supports_pause" redact:"none"`
+	SupportsCancel         bool   `json:"supports_cancel" redact:"none"`
+	SupportsResume         bool   `json:"supports_resume" redact:"none"`
+	SupportsCheckpoint     bool   `json:"supports_checkpoint" redact:"none"`
+	SupportsRollback       bool   `json:"supports_rollback" redact:"none"`
+	SupportsMCP            bool   `json:"supports_mcp" redact:"none"`
+	SupportsSubagents      bool   `json:"supports_subagents" redact:"none"`
+	SupportsExtensions     bool   `json:"supports_extensions" redact:"none"`
+	SupportsSwitchModel    bool   `json:"supports_switch_model" redact:"none"`
+	SupportsCustomProvider bool   `json:"supports_custom_provider" redact:"none"`
+	SupportsOpenAICompat   bool   `json:"supports_openai_compat" redact:"none"`
+	SupportsLocalModels    bool   `json:"supports_local_models" redact:"none"`
+	SupportsSDK            bool   `json:"supports_sdk" redact:"none"`
 }
 
 // Checkpoint represents a workspace Git commit hash and test status snapshot.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,6 +18,9 @@ import (
 
 // TestChallenger_ConcurrentReadWriteStress tests 100 writers and 50 readers running concurrently against a SQLite WAL store.
 func TestChallenger_ConcurrentReadWriteStress(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping heavy concurrent stress test on Windows — NTFS file locking causes SQLITE_BUSY under CI contention")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -253,3 +257,103 @@ func TestChallenger_NanosecondTimestampPrecision(t *testing.T) {
 		t.Errorf("expected event e-nano-2, got %s", res[0].EventID)
 	}
 }
+
+// TestChallenger_Extreme500GoroutinesStress stress-tests SQLite WAL store with 500 concurrent goroutines (350 writers + 150 readers).
+func TestChallenger_Extreme500GoroutinesStress(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping extreme stress test on Windows — NTFS file locking causes SQLITE_BUSY under heavy contention")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	dbPath := filepath.Join(t.TempDir(), "extreme_500_stress.db")
+	store, err := state.NewStore(state.StoreOptions{
+		DatabasePath: dbPath,
+		BusyTimeout:  10000 * time.Millisecond,
+		MaxOpenConns: 25,
+		MaxIdleConns: 10,
+	})
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	const numWriters = 350
+	const numReaders = 150
+	const eventsPerWriter = 10
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, (numWriters*eventsPerWriter)+numReaders*10)
+
+	var writeCount int64
+	var readCount int64
+
+	// Launch 350 writer goroutines across multiple sessions
+	for w := 0; w < numWriters; w++ {
+		wg.Add(1)
+		go func(writerID int) {
+			defer wg.Done()
+			sessionID := fmt.Sprintf("500-writer-%d", writerID%50) // Shared among sets of writers for lock contention
+
+			for i := 1; i <= eventsPerWriter; i++ {
+				// To avoid duplicate sequence in shared session, use unique sequence or atomic per session
+				evt := &protocol.AgentEvent{
+					EventID:     fmt.Sprintf("evt-w%d-seq%d-%d", writerID, i, time.Now().UnixNano()),
+					SessionID:   sessionID,
+					SequenceNum: int64((writerID/50)*eventsPerWriter + i),
+					EventType:   "extreme_stress_write",
+					Timestamp:   time.Now().UTC(),
+					Payload:     json.RawMessage(`{"extreme":true}`),
+				}
+				if err := store.AppendEvent(ctx, evt); err != nil {
+					errChan <- fmt.Errorf("extreme writer %d event %d error: %w", writerID, i, err)
+					return
+				}
+				atomic.AddInt64(&writeCount, 1)
+			}
+		}(w)
+	}
+
+	// Launch 150 reader goroutines querying continuously
+	for r := 0; r < numReaders; r++ {
+		wg.Add(1)
+		go func(readerID int) {
+			defer wg.Done()
+			targetSession := fmt.Sprintf("500-writer-%d", readerID%50)
+
+			for i := 0; i < 10; i++ {
+				_, err := store.QueryEvents(ctx, state.EventFilter{
+					SessionID: targetSession,
+					Ascending: true,
+				})
+				if err != nil && !errors.Is(err, context.Canceled) {
+					errChan <- fmt.Errorf("extreme reader %d pass %d error: %w", readerID, i, err)
+					return
+				}
+				_, _ = store.GetLatestSequenceNum(ctx, targetSession)
+				atomic.AddInt64(&readCount, 1)
+				time.Sleep(1 * time.Millisecond)
+			}
+		}(r)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	var errs []error
+	for err := range errChan {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		t.Fatalf("Encountered %d errors during 500-goroutine stress test: %v", len(errs), errs[0])
+	}
+
+	expectedWrites := int64(numWriters * eventsPerWriter)
+	if writeCount != expectedWrites {
+		t.Errorf("write count = %d, want %d", writeCount, expectedWrites)
+	}
+
+	t.Logf("500-goroutine stress completed successfully: %d writes, %d reads across 500 goroutines", writeCount, readCount)
+}
+

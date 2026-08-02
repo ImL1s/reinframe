@@ -28,7 +28,7 @@ func TestChallenger_ConcurrentStress(t *testing.T) {
 			"task_id": "task-stress-1",
 			"session_id": "sess-stress-1",
 			"prompt": "Stress test prompt",
-			"max_depth": 2,
+			"max_depth": 1,
 			"timeout_seconds": 60,
 			"created_at": "2026-08-02T13:00:00Z"
 		}`),
@@ -300,8 +300,13 @@ func TestChallenger_All22SchemasValidation(t *testing.T) {
 		}`,
 		"capability_manifest": `{
 			"agent_id": "a1", "version": "1.0", "integration_level": 1,
-			"supports_pause": true, "supports_cancel": true, "supports_resume": true,
-			"supports_checkpoint": true, "supports_rollback": true, "supports_mcp": true
+			"supports_event_stream": true, "supports_tool_inspection": true, "supports_diff_inspection": true,
+			"supports_cost_tracking": true, "supports_hooks": true, "supports_headless": true,
+			"supports_cli_control": true, "supports_pause": true, "supports_cancel": true,
+			"supports_resume": true, "supports_checkpoint": true, "supports_rollback": true,
+			"supports_mcp": true, "supports_subagents": true, "supports_extensions": true,
+			"supports_switch_model": true, "supports_custom_provider": true, "supports_openai_compat": true,
+			"supports_local_models": true, "supports_sdk": true
 		}`,
 		"checkpoint": fmt.Sprintf(`{
 			"checkpoint_id": "c1", "session_id": "s1", "git_commit_hash": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",

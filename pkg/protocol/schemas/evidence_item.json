@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/evidence_item.json",
+  "title": "EvidenceItem",
+  "type": "object",
+  "required": [
+    "item_id",
+    "source",
+    "category",
+    "content"
+  ],
+  "properties": {
+    "item_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "git_diff",
+        "stderr",
+        "stdout",
+        "test_runner",
+        "file_system"
+      ]
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "ERROR_TRACE",
+        "DIFF_CHURN",
+        "SCOPE_DRIFT",
+        "TEST_FAILURE"
+      ]
+    },
+    "content": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

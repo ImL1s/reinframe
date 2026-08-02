@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/review_request.json",
+  "title": "ReviewRequest",
+  "type": "object",
+  "required": [
+    "request_id",
+    "reviewer_role",
+    "evidence_pack_id",
+    "model",
+    "prompt",
+    "requested_at"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewer_role": {
+      "type": "string",
+      "enum": [
+        "TunnelClassifier",
+        "AssumptionAuditor",
+        "ContrarianReviewer",
+        "EvidenceVerifier"
+      ]
+    },
+    "evidence_pack_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requested_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/intervention.json",
+  "title": "Intervention",
+  "type": "object",
+  "required": [
+    "intervention_id",
+    "session_id",
+    "level",
+    "action_type",
+    "status",
+    "executed_at"
+  ],
+  "properties": {
+    "intervention_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3
+    },
+    "action_type": {
+      "type": "string",
+      "enum": [
+        "ZOOM_OUT_PROMPT",
+        "PAUSE_PROCESS",
+        "CANCEL_ACTION",
+        "GIT_ROLLBACK",
+        "TERMINATE_SESSION"
+      ]
+    },
+    "advice_prompt": {
+      "type": "string"
+    },
+    "target_checkpoint_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PENDING",
+        "EXECUTED",
+        "FAILED",
+        "SUPPRESSED"
+      ]
+    },
+    "executed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

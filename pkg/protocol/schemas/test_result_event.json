@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/test_result_event.json",
+  "title": "TestResultEvent",
+  "type": "object",
+  "required": [
+    "test_run_id",
+    "command",
+    "passed_count",
+    "failed_count",
+    "skipped_count",
+    "pass_delta",
+    "duration_ms"
+  ],
+  "properties": {
+    "test_run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "passed_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "failed_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "skipped_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "pass_delta": {
+      "type": "integer"
+    },
+    "failure_output": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/budget_state.json",
+  "title": "BudgetState",
+  "type": "object",
+  "required": [
+    "session_id",
+    "max_tokens",
+    "used_tokens",
+    "max_cost_usd",
+    "current_cost_usd",
+    "max_interventions",
+    "intervention_count",
+    "is_exhausted"
+  ],
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "max_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "used_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_cost_usd": {
+      "type": "number",
+      "minimum": 0.0
+    },
+    "current_cost_usd": {
+      "type": "number",
+      "minimum": 0.0
+    },
+    "max_interventions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "intervention_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "is_exhausted": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

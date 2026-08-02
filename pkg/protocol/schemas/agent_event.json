@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/agent_event.json",
+  "title": "AgentEvent",
+  "type": "object",
+  "required": [
+    "event_id",
+    "session_id",
+    "sequence_num",
+    "event_type",
+    "timestamp",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence_num": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "tool_call",
+        "file_change",
+        "test_result",
+        "error_fingerprint",
+        "signal",
+        "assessment",
+        "intervention",
+        "checkpoint",
+        "budget",
+        "audit"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    }
+  },
+  "additionalProperties": false
+}

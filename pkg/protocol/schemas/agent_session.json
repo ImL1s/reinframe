@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/agent_session.json",
+  "title": "AgentSession",
+  "type": "object",
+  "required": [
+    "session_id",
+    "agent_id",
+    "adapter_type",
+    "integration_level",
+    "workspace_path",
+    "status",
+    "started_at"
+  ],
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "adapter_type": {
+      "type": "string",
+      "enum": [
+        "log_observer",
+        "cli_process",
+        "native_subagent",
+        "mcp_bridge"
+      ]
+    },
+    "integration_level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3
+    },
+    "workspace_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "OBSERVE",
+        "EXECUTE",
+        "AUDIT",
+        "SUSPECT",
+        "ZOOM_OUT",
+        "PAUSED",
+        "TERMINATED",
+        "COMPLETED"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

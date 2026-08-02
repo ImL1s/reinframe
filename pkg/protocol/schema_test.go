@@ -13,8 +13,9 @@ func TestLoadSchemas(t *testing.T) {
 		t.Fatalf("LoadSchemas failed: %v", err)
 	}
 
-	if len(schemaCache) != 22 {
-		t.Errorf("expected 22 schemas cached, got %d", len(schemaCache))
+	// 22 original types + task_submitted + task_contract + evidence_ledger
+	if len(schemaCache) != 25 {
+		t.Errorf("expected 25 schemas cached, got %d", len(schemaCache))
 	}
 
 	expectedTypes := []string{
@@ -40,6 +41,9 @@ func TestLoadSchemas(t *testing.T) {
 		"rollback_result",
 		"provider_usage",
 		"audit_record",
+		"task_submitted",
+		"task_contract",
+		"evidence_ledger",
 	}
 
 	for _, name := range expectedTypes {

@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/task_contract.json",
+  "title": "TaskContract",
+  "type": "object",
+  "required": [
+    "task_id",
+    "revision",
+    "complexity",
+    "risk",
+    "confidence",
+    "validation_budget",
+    "tool_budget",
+    "subagent_budget",
+    "reviewer_budget",
+    "created_from",
+    "created_at"
+  ],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "revision": { "type": "integer", "minimum": 0 },
+    "complexity": {
+      "type": "string",
+      "enum": ["trivial", "simple", "normal", "complex"]
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "irreversible"]
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "success_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "description"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "required_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "required"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "allowed_scope": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "validation_budget": {
+      "type": "object",
+      "required": ["max_full_suite_runs", "max_targeted_runs"],
+      "properties": {
+        "max_full_suite_runs": { "type": "integer", "minimum": 0 },
+        "max_targeted_runs": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "tool_budget": {
+      "type": "object",
+      "required": ["max_tool_calls"],
+      "properties": {
+        "max_tool_calls": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "subagent_budget": { "type": "integer", "minimum": 0 },
+    "reviewer_budget": { "type": "integer", "minimum": 0 },
+    "created_from": {
+      "type": "string",
+      "enum": ["user_explicit", "repository_policy", "heuristic", "model"]
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

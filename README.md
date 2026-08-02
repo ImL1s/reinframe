@@ -1,6 +1,28 @@
 # Reinframe — Anti-Tunnel Supervision Harness for AI Coding Agents
 
+[![CI](https://github.com/ImL1s/reinframe/actions/workflows/ci.yml/badge.svg)](https://github.com/ImL1s/reinframe/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Reinframe is a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go. It provides real-time supervision, capability negotiation, and append-only event auditing powered by SQLite WAL state persistence and JSON-RPC 2.0 / NDJSON protocol interfaces.
+
+## Project Status
+
+> **Phase: Foundation Complete** — Core protocol, state engine, and CI infrastructure are production-ready.
+> Next milestone: Detector, Reviewer, Policy, and Intervention pipeline.
+
+| Component | Status |
+|-----------|--------|
+| Canonical Schema (22 types) | ✅ Complete |
+| Capability Negotiation (20 flags, Level 0–3) | ✅ Complete |
+| SQLite WAL Event Store | ✅ Complete |
+| JSON Schema Validation (1MB limit, UseNumber) | ✅ Complete |
+| Cross-platform CI (Linux/macOS/Windows + golangci-lint) | ✅ Complete |
+| Tunnel Detector | 🔲 Planned |
+| Evidence Reviewer | 🔲 Planned |
+| Intervention Policy Engine | 🔲 Planned |
+| Git Checkpoint/Rollback | 🔲 Planned |
+| Supervisor Orchestrator | 🔲 Planned |
 
 ## Project Objective
 
@@ -57,7 +79,7 @@ reinframe/
 
 1. **Clone & Download Dependencies**:
    ```bash
-   git clone https://github.com/reinframe/reinframe.git
+   git clone https://github.com/ImL1s/reinframe.git
    cd reinframe
    go mod download
    ```
@@ -84,6 +106,28 @@ reinframe/
 
 ---
 
+## Supervision Levels
+
+| Level | Name | Capabilities | Use Case |
+|-------|------|-------------|----------|
+| 0 | **Observe** | Event stream | Passive monitoring |
+| 1 | **Advisory** | + Tool inspection | Suggestions, no control |
+| 2 | **Guarded** | + Diff inspection, Pause/Cancel/Resume | Active intervention |
+| 3 | **Full Control** | + Checkpoint/Rollback, MCP, Subagents, Model Switch | Full autonomy supervision |
+
+---
+
+## Contributing
+
+Contributions welcome! Please:
+
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) for available work
+2. Follow the existing code style and test patterns
+3. Run `go test -race ./...` before submitting PRs
+4. All PRs require CI green on all three platforms
+
+---
+
 ## License
 
-Reinframe is released under the MIT License.
+Reinframe is released under the [MIT License](LICENSE).

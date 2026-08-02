@@ -198,7 +198,7 @@ func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protoco
 			placeholders[i] = "?"
 			args = append(args, et)
 		}
-		queryBuilder.WriteString(fmt.Sprintf(" AND event_type IN (%s)", strings.Join(placeholders, ",")))
+		fmt.Fprintf(&queryBuilder, " AND event_type IN (%s)", strings.Join(placeholders, ","))
 	}
 
 	if filter.StartSequence != nil {

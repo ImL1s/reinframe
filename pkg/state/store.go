@@ -342,7 +342,13 @@ func (s *Store) wrapDBErr(err error) error {
 	if errors.Is(err, ErrDuplicateSequence) || errors.Is(err, ErrDuplicateEventID) || errors.Is(err, ErrInvalidEvent) {
 		return err
 	}
-	if errors.Is(err, sql.ErrConnDone) || strings.Contains(err.Error(), "database is closed") {
+	errStr := err.Error()
+	// Connection/tx lifecycle failures are store-closed class even if the closed
+	// flag race has not flipped yet (common under Close + concurrent Append).
+	if errors.Is(err, sql.ErrConnDone) ||
+		strings.Contains(errStr, "database is closed") ||
+		strings.Contains(errStr, "transaction has already been committed or rolled back") ||
+		strings.Contains(errStr, "sql: connection is already closed") {
 		return ErrStoreClosed
 	}
 	// Closed window: map all remaining operational errors to ErrStoreClosed.

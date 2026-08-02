@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/file_change_event.json",
+  "title": "FileChangeEvent",
+  "type": "object",
+  "required": [
+    "file_path",
+    "change_type",
+    "lines_added",
+    "lines_removed",
+    "is_scope_violation"
+  ],
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "change_type": {
+      "type": "string",
+      "enum": [
+        "CREATED",
+        "MODIFIED",
+        "DELETED"
+      ]
+    },
+    "lines_added": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "lines_removed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "net_diff": {
+      "type": "string"
+    },
+    "is_scope_violation": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

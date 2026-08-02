@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/capability_manifest.json",
+  "title": "CapabilityManifest",
+  "type": "object",
+  "required": [
+    "agent_id",
+    "version",
+    "integration_level",
+    "supports_pause",
+    "supports_cancel",
+    "supports_resume",
+    "supports_checkpoint",
+    "supports_rollback",
+    "supports_mcp"
+  ],
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "integration_level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3
+    },
+    "supports_pause": {
+      "type": "boolean"
+    },
+    "supports_cancel": {
+      "type": "boolean"
+    },
+    "supports_resume": {
+      "type": "boolean"
+    },
+    "supports_checkpoint": {
+      "type": "boolean"
+    },
+    "supports_rollback": {
+      "type": "boolean"
+    },
+    "supports_mcp": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

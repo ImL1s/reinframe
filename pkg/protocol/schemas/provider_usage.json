@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/provider_usage.json",
+  "title": "ProviderUsage",
+  "type": "object",
+  "required": [
+    "usage_id",
+    "session_id",
+    "provider_name",
+    "model",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "estimated_cost_usd",
+    "latency_ms",
+    "timestamp"
+  ],
+  "properties": {
+    "usage_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider_name": {
+      "type": "string",
+      "enum": [
+        "openai",
+        "ollama",
+        "anthropic",
+        "local"
+      ]
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "prompt_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "completion_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "total_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "estimated_cost_usd": {
+      "type": "number",
+      "minimum": 0.0
+    },
+    "latency_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

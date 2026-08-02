@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/tunnel_signal.json",
+  "title": "TunnelSignal",
+  "type": "object",
+  "required": [
+    "signal_id",
+    "session_id",
+    "detector_name",
+    "failure_mode",
+    "weight",
+    "score",
+    "triggered_at"
+  ],
+  "properties": {
+    "signal_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "detector_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "failure_mode": {
+      "type": "string",
+      "enum": [
+        "FM-1",
+        "FM-2",
+        "FM-3",
+        "FM-4",
+        "FM-5",
+        "FM-6"
+      ]
+    },
+    "weight": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "triggered_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

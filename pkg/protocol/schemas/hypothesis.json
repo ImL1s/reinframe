@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/hypothesis.json",
+  "title": "Hypothesis",
+  "type": "object",
+  "required": [
+    "hypothesis_id",
+    "statement",
+    "status",
+    "confidence_score"
+  ],
+  "properties": {
+    "hypothesis_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PROPOSED",
+        "CONFIRMED",
+        "REFUTED",
+        "DISCARDED"
+      ]
+    },
+    "supporting_evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "refuting_evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidence_score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    }
+  },
+  "additionalProperties": false
+}

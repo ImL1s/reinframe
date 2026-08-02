@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/evidence_pack.json",
+  "title": "EvidencePack",
+  "type": "object",
+  "required": [
+    "pack_id",
+    "session_id",
+    "fork_turns",
+    "items",
+    "churn_ratio",
+    "repeated_error_count",
+    "created_at"
+  ],
+  "properties": {
+    "pack_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fork_turns": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "https://reinframe.dev/schemas/evidence_item.json"
+      }
+    },
+    "churn_ratio": {
+      "type": "number",
+      "minimum": 0.0
+    },
+    "repeated_error_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

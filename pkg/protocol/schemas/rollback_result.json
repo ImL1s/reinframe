@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/rollback_result.json",
+  "title": "RollbackResult",
+  "type": "object",
+  "required": [
+    "rollback_id",
+    "session_id",
+    "target_checkpoint_id",
+    "previous_commit_hash",
+    "restored_commit_hash",
+    "success",
+    "completed_at"
+  ],
+  "properties": {
+    "rollback_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_checkpoint_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "previous_commit_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "restored_commit_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "success": {
+      "type": "boolean"
+    },
+    "error_message": {
+      "type": "string"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

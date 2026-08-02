@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/audit_record.json",
+  "title": "AuditRecord",
+  "type": "object",
+  "required": [
+    "audit_id",
+    "session_id",
+    "actor",
+    "category",
+    "summary",
+    "recorded_at"
+  ],
+  "properties": {
+    "audit_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actor": {
+      "type": "string",
+      "enum": [
+        "SUPERVISOR",
+        "TARGET_AGENT",
+        "REVIEWER",
+        "USER"
+      ]
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "SESSION_STATE",
+        "DETECTION",
+        "INTERVENTION",
+        "CHECKPOINT",
+        "REDACTION"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "detail_json": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

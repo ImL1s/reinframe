@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/tool_call_event.json",
+  "title": "ToolCallEvent",
+  "type": "object",
+  "required": [
+    "tool_call_id",
+    "tool_name",
+    "arguments",
+    "duration_ms"
+  ],
+  "properties": {
+    "tool_call_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tool_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "arguments": {
+      "type": "object"
+    },
+    "output": {
+      "type": "string"
+    },
+    "exit_code": {
+      "type": ["integer", "null"]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

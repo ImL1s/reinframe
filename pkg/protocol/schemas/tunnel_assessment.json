@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/tunnel_assessment.json",
+  "title": "TunnelAssessment",
+  "type": "object",
+  "required": [
+    "assessment_id",
+    "session_id",
+    "aggregate_score",
+    "primary_failure_mode",
+    "is_tunnel_detected",
+    "recommended_action",
+    "signals",
+    "evaluated_at"
+  ],
+  "properties": {
+    "assessment_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "aggregate_score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "primary_failure_mode": {
+      "type": "string",
+      "enum": [
+        "FM-1",
+        "FM-2",
+        "FM-3",
+        "FM-4",
+        "FM-5",
+        "FM-6",
+        "NONE"
+      ]
+    },
+    "is_tunnel_detected": {
+      "type": "boolean"
+    },
+    "recommended_action": {
+      "type": "string",
+      "enum": [
+        "NONE",
+        "ADVISORY_ZOOM_OUT",
+        "PAUSE_EXECUTION",
+        "GIT_ROLLBACK"
+      ]
+    },
+    "signals": {
+      "type": "array",
+      "items": {
+        "$ref": "https://reinframe.dev/schemas/tunnel_signal.json"
+      }
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

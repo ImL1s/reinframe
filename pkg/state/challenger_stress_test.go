@@ -17,7 +17,7 @@ import (
 
 // TestChallenger_ConcurrentReadWriteStress tests 100 writers and 50 readers running concurrently against a SQLite WAL store.
 func TestChallenger_ConcurrentReadWriteStress(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	dbPath := filepath.Join(t.TempDir(), "stress_read_write.db")

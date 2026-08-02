@@ -306,7 +306,9 @@ func TestChallenger_All22SchemasValidation(t *testing.T) {
 			"supports_resume": true, "supports_checkpoint": true, "supports_rollback": true,
 			"supports_mcp": true, "supports_subagents": true, "supports_extensions": true,
 			"supports_switch_model": true, "supports_custom_provider": true, "supports_openai_compat": true,
-			"supports_local_models": true, "supports_sdk": true
+			"supports_local_models": true, "supports_sdk": true,
+			"supports_advice_delivery": true, "supports_context_injection": false,
+			"supports_tool_gate": false, "supports_turn_boundary": false, "supports_intervention_ack": false
 		}`,
 		"checkpoint": fmt.Sprintf(`{
 			"checkpoint_id": "c1", "session_id": "s1", "git_commit_hash": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",

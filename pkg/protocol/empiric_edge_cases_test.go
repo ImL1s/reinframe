@@ -170,13 +170,14 @@ func TestEdgeCase_MissingBooleanFieldsCapabilityNegotiation(t *testing.T) {
 	})
 
 	t.Run("Go_Struct_Unmarshaling_Missing_Booleans_Default_To_False_And_Degrade", func(t *testing.T) {
-		// JSON missing process control flags (supports_pause, supports_cancel, supports_resume)
+		// L1-capable (incl. CapAdviceDelivery) but missing process control → degrade to 1
 		jsonPayload := `{
 			"agent_id": "claude",
 			"version": "1.0.0",
 			"integration_level": 2,
 			"supports_event_stream": true,
 			"supports_tool_inspection": true,
+			"supports_advice_delivery": true,
 			"supports_diff_inspection": true,
 			"supports_checkpoint": true,
 			"supports_rollback": true
@@ -212,6 +213,28 @@ func TestEdgeCase_MissingBooleanFieldsCapabilityNegotiation(t *testing.T) {
 		expectedMissing := []string{"CapPause", "CapCancel", "CapResume"}
 		if len(resp.MissingFlags) != 3 {
 			t.Errorf("expected 3 missing flags %v, got %v", expectedMissing, resp.MissingFlags)
+		}
+	})
+
+	t.Run("Missing_CapAdviceDelivery_Degrades_Below_Level1", func(t *testing.T) {
+		manifest := CapabilityManifest{
+			SupportsEventStream:    true,
+			SupportsToolInspection: true,
+			// CapAdviceDelivery absent → cannot claim Advisory
+		}
+		if EvaluateAchievableLevel(&manifest) >= 1 {
+			t.Fatalf("without CapAdviceDelivery achievable level must be < 1")
+		}
+		resp, err := NegotiateLevel(&HandshakeRequest{
+			SessionID:      "sess-no-advice-delivery",
+			RequestedLevel: 1,
+			Manifest:       manifest,
+		})
+		if err != nil {
+			t.Fatalf("NegotiateLevel: %v", err)
+		}
+		if resp.NegotiatedLevel >= 1 {
+			t.Errorf("expected level < 1, got %d", resp.NegotiatedLevel)
 		}
 	})
 }

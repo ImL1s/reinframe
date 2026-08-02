@@ -10,7 +10,7 @@ import (
 
 func flagNames(mask protocol.CapabilityFlag) []string {
 	var names []string
-	for i := 0; i < 20; i++ {
+	for i := 0; i < protocol.CapabilityFlagCount; i++ {
 		flag := protocol.CapabilityFlag(1 << uint(i))
 		if (mask & flag) != 0 {
 			names = append(names, protocol.FlagToString(flag))
@@ -20,37 +20,42 @@ func flagNames(mask protocol.CapabilityFlag) []string {
 }
 
 // ============================================================================
-// Tier 1: Feature Coverage (Capability Manifest & Handshake Protocol - Issue #7)
+// Tier 1: Feature Coverage (Capability Manifest & Handshake Protocol - Issue #7 / #65)
 // ============================================================================
 
-// --- Feature 1: 20 Capability Bitmask Flags ---
+// --- Feature 1: Capability Bitmask Flags ---
 
 func TestTier1_CapFlags_BitmaskShiftValues(t *testing.T) {
 	expectedFlags := map[protocol.CapabilityFlag]uint64{
-		protocol.CapEventStream:    1 << 0,
-		protocol.CapToolInspection: 1 << 1,
-		protocol.CapDiffInspection: 1 << 2,
-		protocol.CapCostTracking:   1 << 3,
-		protocol.CapHooks:          1 << 4,
-		protocol.CapHeadless:       1 << 5,
-		protocol.CapCLIControl:     1 << 6,
-		protocol.CapPause:          1 << 7,
-		protocol.CapCancel:         1 << 8,
-		protocol.CapResume:         1 << 9,
-		protocol.CapCheckpoint:     1 << 10,
-		protocol.CapRollback:       1 << 11,
-		protocol.CapMCP:            1 << 12,
-		protocol.CapSubagents:      1 << 13,
-		protocol.CapExtensions:     1 << 14,
-		protocol.CapSwitchModel:    1 << 15,
-		protocol.CapCustomProvider: 1 << 16,
-		protocol.CapOpenAICompat:   1 << 17,
-		protocol.CapLocalModels:    1 << 18,
-		protocol.CapSDK:            1 << 19,
+		protocol.CapEventStream:      1 << 0,
+		protocol.CapToolInspection:   1 << 1,
+		protocol.CapDiffInspection:   1 << 2,
+		protocol.CapCostTracking:     1 << 3,
+		protocol.CapHooks:            1 << 4,
+		protocol.CapHeadless:         1 << 5,
+		protocol.CapCLIControl:       1 << 6,
+		protocol.CapPause:            1 << 7,
+		protocol.CapCancel:           1 << 8,
+		protocol.CapResume:           1 << 9,
+		protocol.CapCheckpoint:       1 << 10,
+		protocol.CapRollback:         1 << 11,
+		protocol.CapMCP:              1 << 12,
+		protocol.CapSubagents:        1 << 13,
+		protocol.CapExtensions:       1 << 14,
+		protocol.CapSwitchModel:      1 << 15,
+		protocol.CapCustomProvider:   1 << 16,
+		protocol.CapOpenAICompat:     1 << 17,
+		protocol.CapLocalModels:      1 << 18,
+		protocol.CapSDK:              1 << 19,
+		protocol.CapAdviceDelivery:   1 << 20,
+		protocol.CapContextInjection: 1 << 21,
+		protocol.CapToolGate:         1 << 22,
+		protocol.CapTurnBoundary:     1 << 23,
+		protocol.CapInterventionAck:  1 << 24,
 	}
 
-	if len(expectedFlags) != 20 {
-		t.Fatalf("expected exactly 20 capability flags, got %d", len(expectedFlags))
+	if len(expectedFlags) != protocol.CapabilityFlagCount {
+		t.Fatalf("expected exactly %d capability flags, got %d", protocol.CapabilityFlagCount, len(expectedFlags))
 	}
 
 	for flag, expectedVal := range expectedFlags {
@@ -69,31 +74,21 @@ func TestTier1_CapFlags_Categories(t *testing.T) {
 	stateMask := protocol.CapCheckpoint | protocol.CapRollback | protocol.CapMCP | protocol.CapSubagents | protocol.CapExtensions
 	// Provider category
 	provMask := protocol.CapSwitchModel | protocol.CapCustomProvider | protocol.CapOpenAICompat | protocol.CapLocalModels | protocol.CapSDK
+	// Delivery / intervention pipeline category (#65)
+	deliveryMask := protocol.CapAdviceDelivery | protocol.CapContextInjection | protocol.CapToolGate | protocol.CapTurnBoundary | protocol.CapInterventionAck
 
-	// Ensure categories do not overlap
-	if (obsMask & execMask) != 0 {
-		t.Errorf("Observation and Execution flag categories overlap: %X", obsMask&execMask)
-	}
-	if (obsMask & stateMask) != 0 {
-		t.Errorf("Observation and State flag categories overlap: %X", obsMask&stateMask)
-	}
-	if (obsMask & provMask) != 0 {
-		t.Errorf("Observation and Provider flag categories overlap: %X", obsMask&provMask)
-	}
-	if (execMask & stateMask) != 0 {
-		t.Errorf("Execution and State flag categories overlap: %X", execMask&stateMask)
-	}
-	if (execMask & provMask) != 0 {
-		t.Errorf("Execution and Provider flag categories overlap: %X", execMask&provMask)
-	}
-	if (stateMask & provMask) != 0 {
-		t.Errorf("State and Provider flag categories overlap: %X", stateMask&provMask)
+	categories := []protocol.CapabilityFlag{obsMask, execMask, stateMask, provMask, deliveryMask}
+	for i := 0; i < len(categories); i++ {
+		for j := i + 1; j < len(categories); j++ {
+			if (categories[i] & categories[j]) != 0 {
+				t.Errorf("flag categories %d and %d overlap: %X", i, j, categories[i]&categories[j])
+			}
+		}
 	}
 
-	// Verify total combination covers all 20 bits (0x000FFFFF)
-	fullMask := obsMask | execMask | stateMask | provMask
-	if uint64(fullMask) != (1<<20)-1 {
-		t.Errorf("Full category mask mismatch: got %X, expected %X", uint64(fullMask), uint64((1<<20)-1))
+	fullMask := obsMask | execMask | stateMask | provMask | deliveryMask
+	if uint64(fullMask) != protocol.CapabilityKnownMask {
+		t.Errorf("Full category mask mismatch: got %X, expected %X", uint64(fullMask), protocol.CapabilityKnownMask)
 	}
 }
 
@@ -554,6 +549,7 @@ func TestTier2_LevelEval_SuperfluousLevel3FlagsAtLevel1(t *testing.T) {
 	manifest := protocol.CapabilityManifest{
 		SupportsEventStream:    true,
 		SupportsToolInspection: true,
+		SupportsAdviceDelivery: true,
 		SupportsMCP:            true,
 	}
 

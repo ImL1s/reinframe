@@ -32,7 +32,9 @@
         "PAUSE_PROCESS",
         "CANCEL_ACTION",
         "GIT_ROLLBACK",
-        "TERMINATE_SESSION"
+        "TERMINATE_SESSION",
+        "SWITCH_MODEL",
+        "ESCALATE_TO_HUMAN"
       ]
     },
     "advice_prompt": {
@@ -45,14 +47,61 @@
       "type": "string",
       "enum": [
         "PENDING",
+        "DELIVERED",
         "EXECUTED",
         "FAILED",
-        "SUPPRESSED"
+        "SUPPRESSED",
+        "ACKED",
+        "EXPIRED"
       ]
     },
     "executed_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional absolute expiry for the intervention delivery window."
+    },
+    "priority": {
+      "type": "integer",
+      "description": "Optional delivery priority; higher values are more urgent. Zero/omit is default."
+    },
+    "delivery_mode_hint": {
+      "type": "string",
+      "description": "Optional adapter hint for how to deliver (e.g. inject, prompt, hook)."
+    },
+    "requires_ack": {
+      "type": "boolean",
+      "description": "When true, delivery must be acknowledged (CapInterventionAck path)."
+    },
+    "ack_status": {
+      "type": "string",
+      "enum": [
+        "NONE",
+        "PENDING",
+        "ACKED",
+        "NACKED",
+        "EXPIRED"
+      ],
+      "description": "Enum-like ACK lifecycle status; omit or NONE when unused."
+    },
+    "acked_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "safe_boundary": {
+      "type": "string",
+      "description": "Optional safe turn/tool boundary identifier for deferred delivery."
+    },
+    "fingerprint": {
+      "type": "string",
+      "description": "Optional stable fingerprint for dedupe of identical interventions."
+    },
+    "parent_assessment_id": {
+      "type": "string",
+      "description": "Optional link to the TunnelAssessment that triggered this intervention."
     }
   },
   "additionalProperties": false

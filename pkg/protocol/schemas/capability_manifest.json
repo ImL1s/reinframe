@@ -26,7 +26,12 @@
     "supports_custom_provider",
     "supports_openai_compat",
     "supports_local_models",
-    "supports_sdk"
+    "supports_sdk",
+    "supports_advice_delivery",
+    "supports_context_injection",
+    "supports_tool_gate",
+    "supports_turn_boundary",
+    "supports_intervention_ack"
   ],
   "properties": {
     "agent_id": {
@@ -64,7 +69,8 @@
       "type": "boolean"
     },
     "supports_pause": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "Harness-native pause only. OS SIGSTOP/SIGTSTP is NOT CapPause (#72)."
     },
     "supports_cancel": {
       "type": "boolean"
@@ -101,6 +107,26 @@
     },
     "supports_sdk": {
       "type": "boolean"
+    },
+    "supports_advice_delivery": {
+      "type": "boolean",
+      "description": "Can deliver advisory prompts into the agent turn (CapAdviceDelivery; required for Level 1)."
+    },
+    "supports_context_injection": {
+      "type": "boolean",
+      "description": "Can inject supervisor context into agent input (CapContextInjection)."
+    },
+    "supports_tool_gate": {
+      "type": "boolean",
+      "description": "Can gate/defer/deny tool calls via hooks/pre-tool (CapToolGate)."
+    },
+    "supports_turn_boundary": {
+      "type": "boolean",
+      "description": "Can observe or enforce turn/message boundaries (CapTurnBoundary)."
+    },
+    "supports_intervention_ack": {
+      "type": "boolean",
+      "description": "Can acknowledge intervention delivery/ACK lifecycle (CapInterventionAck)."
     }
   },
   "additionalProperties": false

@@ -169,15 +169,25 @@ type ReviewDecision struct {
 }
 
 // Intervention represents a supervisor action executed against a target session.
+// Delivery/ACK/expiry fields (#57) are optional; empty/zero values are backward compatible.
 type Intervention struct {
-	InterventionID     string    `json:"intervention_id" redact:"none"`
-	SessionID          string    `json:"session_id" redact:"none"`
-	Level              int       `json:"level" redact:"none"`
-	ActionType         string    `json:"action_type" redact:"none"`
-	AdvicePrompt       string    `json:"advice_prompt,omitempty" redact:"sensitive"`
-	TargetCheckpointID string    `json:"target_checkpoint_id,omitempty" redact:"none"`
-	Status             string    `json:"status" redact:"none"`
-	ExecutedAt         time.Time `json:"executed_at" redact:"none"`
+	InterventionID     string     `json:"intervention_id" redact:"none"`
+	SessionID          string     `json:"session_id" redact:"none"`
+	Level              int        `json:"level" redact:"none"`
+	ActionType         string     `json:"action_type" redact:"none"`
+	AdvicePrompt       string     `json:"advice_prompt,omitempty" redact:"sensitive"`
+	TargetCheckpointID string     `json:"target_checkpoint_id,omitempty" redact:"none"`
+	Status             string     `json:"status" redact:"none"`
+	ExecutedAt         time.Time  `json:"executed_at" redact:"none"`
+	ExpiresAt          *time.Time `json:"expires_at,omitempty" redact:"none"`
+	Priority           int        `json:"priority,omitempty" redact:"none"`
+	DeliveryModeHint   string     `json:"delivery_mode_hint,omitempty" redact:"none"`
+	RequiresAck        bool       `json:"requires_ack,omitempty" redact:"none"`
+	AckStatus          string     `json:"ack_status,omitempty" redact:"none"`
+	AckedAt            *time.Time `json:"acked_at,omitempty" redact:"none"`
+	SafeBoundary       string     `json:"safe_boundary,omitempty" redact:"none"`
+	Fingerprint        string     `json:"fingerprint,omitempty" redact:"none"`
+	ParentAssessmentID string     `json:"parent_assessment_id,omitempty" redact:"none"`
 }
 
 // BudgetState tracks cumulative token, cost USD, time, and intervention metrics.
@@ -193,30 +203,36 @@ type BudgetState struct {
 }
 
 // CapabilityManifest declares capabilities by target agent adapter during session handshake.
+// SupportsPause means harness-native pause only; OS SIGSTOP is not CapPause (#72).
 type CapabilityManifest struct {
-	AgentID                string `json:"agent_id" redact:"none"`
-	Version                string `json:"version" redact:"none"`
-	IntegrationLevel       int    `json:"integration_level" redact:"none"`
-	SupportsEventStream    bool   `json:"supports_event_stream" redact:"none"`
-	SupportsToolInspection bool   `json:"supports_tool_inspection" redact:"none"`
-	SupportsDiffInspection bool   `json:"supports_diff_inspection" redact:"none"`
-	SupportsCostTracking   bool   `json:"supports_cost_tracking" redact:"none"`
-	SupportsHooks          bool   `json:"supports_hooks" redact:"none"`
-	SupportsHeadless       bool   `json:"supports_headless" redact:"none"`
-	SupportsCLIControl     bool   `json:"supports_cli_control" redact:"none"`
-	SupportsPause          bool   `json:"supports_pause" redact:"none"`
-	SupportsCancel         bool   `json:"supports_cancel" redact:"none"`
-	SupportsResume         bool   `json:"supports_resume" redact:"none"`
-	SupportsCheckpoint     bool   `json:"supports_checkpoint" redact:"none"`
-	SupportsRollback       bool   `json:"supports_rollback" redact:"none"`
-	SupportsMCP            bool   `json:"supports_mcp" redact:"none"`
-	SupportsSubagents      bool   `json:"supports_subagents" redact:"none"`
-	SupportsExtensions     bool   `json:"supports_extensions" redact:"none"`
-	SupportsSwitchModel    bool   `json:"supports_switch_model" redact:"none"`
-	SupportsCustomProvider bool   `json:"supports_custom_provider" redact:"none"`
-	SupportsOpenAICompat   bool   `json:"supports_openai_compat" redact:"none"`
-	SupportsLocalModels    bool   `json:"supports_local_models" redact:"none"`
-	SupportsSDK            bool   `json:"supports_sdk" redact:"none"`
+	AgentID                  string `json:"agent_id" redact:"none"`
+	Version                  string `json:"version" redact:"none"`
+	IntegrationLevel         int    `json:"integration_level" redact:"none"`
+	SupportsEventStream      bool   `json:"supports_event_stream" redact:"none"`
+	SupportsToolInspection   bool   `json:"supports_tool_inspection" redact:"none"`
+	SupportsDiffInspection   bool   `json:"supports_diff_inspection" redact:"none"`
+	SupportsCostTracking     bool   `json:"supports_cost_tracking" redact:"none"`
+	SupportsHooks            bool   `json:"supports_hooks" redact:"none"`
+	SupportsHeadless         bool   `json:"supports_headless" redact:"none"`
+	SupportsCLIControl       bool   `json:"supports_cli_control" redact:"none"`
+	SupportsPause            bool   `json:"supports_pause" redact:"none"`
+	SupportsCancel           bool   `json:"supports_cancel" redact:"none"`
+	SupportsResume           bool   `json:"supports_resume" redact:"none"`
+	SupportsCheckpoint       bool   `json:"supports_checkpoint" redact:"none"`
+	SupportsRollback         bool   `json:"supports_rollback" redact:"none"`
+	SupportsMCP              bool   `json:"supports_mcp" redact:"none"`
+	SupportsSubagents        bool   `json:"supports_subagents" redact:"none"`
+	SupportsExtensions       bool   `json:"supports_extensions" redact:"none"`
+	SupportsSwitchModel      bool   `json:"supports_switch_model" redact:"none"`
+	SupportsCustomProvider   bool   `json:"supports_custom_provider" redact:"none"`
+	SupportsOpenAICompat     bool   `json:"supports_openai_compat" redact:"none"`
+	SupportsLocalModels      bool   `json:"supports_local_models" redact:"none"`
+	SupportsSDK              bool   `json:"supports_sdk" redact:"none"`
+	SupportsAdviceDelivery   bool   `json:"supports_advice_delivery" redact:"none"`
+	SupportsContextInjection bool   `json:"supports_context_injection" redact:"none"`
+	SupportsToolGate         bool   `json:"supports_tool_gate" redact:"none"`
+	SupportsTurnBoundary     bool   `json:"supports_turn_boundary" redact:"none"`
+	SupportsInterventionAck  bool   `json:"supports_intervention_ack" redact:"none"`
 }
 
 // Checkpoint represents a workspace Git commit hash and test status snapshot.

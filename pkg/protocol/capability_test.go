@@ -12,30 +12,35 @@ func TestCapabilityFlag_ConstantsAndStringer(t *testing.T) {
 		shift int
 		name  string
 	}{
-		CapEventStream:    {0, "CapEventStream"},
-		CapToolInspection: {1, "CapToolInspection"},
-		CapDiffInspection: {2, "CapDiffInspection"},
-		CapCostTracking:   {3, "CapCostTracking"},
-		CapHooks:          {4, "CapHooks"},
-		CapHeadless:       {5, "CapHeadless"},
-		CapCLIControl:     {6, "CapCLIControl"},
-		CapPause:          {7, "CapPause"},
-		CapCancel:         {8, "CapCancel"},
-		CapResume:         {9, "CapResume"},
-		CapCheckpoint:     {10, "CapCheckpoint"},
-		CapRollback:       {11, "CapRollback"},
-		CapMCP:            {12, "CapMCP"},
-		CapSubagents:      {13, "CapSubagents"},
-		CapExtensions:     {14, "CapExtensions"},
-		CapSwitchModel:    {15, "CapSwitchModel"},
-		CapCustomProvider: {16, "CapCustomProvider"},
-		CapOpenAICompat:   {17, "CapOpenAICompat"},
-		CapLocalModels:    {18, "CapLocalModels"},
-		CapSDK:            {19, "CapSDK"},
+		CapEventStream:      {0, "CapEventStream"},
+		CapToolInspection:   {1, "CapToolInspection"},
+		CapDiffInspection:   {2, "CapDiffInspection"},
+		CapCostTracking:     {3, "CapCostTracking"},
+		CapHooks:            {4, "CapHooks"},
+		CapHeadless:         {5, "CapHeadless"},
+		CapCLIControl:       {6, "CapCLIControl"},
+		CapPause:            {7, "CapPause"},
+		CapCancel:           {8, "CapCancel"},
+		CapResume:           {9, "CapResume"},
+		CapCheckpoint:       {10, "CapCheckpoint"},
+		CapRollback:         {11, "CapRollback"},
+		CapMCP:              {12, "CapMCP"},
+		CapSubagents:        {13, "CapSubagents"},
+		CapExtensions:       {14, "CapExtensions"},
+		CapSwitchModel:      {15, "CapSwitchModel"},
+		CapCustomProvider:   {16, "CapCustomProvider"},
+		CapOpenAICompat:     {17, "CapOpenAICompat"},
+		CapLocalModels:      {18, "CapLocalModels"},
+		CapSDK:              {19, "CapSDK"},
+		CapAdviceDelivery:   {20, "CapAdviceDelivery"},
+		CapContextInjection: {21, "CapContextInjection"},
+		CapToolGate:         {22, "CapToolGate"},
+		CapTurnBoundary:     {23, "CapTurnBoundary"},
+		CapInterventionAck:  {24, "CapInterventionAck"},
 	}
 
-	if len(expectedFlags) != 20 {
-		t.Fatalf("expected 20 capability flags, got %d", len(expectedFlags))
+	if len(expectedFlags) != CapabilityFlagCount {
+		t.Fatalf("expected %d capability flags, got %d", CapabilityFlagCount, len(expectedFlags))
 	}
 
 	for flag, exp := range expectedFlags {
@@ -106,14 +111,87 @@ func TestCapabilityManifest_FromBitmask_RoundTrip(t *testing.T) {
 		t.Errorf("FromBitmask IntegrationLevel mismatch: got %d, want 2", restored.IntegrationLevel)
 	}
 
-	// Level 2 required booleans
-	if !restored.SupportsEventStream || !restored.SupportsToolInspection || !restored.SupportsDiffInspection ||
-		!restored.SupportsPause || !restored.SupportsCancel || !restored.SupportsResume {
+	// Level 2 required booleans (includes CapAdviceDelivery via Level1)
+	if !restored.SupportsEventStream || !restored.SupportsToolInspection || !restored.SupportsAdviceDelivery ||
+		!restored.SupportsDiffInspection || !restored.SupportsPause || !restored.SupportsCancel || !restored.SupportsResume {
 		t.Errorf("FromBitmask boolean fields missing for Level 2 mask: %+v", restored)
 	}
 
 	if restored.ToBitmask() != Level2RequiredMask {
 		t.Errorf("round-trip ToBitmask mismatch: got 0x%x, want 0x%x", restored.ToBitmask(), Level2RequiredMask)
+	}
+}
+
+func TestLevel1_RequiresCapAdviceDelivery(t *testing.T) {
+	// EventStream + ToolInspection without CapAdviceDelivery must not achieve Level 1 (#65).
+	withoutAdvice := CapabilityManifest{
+		SupportsEventStream:    true,
+		SupportsToolInspection: true,
+		SupportsAdviceDelivery: false,
+	}
+	if got := EvaluateAchievableLevel(&withoutAdvice); got >= 1 {
+		t.Fatalf("L1 without CapAdviceDelivery: EvaluateAchievableLevel = %d, want < 1", got)
+	}
+
+	req := &HandshakeRequest{
+		SessionID:      "sess-no-advice",
+		RequestedLevel: 1,
+		Manifest:       withoutAdvice,
+	}
+	resp, err := NegotiateLevel(req)
+	if err != nil {
+		t.Fatalf("NegotiateLevel unexpected error: %v", err)
+	}
+	if resp.NegotiatedLevel >= 1 {
+		t.Errorf("L1 request without CapAdviceDelivery should degrade to level < 1, got %d", resp.NegotiatedLevel)
+	}
+	if !resp.IsDegraded || resp.DegradedFrom != 1 {
+		t.Errorf("expected degraded from 1, got %+v", resp)
+	}
+	found := false
+	for _, f := range resp.MissingFlags {
+		if f == "CapAdviceDelivery" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("MissingFlags should include CapAdviceDelivery, got %v", resp.MissingFlags)
+	}
+
+	// Full Level1 mask roundtrip
+	m := FromBitmask(Level1RequiredMask)
+	if m.ToBitmask() != Level1RequiredMask {
+		t.Errorf("Level1RequiredMask roundtrip: got 0x%x, want 0x%x", m.ToBitmask(), Level1RequiredMask)
+	}
+	if !m.SupportsAdviceDelivery || !m.HasCapability(CapAdviceDelivery) {
+		t.Errorf("FromBitmask(Level1RequiredMask) must set CapAdviceDelivery")
+	}
+	if EvaluateAchievableLevel(&m) != 1 {
+		t.Errorf("Level1RequiredMask achievable level = %d, want 1", EvaluateAchievableLevel(&m))
+	}
+}
+
+func TestDeliveryCaps_BitmaskRoundTrip(t *testing.T) {
+	flags := []CapabilityFlag{
+		CapAdviceDelivery, CapContextInjection, CapToolGate, CapTurnBoundary, CapInterventionAck,
+	}
+	var mask uint64
+	for _, f := range flags {
+		mask |= uint64(f)
+	}
+	m := FromBitmask(mask)
+	if m.ToBitmask() != mask {
+		t.Fatalf("delivery caps roundtrip: got 0x%x, want 0x%x", m.ToBitmask(), mask)
+	}
+	if !m.SupportsAdviceDelivery || !m.SupportsContextInjection || !m.SupportsToolGate ||
+		!m.SupportsTurnBoundary || !m.SupportsInterventionAck {
+		t.Fatalf("delivery bools incomplete after FromBitmask: %+v", m)
+	}
+	for _, f := range flags {
+		if !m.HasCapability(f) {
+			t.Errorf("HasCapability(%s) = false", f.String())
+		}
 	}
 }
 
@@ -150,10 +228,11 @@ func TestEvaluateAchievableLevel_Contracts(t *testing.T) {
 			want: 0,
 		},
 		{
-			name: "Level 1 Advisory Contract (EventStream + ToolInspection WITHOUT process control)",
+			name: "Level 1 Advisory Contract (EventStream + ToolInspection + AdviceDelivery WITHOUT process control)",
 			manifest: &CapabilityManifest{
 				SupportsEventStream:    true,
 				SupportsToolInspection: true,
+				SupportsAdviceDelivery: true,
 				SupportsPause:          false,
 				SupportsCancel:         false,
 				SupportsResume:         false,
@@ -161,10 +240,20 @@ func TestEvaluateAchievableLevel_Contracts(t *testing.T) {
 			want: 1, // Advisory mode achieves Level 1 without requiring Pause/Cancel/Resume
 		},
 		{
-			name: "Level 2 Guarded Contract (EventStream + Tool + Diff + Pause + Cancel + Resume + Checkpoint + Rollback)",
+			name: "Level 1 without CapAdviceDelivery degrades below Advisory",
 			manifest: &CapabilityManifest{
 				SupportsEventStream:    true,
 				SupportsToolInspection: true,
+				SupportsAdviceDelivery: false,
+			},
+			want: 0,
+		},
+		{
+			name: "Level 2 Guarded Contract (EventStream + Tool + Advice + Diff + Pause + Cancel + Resume + Checkpoint + Rollback)",
+			manifest: &CapabilityManifest{
+				SupportsEventStream:    true,
+				SupportsToolInspection: true,
+				SupportsAdviceDelivery: true,
 				SupportsDiffInspection: true,
 				SupportsPause:          true,
 				SupportsCancel:         true,
@@ -179,6 +268,7 @@ func TestEvaluateAchievableLevel_Contracts(t *testing.T) {
 			manifest: &CapabilityManifest{
 				SupportsEventStream:    true,
 				SupportsToolInspection: true,
+				SupportsAdviceDelivery: true,
 				SupportsDiffInspection: true,
 				SupportsPause:          false, // missing required Level 2 process control flag
 				SupportsCancel:         true,
@@ -193,6 +283,7 @@ func TestEvaluateAchievableLevel_Contracts(t *testing.T) {
 			manifest: &CapabilityManifest{
 				SupportsEventStream:    true,
 				SupportsToolInspection: true,
+				SupportsAdviceDelivery: true,
 				SupportsDiffInspection: true,
 				SupportsPause:          true,
 				SupportsCancel:         true,
@@ -227,6 +318,7 @@ func TestNegotiateLevel_Matrix(t *testing.T) {
 	level1Manifest := CapabilityManifest{
 		SupportsEventStream:    true,
 		SupportsToolInspection: true,
+		SupportsAdviceDelivery: true,
 	}
 
 	level3Manifest := FromBitmask(Level3RequiredMask)
@@ -338,6 +430,7 @@ func TestNegotiateLevel_Matrix(t *testing.T) {
 					"CapMCP",
 					"CapSubagents",
 					"CapSwitchModel",
+					"CapAdviceDelivery",
 				},
 			},
 			wantErr: false,
@@ -456,31 +549,36 @@ func TestNegotiateLevel_ConcurrentRace(t *testing.T) {
 }
 
 func TestCapability_JSONRoundTrip_Lossless_Explicit(t *testing.T) {
-	t.Run("All 20 boolean capability flags set to true", func(t *testing.T) {
+	t.Run("All boolean capability flags set to true", func(t *testing.T) {
 		manifest := CapabilityManifest{
-			AgentID:                "agent-full-20",
-			Version:                "1.0.0",
-			IntegrationLevel:       3,
-			SupportsEventStream:    true,
-			SupportsToolInspection: true,
-			SupportsDiffInspection: true,
-			SupportsCostTracking:   true,
-			SupportsHooks:          true,
-			SupportsHeadless:       true,
-			SupportsCLIControl:     true,
-			SupportsPause:          true,
-			SupportsCancel:         true,
-			SupportsResume:         true,
-			SupportsCheckpoint:     true,
-			SupportsRollback:       true,
-			SupportsMCP:            true,
-			SupportsSubagents:      true,
-			SupportsExtensions:     true,
-			SupportsSwitchModel:    true,
-			SupportsCustomProvider: true,
-			SupportsOpenAICompat:   true,
-			SupportsLocalModels:    true,
-			SupportsSDK:            true,
+			AgentID:                  "agent-full-25",
+			Version:                  "1.0.0",
+			IntegrationLevel:         3,
+			SupportsEventStream:      true,
+			SupportsToolInspection:   true,
+			SupportsDiffInspection:   true,
+			SupportsCostTracking:     true,
+			SupportsHooks:            true,
+			SupportsHeadless:         true,
+			SupportsCLIControl:       true,
+			SupportsPause:            true,
+			SupportsCancel:           true,
+			SupportsResume:           true,
+			SupportsCheckpoint:       true,
+			SupportsRollback:         true,
+			SupportsMCP:              true,
+			SupportsSubagents:        true,
+			SupportsExtensions:       true,
+			SupportsSwitchModel:      true,
+			SupportsCustomProvider:   true,
+			SupportsOpenAICompat:     true,
+			SupportsLocalModels:      true,
+			SupportsSDK:              true,
+			SupportsAdviceDelivery:   true,
+			SupportsContextInjection: true,
+			SupportsToolGate:         true,
+			SupportsTurnBoundary:     true,
+			SupportsInterventionAck:  true,
 		}
 
 		jsonBytes, err := json.Marshal(manifest)
@@ -497,28 +595,32 @@ func TestCapability_JSONRoundTrip_Lossless_Explicit(t *testing.T) {
 			t.Errorf("Header fields mismatch: got %+v, want %+v", restored, manifest)
 		}
 
-		// Verify all 20 boolean fields
 		bools := map[string]bool{
-			"SupportsEventStream":    restored.SupportsEventStream,
-			"SupportsToolInspection": restored.SupportsToolInspection,
-			"SupportsDiffInspection": restored.SupportsDiffInspection,
-			"SupportsCostTracking":   restored.SupportsCostTracking,
-			"SupportsHooks":          restored.SupportsHooks,
-			"SupportsHeadless":       restored.SupportsHeadless,
-			"SupportsCLIControl":     restored.SupportsCLIControl,
-			"SupportsPause":          restored.SupportsPause,
-			"SupportsCancel":         restored.SupportsCancel,
-			"SupportsResume":         restored.SupportsResume,
-			"SupportsCheckpoint":     restored.SupportsCheckpoint,
-			"SupportsRollback":       restored.SupportsRollback,
-			"SupportsMCP":            restored.SupportsMCP,
-			"SupportsSubagents":      restored.SupportsSubagents,
-			"SupportsExtensions":     restored.SupportsExtensions,
-			"SupportsSwitchModel":    restored.SupportsSwitchModel,
-			"SupportsCustomProvider": restored.SupportsCustomProvider,
-			"SupportsOpenAICompat":   restored.SupportsOpenAICompat,
-			"SupportsLocalModels":    restored.SupportsLocalModels,
-			"SupportsSDK":            restored.SupportsSDK,
+			"SupportsEventStream":      restored.SupportsEventStream,
+			"SupportsToolInspection":   restored.SupportsToolInspection,
+			"SupportsDiffInspection":   restored.SupportsDiffInspection,
+			"SupportsCostTracking":     restored.SupportsCostTracking,
+			"SupportsHooks":            restored.SupportsHooks,
+			"SupportsHeadless":         restored.SupportsHeadless,
+			"SupportsCLIControl":       restored.SupportsCLIControl,
+			"SupportsPause":            restored.SupportsPause,
+			"SupportsCancel":           restored.SupportsCancel,
+			"SupportsResume":           restored.SupportsResume,
+			"SupportsCheckpoint":       restored.SupportsCheckpoint,
+			"SupportsRollback":         restored.SupportsRollback,
+			"SupportsMCP":              restored.SupportsMCP,
+			"SupportsSubagents":        restored.SupportsSubagents,
+			"SupportsExtensions":       restored.SupportsExtensions,
+			"SupportsSwitchModel":      restored.SupportsSwitchModel,
+			"SupportsCustomProvider":   restored.SupportsCustomProvider,
+			"SupportsOpenAICompat":     restored.SupportsOpenAICompat,
+			"SupportsLocalModels":      restored.SupportsLocalModels,
+			"SupportsSDK":              restored.SupportsSDK,
+			"SupportsAdviceDelivery":   restored.SupportsAdviceDelivery,
+			"SupportsContextInjection": restored.SupportsContextInjection,
+			"SupportsToolGate":         restored.SupportsToolGate,
+			"SupportsTurnBoundary":     restored.SupportsTurnBoundary,
+			"SupportsInterventionAck":  restored.SupportsInterventionAck,
 		}
 
 		for name, val := range bools {
@@ -527,7 +629,7 @@ func TestCapability_JSONRoundTrip_Lossless_Explicit(t *testing.T) {
 			}
 		}
 
-		expectedMask := uint64((1 << 20) - 1)
+		expectedMask := CapabilityKnownMask
 		if restored.ToBitmask() != expectedMask {
 			t.Errorf("Bitmask mismatch after round-trip: got 0x%x, want 0x%x", restored.ToBitmask(), expectedMask)
 		}
@@ -535,29 +637,34 @@ func TestCapability_JSONRoundTrip_Lossless_Explicit(t *testing.T) {
 
 	t.Run("Alternating boolean flags pattern", func(t *testing.T) {
 		manifest := CapabilityManifest{
-			AgentID:                "agent-alt-20",
-			Version:                "2.0.0",
-			IntegrationLevel:       1,
-			SupportsEventStream:    true,  // Bit 0: true
-			SupportsToolInspection: false, // Bit 1: false
-			SupportsDiffInspection: true,  // Bit 2: true
-			SupportsCostTracking:   false, // Bit 3: false
-			SupportsHooks:          true,  // Bit 4: true
-			SupportsHeadless:       false, // Bit 5: false
-			SupportsCLIControl:     true,  // Bit 6: true
-			SupportsPause:          false, // Bit 7: false
-			SupportsCancel:         true,  // Bit 8: true
-			SupportsResume:         false, // Bit 9: false
-			SupportsCheckpoint:     true,  // Bit 10: true
-			SupportsRollback:       false, // Bit 11: false
-			SupportsMCP:            true,  // Bit 12: true
-			SupportsSubagents:      false, // Bit 13: false
-			SupportsExtensions:     true,  // Bit 14: true
-			SupportsSwitchModel:    false, // Bit 15: false
-			SupportsCustomProvider: true,  // Bit 16: true
-			SupportsOpenAICompat:   false, // Bit 17: false
-			SupportsLocalModels:    true,  // Bit 18: true
-			SupportsSDK:            false, // Bit 19: false
+			AgentID:                  "agent-alt-25",
+			Version:                  "2.0.0",
+			IntegrationLevel:         1,
+			SupportsEventStream:      true,  // Bit 0
+			SupportsToolInspection:   false, // Bit 1
+			SupportsDiffInspection:   true,  // Bit 2
+			SupportsCostTracking:     false, // Bit 3
+			SupportsHooks:            true,  // Bit 4
+			SupportsHeadless:         false, // Bit 5
+			SupportsCLIControl:       true,  // Bit 6
+			SupportsPause:            false, // Bit 7
+			SupportsCancel:           true,  // Bit 8
+			SupportsResume:           false, // Bit 9
+			SupportsCheckpoint:       true,  // Bit 10
+			SupportsRollback:         false, // Bit 11
+			SupportsMCP:              true,  // Bit 12
+			SupportsSubagents:        false, // Bit 13
+			SupportsExtensions:       true,  // Bit 14
+			SupportsSwitchModel:      false, // Bit 15
+			SupportsCustomProvider:   true,  // Bit 16
+			SupportsOpenAICompat:     false, // Bit 17
+			SupportsLocalModels:      true,  // Bit 18
+			SupportsSDK:              false, // Bit 19
+			SupportsAdviceDelivery:   true,  // Bit 20
+			SupportsContextInjection: false, // Bit 21
+			SupportsToolGate:         true,  // Bit 22
+			SupportsTurnBoundary:     false, // Bit 23
+			SupportsInterventionAck:  true,  // Bit 24
 		}
 
 		jsonBytes, err := json.Marshal(manifest)
@@ -599,7 +706,15 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 			checkBit:  19,
 			wantHas:   true,
 			wantLevel: 3,
-			wantMask:  0xFFFFF,
+			wantMask:  CapabilityKnownMask,
+		},
+		{
+			name:      "Full_uint64_bitmask_(all_bits_set)_bit24",
+			mask:      0xFFFFFFFFFFFFFFFF,
+			checkBit:  24,
+			wantHas:   true,
+			wantLevel: 3,
+			wantMask:  CapabilityKnownMask,
 		},
 		{
 			name:      "Full_uint64_bitmask_(all_bits_set)_bit63",
@@ -607,7 +722,7 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 			checkBit:  63,
 			wantHas:   false,
 			wantLevel: 3,
-			wantMask:  0xFFFFF,
+			wantMask:  CapabilityKnownMask,
 		},
 		{
 			name:      "Bit_19_only_(CapSDK)",
@@ -618,9 +733,17 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 			wantMask:  1 << 19,
 		},
 		{
-			name:      "Bit_20_(undefined_flag)",
+			name:      "Bit_20_only_(CapAdviceDelivery)",
 			mask:      1 << 20,
 			checkBit:  20,
+			wantHas:   true,
+			wantLevel: -1,
+			wantMask:  1 << 20,
+		},
+		{
+			name:      "Bit_25_(undefined_flag)",
+			mask:      1 << 25,
+			checkBit:  25,
 			wantHas:   false,
 			wantLevel: -1,
 			wantMask:  0,
@@ -640,6 +763,14 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 			wantHas:   true,
 			wantLevel: 0,
 			wantMask:  Level1RequiredMask &^ uint64(CapToolInspection),
+		},
+		{
+			name:      "Level_1_required_mask_minus_CapAdviceDelivery",
+			mask:      Level1RequiredMask &^ uint64(CapAdviceDelivery),
+			checkBit:  0,
+			wantHas:   true,
+			wantLevel: 0,
+			wantMask:  Level1RequiredMask &^ uint64(CapAdviceDelivery),
 		},
 		{
 			name:      "Level_2_required_mask_minus_CapPause",

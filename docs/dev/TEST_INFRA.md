@@ -1,9 +1,10 @@
-# E2E Test Infra: Reinframe Issues #7 & #9
+# Integration Test Infra: Reinframe Issues #7 & #9
 
 ## Test Philosophy
-- Opaque-box, requirement-driven E2E test suite for Reinframe Anti-Tunnel Supervision Harness.
+- Opaque-box, requirement-driven integration and scenario-persistence suite for Reinframe foundation packages.
 - Tests verify Capability Manifest & Handshake Negotiation (Issue #7) and SQLite WAL Event Store (Issue #9).
-- Methodology: 4-Tier Category-Partition + Boundary Value Analysis + Pairwise Combinatorial + Real-World Workload Testing.
+- Methodology: 4-Tier Category-Partition + Boundary Value Analysis + Pairwise Combinatorial + scenario persistence workloads.
+- **Not** a full Anti-Tunnel E2E: Detector, Reviewer, Policy Engine, Intervention Executor, Git rollback, and Orchestrator are not implemented; Tier-4 cases hand-build protocol structs and assert store/query behavior (graceful reopen, not process-crash recovery).
 
 ## Feature Inventory Test Mapping
 | # | Feature | Unit / E2E Target | Tier 1 | Tier 2 | Tier 3 | Tier 4 | Pass/Fail Criteria |
@@ -21,7 +22,7 @@
 - **Tier 1 (Feature Coverage)**: ≥40 test cases (5 per feature across 8 features)
 - **Tier 2 (Boundary & Corner Cases)**: ≥40 test cases (5 per feature across 8 features)
 - **Tier 3 (Cross-Feature Pairwise Interactions)**: ≥10 test scenarios
-- **Tier 4 (Real-World Application Scenarios)**: ≥4 complete E2E agent supervision workflows
+- **Tier 4 (Scenario Persistence Workloads)**: ≥4 hand-built multi-event store/query scenarios (not live Detector→Git supervision)
 
 ## Test Execution Command
 ```bash

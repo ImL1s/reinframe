@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/reinframe/reinframe/pkg/protocol"
-	"github.com/reinframe/reinframe/pkg/state"
+	"github.com/ImL1s/reinframe/pkg/protocol"
+	"github.com/ImL1s/reinframe/pkg/state"
 )
 
 // ============================================================================
@@ -600,7 +600,8 @@ func TestTier3_Pairwise_DegradationEventSequenceContiguity(t *testing.T) {
 	}
 }
 
-// 10. Store Persistence & WAL Recovery After Degraded Handshake Session
+// 10. Store persistence after graceful reopen following a degraded handshake session
+// (Close + NewStore on the same file — not process-crash recovery).
 func TestTier3_Pairwise_StoreRecoveryAfterDegradedHandshake(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "events.db")
 	opts := state.StoreOptions{DatabasePath: dbPath, BusyTimeout: 5000 * time.Millisecond}
@@ -611,7 +612,7 @@ func TestTier3_Pairwise_StoreRecoveryAfterDegradedHandshake(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	sid := "sess-wal-degraded-recovery"
+	sid := "sess-wal-degraded-reopen"
 	req := &protocol.HandshakeRequest{
 		SessionID:      sid,
 		RequestedLevel: 3,
@@ -654,10 +655,10 @@ func TestTier3_Pairwise_StoreRecoveryAfterDegradedHandshake(t *testing.T) {
 		t.Fatalf("s1 Close failed: %v", err)
 	}
 
-	// Re-open store to verify WAL journal auto-recovery
+	// Re-open store after graceful close (scenario persistence, not process-crash recovery)
 	s2, err := state.NewStore(opts)
 	if err != nil {
-		t.Fatalf("s2 NewStore recovery failed: %v", err)
+		t.Fatalf("s2 NewStore graceful reopen failed: %v", err)
 	}
 	defer s2.Close()
 
@@ -666,14 +667,14 @@ func TestTier3_Pairwise_StoreRecoveryAfterDegradedHandshake(t *testing.T) {
 		t.Fatalf("GetLatestSequenceNum failed: %v", err)
 	}
 	if latestSeq != 6 {
-		t.Errorf("Expected sequence 6 after recovery, got %d", latestSeq)
+		t.Errorf("Expected sequence 6 after graceful reopen, got %d", latestSeq)
 	}
 
 	events, err := s2.QueryEvents(ctx, state.EventFilter{SessionID: sid, Ascending: true})
 	if err != nil || len(events) != 6 {
-		t.Fatalf("QueryEvents recovered session failed: len=%d err=%v", len(events), err)
+		t.Fatalf("QueryEvents after reopen failed: len=%d err=%v", len(events), err)
 	}
 	if events[0].EventType != "handshake_degraded" {
-		t.Errorf("First recovered event mismatch: got %s, expected handshake_degraded", events[0].EventType)
+		t.Errorf("First reopened-session event mismatch: got %s, expected handshake_degraded", events[0].EventType)
 	}
 }

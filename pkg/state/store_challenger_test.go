@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/reinframe/reinframe/pkg/protocol"
-	"github.com/reinframe/reinframe/pkg/state"
+	"github.com/ImL1s/reinframe/pkg/protocol"
+	"github.com/ImL1s/reinframe/pkg/state"
 )
 
 // TestChallenger_EmptyFilters tests edge cases around empty or partially empty filters.

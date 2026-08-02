@@ -1,4 +1,4 @@
-module github.com/reinframe/reinframe
+module github.com/ImL1s/reinframe
 
 go 1.25.0
 

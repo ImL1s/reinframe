@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/reinframe/reinframe/pkg/protocol"
-	"github.com/reinframe/reinframe/pkg/state"
+	"github.com/ImL1s/reinframe/pkg/protocol"
+	"github.com/ImL1s/reinframe/pkg/state"
 	_ "modernc.org/sqlite"
 )
 
@@ -1119,9 +1119,10 @@ func TestTier2_Concurrency_StoreClosedDuringAppend(t *testing.T) {
 
 func TestTier2_Concurrency_BusyTimeoutExceeded(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "busy_timeout_test.db")
+	// Short per-attempt busy_timeout; AppendEvents still retries via runTxWithRetry (~5s budget).
 	store, err := state.NewStore(state.StoreOptions{
 		DatabasePath: dbPath,
-		BusyTimeout:  500 * time.Millisecond,
+		BusyTimeout:  100 * time.Millisecond,
 		MaxOpenConns: 5,
 		MaxIdleConns: 2,
 	})
@@ -1136,8 +1137,9 @@ func TestTier2_Concurrency_BusyTimeoutExceeded(t *testing.T) {
 	}
 	defer rawDB.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	// Do not share a short deadline with the append retry budget — exclusive lock hold + retry
+	// can take several seconds; post-release AppendEvent must still have a live context.
+	ctx := context.Background()
 
 	rawConn, err := rawDB.Conn(ctx)
 	if err != nil {
@@ -1163,7 +1165,7 @@ func TestTier2_Concurrency_BusyTimeoutExceeded(t *testing.T) {
 		Payload:     json.RawMessage("{}"),
 	}
 
-	// Attempt AppendEvent while DB is locked exclusively. Store busy timeout is 50ms.
+	// While exclusively locked, busy-aware AppendEvent should exhaust retry budget and fail.
 	appendErr := store.AppendEvent(ctx, evt)
 	if appendErr == nil {
 		t.Errorf("Expected busy/lock timeout error from AppendEvent, got nil")

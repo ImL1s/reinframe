@@ -331,14 +331,13 @@ func TestTier4_Scenario2_RestrictedLegacyAgentDegradation(t *testing.T) {
 	}
 }
 
-// Scenario 3: Anomaly Detection, Tunnel Intervention & State Rollback (L2 Guarded Workflow)
 // Scenario 3: Hand-built tunnel_signal / assessment / intervention / rollback_result
 // records are written and re-read. Does not run detectors, policy, or real Git rollback.
-func TestTier4_Scenario3_AnomalyDetectionInterventionRollback(t *testing.T) {
+func TestTier4_Scenario3_HandBuiltAnomalyRecordsPersistence(t *testing.T) {
 	store, _ := setupTestStore(t)
 	ctx := context.Background()
 
-	sessionID := "sess-realworld-l2-anomaly-rollback"
+	sessionID := "sess-realworld-l2-anomaly-records"
 
 	// 1. Negotiate Level 2 Guarded mode
 	req := &protocol.HandshakeRequest{

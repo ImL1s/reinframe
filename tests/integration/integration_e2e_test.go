@@ -602,7 +602,7 @@ func TestTier3_Pairwise_DegradationEventSequenceContiguity(t *testing.T) {
 
 // 10. Store persistence after graceful reopen following a degraded handshake session
 // (Close + NewStore on the same file — not process-crash recovery).
-func TestTier3_Pairwise_StoreRecoveryAfterDegradedHandshake(t *testing.T) {
+func TestTier3_Pairwise_StorePersistenceAfterGracefulReopen(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "events.db")
 	opts := state.StoreOptions{DatabasePath: dbPath, BusyTimeout: 5000 * time.Millisecond}
 

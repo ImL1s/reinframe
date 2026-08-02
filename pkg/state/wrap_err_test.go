@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -33,9 +34,18 @@ func TestWrapDBErr_DoesNotMaskDomainErrorWhenClosedFlag(t *testing.T) {
 		t.Fatalf("expected ErrDuplicateEventID preserved, got %v", got)
 	}
 
+	inv := fmt.Errorf("%w: missing fields", ErrInvalidEvent)
+	got = s.wrapDBErr(inv)
+	if !errors.Is(got, ErrInvalidEvent) {
+		t.Fatalf("expected ErrInvalidEvent preserved, got %v", got)
+	}
+
 	// True closed-connection errors still map to ErrStoreClosed.
 	if !errors.Is(s.wrapDBErr(errors.New("sql: database is closed")), ErrStoreClosed) {
 		t.Fatalf("expected database-is-closed string to map to ErrStoreClosed")
+	}
+	if !errors.Is(s.wrapDBErr(sql.ErrConnDone), ErrStoreClosed) {
+		t.Fatalf("expected sql.ErrConnDone to map to ErrStoreClosed")
 	}
 	// Closed window maps all non-domain operational noise (not only interrupt/busy).
 	for _, msg := range []string{

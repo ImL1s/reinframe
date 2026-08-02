@@ -1,10 +1,10 @@
-# Reinframe — Anti-Tunnel Supervision Harness for AI Coding Agents
+# Reinframe — Anti-Tunnel Supervision Harness (in progress)
 
 [![CI](https://github.com/ImL1s/reinframe/actions/workflows/ci.yml/badge.svg)](https://github.com/ImL1s/reinframe/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Reinframe is a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go. It provides real-time supervision, capability negotiation, and append-only event auditing powered by SQLite WAL state persistence and JSON-RPC 2.0 / NDJSON protocol interfaces.
+Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go. **Today** the repository ships library foundations only: canonical protocol schemas, capability negotiation, JSON validation, and an append-only SQLite WAL event store — not a live end-to-end supervisor.
 
 ## Project Status
 
@@ -27,12 +27,12 @@ Reinframe is a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Ha
 
 ## Project Objective
 
-AI coding agents running in high-autonomy environments risk "tunneling" — executing unauthorized filesystem operations, excessive API calls, or unmonitored code modifications without structured supervision checkpoints. Reinframe provides:
+AI coding agents running in high-autonomy environments risk "tunneling" — executing unauthorized filesystem operations, excessive API calls, or unmonitored code modifications without structured supervision checkpoints. Reinframe is being built toward:
 
-1. **Supervision Levels (0–3)**: Graceful degradation model from passive observation (Level 0) to full headless control (Level 3).
-2. **Canonical Agent Event Schema**: 22 standardized Go struct models validated against JSON Schemas.
-3. **SQLite WAL Persistence Engine**: Append-only event store with WAL, busy-aware writers, and persistence invariants (schema validation stays at the protocol/ingestion layer).
-4. **Integration Test Suite**: Multi-tier integration and scenario-persistence tests for protocol + store packages (not full Detector→Git E2E).
+1. **Supervision Levels (0–3)** *(planned runtime)*: Graceful degradation from passive observation (Level 0) to full headless control (Level 3).
+2. **Canonical Agent Event Schema** *(available)*: 22 standardized Go struct models validated against JSON Schemas.
+3. **SQLite WAL Persistence Engine** *(available)*: Append-only event store with WAL, busy-aware writers, and persistence invariants (schema validation stays at the protocol/ingestion layer).
+4. **Integration Test Suite** *(available)*: Multi-tier integration and scenario-persistence tests for protocol + store packages (not full Detector→Git E2E).
 
 ---
 

@@ -1,7 +1,7 @@
 # Reinframe P0/P1 Issue Resolution — PROJECT.md
 
 ## Architecture
-Reinframe is a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go, powered by SQLite WAL state persistence and JSON-RPC 2.0 / NDJSON protocol interfaces.
+Reinframe is a cross-platform (Windows, macOS, Linux) Go project **building toward** an Anti-Tunnel Supervision Harness. Current shipped surface is protocol + SQLite WAL store libraries (not a complete live supervisor).
 
 ### Core Modules
 - `pkg/state/`: SQLite WAL-backed append-only event store and migration engine.

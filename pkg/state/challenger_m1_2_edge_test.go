@@ -192,6 +192,7 @@ func TestChallenger_ContextCancelRacingWithClose(t *testing.T) {
 	var wg sync.WaitGroup
 	startSignal := make(chan struct{})
 	errChan := make(chan error, numWorkers*opsPerWorker)
+	closeErrCh := make(chan error, 1)
 
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
@@ -219,16 +220,22 @@ func TestChallenger_ContextCancelRacingWithClose(t *testing.T) {
 		}(w)
 	}
 
-	// Close racing after short delay
+	// Close racing after short delay; wait for closer before test ends.
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		<-startSignal
 		time.Sleep(1 * time.Millisecond)
-		_ = store.Close()
+		closeErrCh <- store.Close()
 	}()
 
 	close(startSignal)
 	wg.Wait()
 	close(errChan)
+
+	if err := <-closeErrCh; err != nil {
+		t.Errorf("Close during race returned unexpected error: %v", err)
+	}
 
 	for err := range errChan {
 		isAllowed := errors.Is(err, state.ErrStoreClosed) ||

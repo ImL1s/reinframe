@@ -42,8 +42,8 @@ const (
 
 const (
 	Level0RequiredMask uint64 = uint64(CapEventStream)
-	Level1RequiredMask uint64 = Level0RequiredMask | uint64(CapToolInspection) | uint64(CapPause) | uint64(CapCancel) | uint64(CapResume)
-	Level2RequiredMask uint64 = Level1RequiredMask | uint64(CapDiffInspection) | uint64(CapCheckpoint) | uint64(CapRollback)
+	Level1RequiredMask uint64 = Level0RequiredMask | uint64(CapToolInspection)
+	Level2RequiredMask uint64 = Level1RequiredMask | uint64(CapDiffInspection) | uint64(CapPause) | uint64(CapCancel) | uint64(CapResume) | uint64(CapCheckpoint) | uint64(CapRollback)
 	Level3RequiredMask uint64 = Level2RequiredMask | uint64(CapHeadless) | uint64(CapCLIControl) | uint64(CapMCP) | uint64(CapSubagents) | uint64(CapSwitchModel)
 )
 
@@ -99,7 +99,7 @@ type HandshakeResponse struct {
 	MissingFlags    []string `json:"missing_flags,omitempty"`
 }
 
-// ToBitmask combines boolean capability flags and IntegrationLevel defaults into a uint64 bitmask.
+// ToBitmask combines explicit boolean capability flags into a uint64 bitmask.
 func (m CapabilityManifest) ToBitmask() uint64 {
 	if m.hasRawBitmask {
 		return m.rawBitmask
@@ -107,6 +107,27 @@ func (m CapabilityManifest) ToBitmask() uint64 {
 
 	var mask uint64
 
+	if m.SupportsEventStream {
+		mask |= uint64(CapEventStream)
+	}
+	if m.SupportsToolInspection {
+		mask |= uint64(CapToolInspection)
+	}
+	if m.SupportsDiffInspection {
+		mask |= uint64(CapDiffInspection)
+	}
+	if m.SupportsCostTracking {
+		mask |= uint64(CapCostTracking)
+	}
+	if m.SupportsHooks {
+		mask |= uint64(CapHooks)
+	}
+	if m.SupportsHeadless {
+		mask |= uint64(CapHeadless)
+	}
+	if m.SupportsCLIControl {
+		mask |= uint64(CapCLIControl)
+	}
 	if m.SupportsPause {
 		mask |= uint64(CapPause)
 	}
@@ -125,22 +146,26 @@ func (m CapabilityManifest) ToBitmask() uint64 {
 	if m.SupportsMCP {
 		mask |= uint64(CapMCP)
 	}
-
-	switch m.IntegrationLevel {
-	case 3:
-		mask |= Level3RequiredMask
-	case 2:
-		mask |= Level2RequiredMask
-	case 1:
-		mask |= Level1RequiredMask
-	case 0:
-		mask |= Level0RequiredMask
-	default:
-		if m.IntegrationLevel > 3 {
-			mask |= Level3RequiredMask
-		} else if m.IntegrationLevel >= 0 {
-			mask |= Level0RequiredMask
-		}
+	if m.SupportsSubagents {
+		mask |= uint64(CapSubagents)
+	}
+	if m.SupportsExtensions {
+		mask |= uint64(CapExtensions)
+	}
+	if m.SupportsSwitchModel {
+		mask |= uint64(CapSwitchModel)
+	}
+	if m.SupportsCustomProvider {
+		mask |= uint64(CapCustomProvider)
+	}
+	if m.SupportsOpenAICompat {
+		mask |= uint64(CapOpenAICompat)
+	}
+	if m.SupportsLocalModels {
+		mask |= uint64(CapLocalModels)
+	}
+	if m.SupportsSDK {
+		mask |= uint64(CapSDK)
 	}
 
 	return mask
@@ -149,14 +174,28 @@ func (m CapabilityManifest) ToBitmask() uint64 {
 // FromBitmask populates a CapabilityManifest struct from a bitmask.
 func FromBitmask(mask uint64) CapabilityManifest {
 	manifest := CapabilityManifest{
-		SupportsPause:      (mask & uint64(CapPause)) != 0,
-		SupportsCancel:     (mask & uint64(CapCancel)) != 0,
-		SupportsResume:     (mask & uint64(CapResume)) != 0,
-		SupportsCheckpoint: (mask & uint64(CapCheckpoint)) != 0,
-		SupportsRollback:   (mask & uint64(CapRollback)) != 0,
-		SupportsMCP:        (mask & uint64(CapMCP)) != 0,
-		rawBitmask:         mask,
-		hasRawBitmask:      true,
+		SupportsEventStream:    (mask & uint64(CapEventStream)) != 0,
+		SupportsToolInspection: (mask & uint64(CapToolInspection)) != 0,
+		SupportsDiffInspection: (mask & uint64(CapDiffInspection)) != 0,
+		SupportsCostTracking:   (mask & uint64(CapCostTracking)) != 0,
+		SupportsHooks:          (mask & uint64(CapHooks)) != 0,
+		SupportsHeadless:       (mask & uint64(CapHeadless)) != 0,
+		SupportsCLIControl:     (mask & uint64(CapCLIControl)) != 0,
+		SupportsPause:          (mask & uint64(CapPause)) != 0,
+		SupportsCancel:         (mask & uint64(CapCancel)) != 0,
+		SupportsResume:         (mask & uint64(CapResume)) != 0,
+		SupportsCheckpoint:     (mask & uint64(CapCheckpoint)) != 0,
+		SupportsRollback:       (mask & uint64(CapRollback)) != 0,
+		SupportsMCP:            (mask & uint64(CapMCP)) != 0,
+		SupportsSubagents:      (mask & uint64(CapSubagents)) != 0,
+		SupportsExtensions:     (mask & uint64(CapExtensions)) != 0,
+		SupportsSwitchModel:    (mask & uint64(CapSwitchModel)) != 0,
+		SupportsCustomProvider: (mask & uint64(CapCustomProvider)) != 0,
+		SupportsOpenAICompat:   (mask & uint64(CapOpenAICompat)) != 0,
+		SupportsLocalModels:    (mask & uint64(CapLocalModels)) != 0,
+		SupportsSDK:            (mask & uint64(CapSDK)) != 0,
+		rawBitmask:             mask,
+		hasRawBitmask:          true,
 	}
 	manifest.IntegrationLevel = EvaluateAchievableLevelFromMask(mask)
 	return manifest

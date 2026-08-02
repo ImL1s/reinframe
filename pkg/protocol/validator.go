@@ -1,86 +1,84 @@
 package protocol
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"strings"
-	"sync"
 	"unicode"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 
+// MaxPayloadSize sets the upper limit (1MB) on event payloads to prevent DoS attacks.
+const MaxPayloadSize = 1 * 1024 * 1024
+
 //go:embed schemas/*.json
 var embeddedSchemas embed.FS
 
-var (
-	schemaCache map[string]*jsonschema.Schema
-	schemaOnce  sync.Once
-	schemaErr   error
-)
+var schemaCache map[string]*jsonschema.Schema
 
-// LoadSchemas compiles and caches all embedded JSON schemas into memory.
-func LoadSchemas() error {
-	schemaOnce.Do(func() {
-		compiler := jsonschema.NewCompiler()
-		compiler.Draft = jsonschema.Draft7
+func init() {
+	compiler := jsonschema.NewCompiler()
+	compiler.Draft = jsonschema.Draft7
 
-		entries, err := fs.ReadDir(embeddedSchemas, "schemas")
+	entries, err := fs.ReadDir(embeddedSchemas, "schemas")
+	if err != nil {
+		panic(fmt.Sprintf("failed to read embedded schemas directory: %v", err))
+	}
+
+	// Pass 1: Register all schemas as resources so cross-references ($ref) resolve cleanly
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		filePath := "schemas/" + entry.Name()
+		data, err := embeddedSchemas.ReadFile(filePath)
 		if err != nil {
-			schemaErr = fmt.Errorf("failed to read embedded schemas directory: %w", err)
-			return
+			panic(fmt.Sprintf("failed to read embedded schema file %s: %v", entry.Name(), err))
 		}
 
-		// Pass 1: Register all schemas as resources so cross-references ($ref) resolve cleanly
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
+		url := "https://reinframe.dev/schemas/" + entry.Name()
+		if err := compiler.AddResource(url, strings.NewReader(string(data))); err != nil {
+			panic(fmt.Sprintf("failed to add schema resource %s: %v", url, err))
+		}
+	}
 
-			filePath := "schemas/" + entry.Name()
-			data, err := embeddedSchemas.ReadFile(filePath)
-			if err != nil {
-				schemaErr = fmt.Errorf("failed to read embedded schema file %s: %w", entry.Name(), err)
-				return
-			}
-
-			url := "https://reinframe.dev/schemas/" + entry.Name()
-			if err := compiler.AddResource(url, strings.NewReader(string(data))); err != nil {
-				schemaErr = fmt.Errorf("failed to add schema resource %s: %w", url, err)
-				return
-			}
+	// Pass 2: Compile schemas and cache them by snake_case type name
+	cache := make(map[string]*jsonschema.Schema)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
 		}
 
-		// Pass 2: Compile schemas and cache them by snake_case type name
-		cache := make(map[string]*jsonschema.Schema)
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-
-			url := "https://reinframe.dev/schemas/" + entry.Name()
-			sch, err := compiler.Compile(url)
-			if err != nil {
-				schemaErr = fmt.Errorf("failed to compile schema %s: %w", entry.Name(), err)
-				return
-			}
-
-			typeName := strings.TrimSuffix(entry.Name(), ".json")
-			cache[typeName] = sch
+		url := "https://reinframe.dev/schemas/" + entry.Name()
+		sch, err := compiler.Compile(url)
+		if err != nil {
+			panic(fmt.Sprintf("failed to compile schema %s: %v", entry.Name(), err))
 		}
 
-		schemaCache = cache
-	})
+		typeName := strings.TrimSuffix(entry.Name(), ".json")
+		cache[typeName] = sch
+	}
 
-	return schemaErr
+	schemaCache = cache
+}
+
+// LoadSchemas returns nil since schemas are pre-compiled at package initialization (fail-fast).
+func LoadSchemas() error {
+	if schemaCache == nil {
+		return fmt.Errorf("schema cache not initialized")
+	}
+	return nil
 }
 
 // ValidateEvent normalizes schemaType to snake_case and validates raw JSON payload against the corresponding compiled schema.
 func ValidateEvent(payload []byte, schemaType string) error {
-	if err := LoadSchemas(); err != nil {
-		return fmt.Errorf("failed to initialize schema validator: %w", err)
+	if len(payload) > MaxPayloadSize {
+		return fmt.Errorf("payload size %d exceeds maximum limit of %d bytes", len(payload), MaxPayloadSize)
 	}
 
 	normalized := toSnakeCase(schemaType)
@@ -89,8 +87,10 @@ func ValidateEvent(payload []byte, schemaType string) error {
 		return fmt.Errorf("unknown schema type: %q (normalized: %q)", schemaType, normalized)
 	}
 
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
 	var v any
-	if err := json.Unmarshal(payload, &v); err != nil {
+	if err := decoder.Decode(&v); err != nil {
 		return fmt.Errorf("malformed JSON payload: %w", err)
 	}
 

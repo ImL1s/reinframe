@@ -140,6 +140,9 @@ func TestChallengerR2_DegradationAndMissingFlagsExactness(t *testing.T) {
 				"CapDiffInspection",
 				"CapHeadless",
 				"CapCLIControl",
+				"CapPause",
+				"CapCancel",
+				"CapResume",
 				"CapCheckpoint",
 				"CapRollback",
 				"CapMCP",
@@ -155,6 +158,9 @@ func TestChallengerR2_DegradationAndMissingFlagsExactness(t *testing.T) {
 			wantNegotiated:   1,
 			wantMissing: []string{
 				"CapDiffInspection",
+				"CapPause",
+				"CapCancel",
+				"CapResume",
 				"CapCheckpoint",
 				"CapRollback",
 			},
@@ -167,9 +173,6 @@ func TestChallengerR2_DegradationAndMissingFlagsExactness(t *testing.T) {
 			wantNegotiated:   0,
 			wantMissing: []string{
 				"CapToolInspection",
-				"CapPause",
-				"CapCancel",
-				"CapResume",
 			},
 		},
 	}

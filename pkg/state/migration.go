@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
-	"path/filepath"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,7 +61,7 @@ func RunMigrationsContext(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("invalid migration version in file %s: %w", entry.Name(), err)
 		}
 
-		content, err := migrationFS.ReadFile(filepath.Join("migrations", entry.Name()))
+		content, err := migrationFS.ReadFile(path.Join("migrations", entry.Name()))
 		if err != nil {
 			return fmt.Errorf("failed to read migration file %s: %w", entry.Name(), err)
 		}

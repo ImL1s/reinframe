@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,6 +18,9 @@ import (
 
 // TestChallenger_ConcurrentReadWriteStress tests 100 writers and 50 readers running concurrently against a SQLite WAL store.
 func TestChallenger_ConcurrentReadWriteStress(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping heavy concurrent stress test on Windows — NTFS file locking causes SQLITE_BUSY under CI contention")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -256,6 +260,9 @@ func TestChallenger_NanosecondTimestampPrecision(t *testing.T) {
 
 // TestChallenger_Extreme500GoroutinesStress stress-tests SQLite WAL store with 500 concurrent goroutines (350 writers + 150 readers).
 func TestChallenger_Extreme500GoroutinesStress(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping extreme stress test on Windows — NTFS file locking causes SQLITE_BUSY under heavy contention")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 

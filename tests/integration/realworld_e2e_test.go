@@ -8,15 +8,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/reinframe/reinframe/pkg/protocol"
-	"github.com/reinframe/reinframe/pkg/state"
+	"github.com/ImL1s/reinframe/pkg/protocol"
+	"github.com/ImL1s/reinframe/pkg/state"
 )
 
 // ============================================================================
-// Tier 4: Real-World Application Scenarios (E2E Agent Supervision Lifecycles)
+// Tier 4: Scenario persistence workloads (hand-built protocol events → store/query).
+// These are NOT full Anti-Tunnel E2E: no live Detector, Reviewer, Policy Engine,
+// Intervention Executor, Git rollback, or Supervisor Orchestrator is executed.
 // ============================================================================
 
-// Scenario 1: Unattended High-Control Agent Lifecycle (L3 Full-Control)
+// Scenario 1: Hand-built L3 lifecycle events persisted and queried in order.
 func TestTier4_Scenario1_UnattendedHighControlAgentLifecycle(t *testing.T) {
 	store, _ := setupTestStore(t)
 	ctx := context.Background()
@@ -329,12 +331,13 @@ func TestTier4_Scenario2_RestrictedLegacyAgentDegradation(t *testing.T) {
 	}
 }
 
-// Scenario 3: Anomaly Detection, Tunnel Intervention & State Rollback (L2 Guarded Workflow)
-func TestTier4_Scenario3_AnomalyDetectionInterventionRollback(t *testing.T) {
+// Scenario 3: Hand-built tunnel_signal / assessment / intervention / rollback_result
+// records are written and re-read. Does not run detectors, policy, or real Git rollback.
+func TestTier4_Scenario3_HandBuiltAnomalyRecordsPersistence(t *testing.T) {
 	store, _ := setupTestStore(t)
 	ctx := context.Background()
 
-	sessionID := "sess-realworld-l2-anomaly-rollback"
+	sessionID := "sess-realworld-l2-anomaly-records"
 
 	// 1. Negotiate Level 2 Guarded mode
 	req := &protocol.HandshakeRequest{
@@ -510,8 +513,9 @@ func TestTier4_Scenario3_AnomalyDetectionInterventionRollback(t *testing.T) {
 	}
 }
 
-// Scenario 4: Store Crash, WAL Recovery & Audit Trail Replay
-func TestTier4_Scenario4_StoreCrashWALRecoveryAndReplay(t *testing.T) {
+// Scenario 4: Graceful Close + reopen of the same SQLite file, then replay query.
+// This is NOT process-crash / SIGKILL / uncommitted-tx recovery — only orderly Close/NewStore.
+func TestTier4_Scenario4_StoreGracefulReopenAndReplay(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "events.db")
 	opts := state.StoreOptions{
 		DatabasePath: dbPath,
@@ -520,7 +524,7 @@ func TestTier4_Scenario4_StoreCrashWALRecoveryAndReplay(t *testing.T) {
 		MaxIdleConns: 2,
 	}
 
-	sessionID := "sess-crash-recovery-test"
+	sessionID := "sess-graceful-reopen-test"
 
 	// 1. Initial Store instance streams 50 events
 	s1, err := state.NewStore(opts)
@@ -534,12 +538,12 @@ func TestTier4_Scenario4_StoreCrashWALRecoveryAndReplay(t *testing.T) {
 
 	for i := 1; i <= totalEvents; i++ {
 		batch = append(batch, &protocol.AgentEvent{
-			EventID:     fmt.Sprintf("evt-crash-%d", i),
+			EventID:     fmt.Sprintf("evt-reopen-%d", i),
 			SessionID:   sessionID,
 			SequenceNum: int64(i),
 			EventType:   "audit_record",
 			Timestamp:   time.Now().UTC(),
-			Payload:     json.RawMessage(fmt.Sprintf(`{"audit_index":%d,"data":"uncheckpointed_wal_frame"}`, i)),
+			Payload:     json.RawMessage(fmt.Sprintf(`{"audit_index":%d,"data":"persisted_before_graceful_close"}`, i)),
 		})
 	}
 
@@ -547,25 +551,25 @@ func TestTier4_Scenario4_StoreCrashWALRecoveryAndReplay(t *testing.T) {
 		t.Fatalf("AppendEvents 50 items failed: %v", err)
 	}
 
-	// 2. Abruptly close database connection without manual WAL checkpointing
+	// 2. Graceful Close (not process crash / SIGKILL)
 	if err := s1.Close(); err != nil {
 		t.Fatalf("s1 Close failed: %v", err)
 	}
 
-	// 3. Re-open SQLite store (triggers automatic SQLite WAL journal recovery)
+	// 3. Re-open the same DB file (graceful reopen; SQLite may apply clean WAL if any)
 	s2, err := state.NewStore(opts)
 	if err != nil {
-		t.Fatalf("NewStore s2 recovery failed: %v", err)
+		t.Fatalf("NewStore s2 graceful reopen failed: %v", err)
 	}
 	defer s2.Close()
 
 	// 4. Verify Latest Sequence Number is 50
 	latestSeq, err := s2.GetLatestSequenceNum(ctx, sessionID)
 	if err != nil {
-		t.Fatalf("GetLatestSequenceNum post-crash failed: %v", err)
+		t.Fatalf("GetLatestSequenceNum post-reopen failed: %v", err)
 	}
 	if latestSeq != totalEvents {
-		t.Fatalf("Expected latest sequence %d after recovery, got %d", totalEvents, latestSeq)
+		t.Fatalf("Expected latest sequence %d after reopen, got %d", totalEvents, latestSeq)
 	}
 
 	// 5. Query all 50 events and verify zero data loss or corruption
@@ -574,16 +578,16 @@ func TestTier4_Scenario4_StoreCrashWALRecoveryAndReplay(t *testing.T) {
 		Ascending: true,
 	})
 	if err != nil {
-		t.Fatalf("QueryEvents post-recovery failed: %v", err)
+		t.Fatalf("QueryEvents post-reopen failed: %v", err)
 	}
 	if len(events) != totalEvents {
-		t.Fatalf("Expected %d events retrieved after WAL recovery, got %d", totalEvents, len(events))
+		t.Fatalf("Expected %d events retrieved after graceful reopen, got %d", totalEvents, len(events))
 	}
 
 	for idx, evt := range events {
 		expectedSeq := int64(idx + 1)
 		if evt.SequenceNum != expectedSeq {
-			t.Errorf("Sequence gap post-recovery at index %d: got %d, expected %d", idx, evt.SequenceNum, expectedSeq)
+			t.Errorf("Sequence gap post-reopen at index %d: got %d, expected %d", idx, evt.SequenceNum, expectedSeq)
 		}
 		if evt.EventType != "audit_record" {
 			t.Errorf("Corrupted event type at index %d: got %s", idx, evt.EventType)

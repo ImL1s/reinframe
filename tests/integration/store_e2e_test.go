@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/reinframe/reinframe/pkg/protocol"
-	"github.com/reinframe/reinframe/pkg/state"
+	"github.com/ImL1s/reinframe/pkg/protocol"
+	"github.com/ImL1s/reinframe/pkg/state"
 	_ "modernc.org/sqlite"
 )
 
@@ -1119,9 +1119,10 @@ func TestTier2_Concurrency_StoreClosedDuringAppend(t *testing.T) {
 
 func TestTier2_Concurrency_BusyTimeoutExceeded(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "busy_timeout_test.db")
+	// Short per-attempt busy_timeout; AppendEvents still retries via runTxWithRetry (~5s budget).
 	store, err := state.NewStore(state.StoreOptions{
 		DatabasePath: dbPath,
-		BusyTimeout:  500 * time.Millisecond,
+		BusyTimeout:  100 * time.Millisecond,
 		MaxOpenConns: 5,
 		MaxIdleConns: 2,
 	})
@@ -1136,8 +1137,9 @@ func TestTier2_Concurrency_BusyTimeoutExceeded(t *testing.T) {
 	}
 	defer rawDB.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	// Do not share a short deadline with the append retry budget — exclusive lock hold + retry
+	// can take several seconds; post-release AppendEvent must still have a live context.
+	ctx := context.Background()
 
 	rawConn, err := rawDB.Conn(ctx)
 	if err != nil {
@@ -1163,7 +1165,7 @@ func TestTier2_Concurrency_BusyTimeoutExceeded(t *testing.T) {
 		Payload:     json.RawMessage("{}"),
 	}
 
-	// Attempt AppendEvent while DB is locked exclusively. Store busy timeout is 50ms.
+	// While exclusively locked, busy-aware AppendEvent should exhaust retry budget and fail.
 	appendErr := store.AppendEvent(ctx, evt)
 	if appendErr == nil {
 		t.Errorf("Expected busy/lock timeout error from AppendEvent, got nil")
@@ -1182,6 +1184,78 @@ func TestTier2_Concurrency_BusyTimeoutExceeded(t *testing.T) {
 	// Verify that after lock release, AppendEvent succeeds
 	if err := store.AppendEvent(ctx, evt); err != nil {
 		t.Errorf("Expected AppendEvent to succeed after lock release, got: %v", err)
+	}
+}
+
+// TestTier2_Concurrency_AppendRetriesThroughTransientBusy proves a single AppendEvent
+// call succeeds after a transient exclusive lock is released mid-call (runTxWithRetry path),
+// rather than requiring a second independent AppendEvent after the first failed.
+func TestTier2_Concurrency_AppendRetriesThroughTransientBusy(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "busy_retry_success.db")
+	store, err := state.NewStore(state.StoreOptions{
+		DatabasePath: dbPath,
+		BusyTimeout:  50 * time.Millisecond,
+		MaxOpenConns: 5,
+		MaxIdleConns: 2,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open raw DB connection: %v", err)
+	}
+	defer rawDB.Close()
+
+	ctx := context.Background()
+	rawConn, err := rawDB.Conn(ctx)
+	if err != nil {
+		t.Fatalf("Failed to get raw connection: %v", err)
+	}
+	defer rawConn.Close()
+
+	if _, err := rawConn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
+		t.Fatalf("Failed to begin exclusive transaction: %v", err)
+	}
+
+	evt := &protocol.AgentEvent{
+		EventID:     "evt-busy-retry-1",
+		SessionID:   "sess-busy-retry",
+		SequenceNum: 1,
+		EventType:   "test_busy_retry",
+		Timestamp:   time.Now().UTC(),
+		Payload:     json.RawMessage("{}"),
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- store.AppendEvent(ctx, evt)
+	}()
+
+	// Hold the exclusive lock long enough for AppendEvent to hit busy and retry,
+	// then release so the same in-flight call can complete.
+	time.Sleep(200 * time.Millisecond)
+	if _, err := rawConn.ExecContext(ctx, "ROLLBACK"); err != nil {
+		t.Fatalf("Failed to rollback exclusive lock: %v", err)
+	}
+
+	select {
+	case appendErr := <-done:
+		if appendErr != nil {
+			t.Fatalf("Expected single AppendEvent to succeed after transient busy, got: %v", appendErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("AppendEvent did not complete within retry budget after lock release")
+	}
+
+	events, err := store.QueryEvents(ctx, state.EventFilter{SessionID: "sess-busy-retry"})
+	if err != nil {
+		t.Fatalf("QueryEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly 1 persisted event after single retrying AppendEvent, got %d", len(events))
 	}
 }
 

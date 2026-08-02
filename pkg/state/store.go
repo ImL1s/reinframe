@@ -12,7 +12,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/reinframe/reinframe/pkg/protocol"
+	"github.com/ImL1s/reinframe/pkg/protocol"
 )
 
 var (
@@ -117,7 +117,9 @@ func NewStore(opts StoreOptions) (*Store, error) {
 	}, nil
 }
 
-// AppendEvent inserts a single agent event into the store using a BEGIN IMMEDIATE transaction.
+// AppendEvent inserts a single agent event using a busy-aware BEGIN IMMEDIATE transaction.
+// It enforces persistence invariants only (non-nil event, non-empty IDs/type, positive sequence).
+// Full protocol schema validation (protocol.ValidateEvent) is the caller's / ingestion layer responsibility.
 func (s *Store) AppendEvent(ctx context.Context, event *protocol.AgentEvent) error {
 	if event == nil {
 		return ErrInvalidEvent
@@ -129,7 +131,8 @@ func (s *Store) AppendEvent(ctx context.Context, event *protocol.AgentEvent) err
 	return s.AppendEvents(ctx, []*protocol.AgentEvent{event})
 }
 
-// AppendEvents inserts multiple agent events into the store atomically in a single BEGIN IMMEDIATE transaction.
+// AppendEvents inserts multiple agent events atomically with SQLite busy retry on the write path.
+// Same persistence-invariant checks as AppendEvent; does not call protocol.ValidateEvent.
 func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent) error {
 	if err := s.enter(); err != nil {
 		return err
@@ -146,32 +149,29 @@ func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent)
 		}
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return s.wrapDBErr(mapSQLiteError(err))
-	}
-	defer tx.Rollback()
+	err := runTxWithRetry(ctx, s.db, func(tx *sql.Tx) error {
+		stmtSQL := `INSERT INTO events (event_id, session_id, sequence_num, event_type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?)`
+		stmt, err := tx.PrepareContext(ctx, stmtSQL)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
 
-	stmtSQL := `INSERT INTO events (event_id, session_id, sequence_num, event_type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?)`
-	stmt, err := tx.PrepareContext(ctx, stmtSQL)
-	if err != nil {
-		return s.wrapDBErr(mapSQLiteError(err))
-	}
-	defer stmt.Close()
+		for _, e := range events {
+			tsStr := e.Timestamp.UTC().Format(FixedTimestampLayout)
+			payloadStr := string(e.Payload)
+			if payloadStr == "" {
+				payloadStr = "{}"
+			}
 
-	for _, e := range events {
-		tsStr := e.Timestamp.UTC().Format(FixedTimestampLayout)
-		payloadStr := string(e.Payload)
-		if payloadStr == "" {
-			payloadStr = "{}"
+			if _, err := stmt.ExecContext(ctx, e.EventID, e.SessionID, e.SequenceNum, e.EventType, tsStr, payloadStr); err != nil {
+				return err
+			}
 		}
 
-		if _, err := stmt.ExecContext(ctx, e.EventID, e.SessionID, e.SequenceNum, e.EventType, tsStr, payloadStr); err != nil {
-			return s.wrapDBErr(mapSQLiteError(err))
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
+		return tx.Commit()
+	})
+	if err != nil {
 		return s.wrapDBErr(mapSQLiteError(err))
 	}
 
@@ -325,11 +325,28 @@ func (s *Store) leave() {
 	s.inFlight.Add(-1)
 }
 
+// wrapDBErr maps connection/shutdown failures to ErrStoreClosed.
+// Domain errors (duplicate sequence/event ID, invalid event) are never rewritten
+// solely because s.closed is true — a concurrent Close can flip that flag after a
+// constraint violation was already produced on a still-open connection.
+// Once closed=true, every other non-domain error is treated as store-closed so
+// close-race drain noise (interrupt, rolled-back tx, etc.) does not leak.
 func (s *Store) wrapDBErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, ErrStoreClosed) || s.closed.Load() || errors.Is(err, sql.ErrConnDone) || strings.Contains(err.Error(), "database is closed") {
+	if errors.Is(err, ErrStoreClosed) {
+		return ErrStoreClosed
+	}
+	// Domain errors always win over closed-flag mapping.
+	if errors.Is(err, ErrDuplicateSequence) || errors.Is(err, ErrDuplicateEventID) || errors.Is(err, ErrInvalidEvent) {
+		return err
+	}
+	if errors.Is(err, sql.ErrConnDone) || strings.Contains(err.Error(), "database is closed") {
+		return ErrStoreClosed
+	}
+	// Closed window: map all remaining operational errors to ErrStoreClosed.
+	if s.closed.Load() {
 		return ErrStoreClosed
 	}
 	return err

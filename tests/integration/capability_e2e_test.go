@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/reinframe/reinframe/pkg/protocol"
+	"github.com/ImL1s/reinframe/pkg/protocol"
 )
 
 func flagNames(mask protocol.CapabilityFlag) []string {

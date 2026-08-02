@@ -148,7 +148,7 @@ func runTxWithRetry(ctx context.Context, db *sql.DB, fn func(tx *sql.Tx) error) 
 	if lastErr != nil {
 		return lastErr
 	}
-	return fmt.Errorf("migration transaction timed out due to busy lock")
+	return fmt.Errorf("sqlite transaction timed out due to busy lock")
 }
 
 func isBusyError(err error) bool {

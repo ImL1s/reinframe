@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/reinframe/reinframe/pkg/protocol"
-	"github.com/reinframe/reinframe/pkg/state"
+	"github.com/ImL1s/reinframe/pkg/protocol"
+	"github.com/ImL1s/reinframe/pkg/state"
 )
 
 // TestChallenger_ConcurrentReadWriteStress tests 100 writers and 50 readers running concurrently against a SQLite WAL store.

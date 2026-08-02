@@ -1,7 +1,7 @@
 # Reinframe P0/P1 Issue Resolution — PROJECT.md
 
 ## Architecture
-Reinframe is a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go, powered by SQLite WAL state persistence and JSON-RPC 2.0 / NDJSON protocol interfaces.
+Reinframe is a cross-platform (Windows, macOS, Linux) Go project **building toward** an Anti-Tunnel Supervision Harness. Current shipped surface is protocol + SQLite WAL store libraries (not a complete live supervisor).
 
 ### Core Modules
 - `pkg/state/`: SQLite WAL-backed append-only event store and migration engine.
@@ -42,21 +42,22 @@ Reinframe is a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Ha
 | M2 | Capability & Schema Fixes | pkg/protocol/ (capability.go, schema.go, schemas/*.json) | none | DONE |
 | M3 | Governance, CI & Directory Refactoring | go.mod, .github/workflows/ci.yml, README.md, .gitignore, docs/dev/, tests/ | none | DONE |
 | M4 | Capability Test Suite Rewrite | pkg/protocol/ (capability_test.go, challenger2_stress_test.go) | M2 | DONE |
-| M5 | Stress Test Verification & Full E2E | pkg/state/ (challenger_stress_test.go), tests/integration/ | M1, M2, M3, M4 | DONE |
+| M5 | Stress Test Verification & Scenario Persistence | pkg/state/ (challenger_stress_test.go), tests/integration/ | M1, M2, M3, M4 | DONE |
 
 ## Interface Contracts
 ### `pkg/state` ↔ `pkg/protocol`
+**Contract A (persistence-only store):** the Store enforces persistence invariants; full canonical schema validation is the ingestion / protocol layer's job.
+
 - `Store.AppendEvent(ctx context.Context, event *protocol.AgentEvent) error`
-  - Validates `event` using `protocol.ValidateEvent`.
-  - Executes within SQLite transaction using `db.BeginTx(ctx, nil)`.
-- `Store.QueryEvents(ctx context.Context, filter protocol.EventFilter) ([]protocol.AgentEvent, error)`
-  - Reads from SQLite without Go-level mutex blocking.
+  - Checks persistence invariants only: non-nil event, non-empty `EventID` / `SessionID` / `EventType`, `SequenceNum > 0`.
+  - Does **not** call `protocol.ValidateEvent` (malformed or schema-invalid payloads may still be stored if invariants pass).
+  - Writes via busy-aware SQLite transactions (`runTxWithRetry` + `_txlock=immediate`).
+- `Store.QueryEvents(ctx context.Context, filter EventFilter) ([]*protocol.AgentEvent, error)`
+  - Reads from SQLite without a Go-level global RWMutex serializing all ops.
 
 ## Code Layout
 ```
 reinframe/
-├── cmd/
-│   └── reinframe/
 ├── docs/
 │   └── dev/                  # Specification and dev tracking docs
 ├── pkg/
@@ -72,12 +73,12 @@ reinframe/
 │       ├── migration.go
 │       └── migrations/
 ├── tests/
-│   └── integration/          # Integration tests (formerly tests/e2e)
+│   └── integration/          # Integration / scenario-persistence tests (formerly tests/e2e)
 ├── .github/
 │   └── workflows/
 │       └── ci.yml            # CI build & test workflow
 ├── .gitignore
-├── go.mod
+├── go.mod                    # module github.com/ImL1s/reinframe
 ├── go.sum
 └── README.md
 ```

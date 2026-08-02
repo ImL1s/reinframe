@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"strings"
 	"unicode"
@@ -92,6 +93,15 @@ func ValidateEvent(payload []byte, schemaType string) error {
 	var v any
 	if err := decoder.Decode(&v); err != nil {
 		return fmt.Errorf("malformed JSON payload: %w", err)
+	}
+
+	// Reject trailing content after the first JSON value
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("malformed JSON payload: contains multiple JSON values")
+		}
+		return fmt.Errorf("malformed JSON payload: trailing content: %w", err)
 	}
 
 	if err := sch.Validate(v); err != nil {

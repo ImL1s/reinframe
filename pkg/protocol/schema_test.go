@@ -990,3 +990,47 @@ func TestCapability_JSONRoundTrip_Lossless(t *testing.T) {
 		t.Errorf("ToBitmask mismatch after JSON roundtrip: got 0x%x, want 0x%x", mask, expectedMask)
 	}
 }
+
+func TestValidateEvent_TrailingContent(t *testing.T) {
+	baseJSON := `{"session_id":"s1","agent_id":"a1","adapter_type":"cli_process","workspace_path":"/tmp","status":"OBSERVE","started_at":"2024-01-01T00:00:00Z","integration_level":0}`
+
+	tests := []struct {
+		name    string
+		payload string
+		wantErr bool
+	}{
+		{
+			name:    "Valid JSON + second JSON object",
+			payload: baseJSON + `{"extra":true}`,
+			wantErr: true,
+		},
+		{
+			name:    "Valid JSON + trailing text",
+			payload: baseJSON + ` trailing text`,
+			wantErr: true,
+		},
+		{
+			name:    "Valid JSON + trailing whitespace only",
+			payload: baseJSON + "  \n\t ",
+			wantErr: false,
+		},
+		{
+			name:    "Single valid JSON",
+			payload: baseJSON,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateEvent([]byte(tt.payload), "agent_session")
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error for payload %q, got nil", tt.payload)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error for payload %q: %v", tt.payload, err)
+			}
+		})
+	}
+}
+

@@ -11,6 +11,6 @@ linters:
         - (*database/sql.Rows).Close
         - (*os).Chmod
 
-issues:
+run:
   exclude-dirs:
     - .agents

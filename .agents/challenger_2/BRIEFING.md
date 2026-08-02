@@ -1,52 +1,36 @@
-# BRIEFING — 2026-08-02T13:30:37Z
+# BRIEFING — 2026-08-02T06:57:00Z
 
 ## Mission
-Stress test ValidateEvent implementation with adversarial payloads (empty strings, corrupt bytes, unexpected properties, null fields, out-of-range numbers) and verify validation robustness.
+Empirically stress-test JSON schema validation, CapabilityManifest round-trips, and protocol edge cases in `pkg/protocol`. Render verdict in handoff.md.
 
 ## 🔒 My Identity
-- Archetype: EMPIRICAL CHALLENGER
+- Archetype: Empirical Challenger
 - Roles: critic, specialist
-- Working directory: /Users/iml1s/Documents/mine/reinframe/.agents/challenger_2
-- Original parent: 3bda1ded-11e5-4687-b5da-606946afc434
-- Milestone: ValidateEvent Stress Testing
-- Instance: 2 of 2
+- Working directory: /Users/iml1s/Documents/mine/reinframe
+- Original parent: 8225f967-1635-469b-adde-b081c9d6e3ab
+- Milestone: protocol-challenge-capability-schema
+- Instance: Challenger 2
 
 ## 🔒 Key Constraints
-- Review-only — do NOT modify implementation code
-- Run verification code yourself. Do NOT trust worker's claims or logs.
-- Write handoff to /Users/iml1s/Documents/mine/reinframe/.agents/challenger_2/handoff.md with explicit Verdict: APPROVE or REQUEST_CHANGES.
+- Review-only — do NOT modify implementation code (report findings/bugs, do not fix implementation code yourself unless writing tests to verify)
+- Empirical verification mandatory — write and run tests, do not rely on claims
 
 ## Current Parent
-- Conversation ID: 3bda1ded-11e5-4687-b5da-606946afc434
-- Updated: 2026-08-02T13:30:37Z
+- Conversation ID: 8225f967-1635-469b-adde-b081c9d6e3ab
+- Updated: 2026-08-02T06:57:00Z
 
 ## Review Scope
-- **Files to review**: `pkg/protocol/validator.go`, `pkg/protocol/schemas/*.json`
-- **Interface contracts**: ORIGINAL_REQUEST.md, PROJECT.md
-- **Review criteria**: Robustness against adversarial payloads, error handling, memory safety, race safety
+- **Files to review**: `pkg/protocol/...`, `docs/dev/ORIGINAL_REQUEST.md`, `docs/dev/PROJECT.md`
+- **Interface contracts**: `docs/dev/PROJECT.md`
+- **Review criteria**: JSON schema validation, CapabilityManifest round-trips, oversized payloads (>1MB), floating-point numbers in integer fields, missing boolean fields in capability negotiation, `RESUME` session state transitions, invalid `max_depth` (>1).
 
 ## Key Decisions Made
-- Created and executed `pkg/protocol/adversarial_stress_test.go` covering empty payloads, corrupt bytes, unexpected properties, null fields, out-of-range numbers, malicious schema types, deep recursion, and concurrent execution under race detector (`go test -race`).
-- Reached Verdict: APPROVE.
-
-## Attack Surface
-- **Hypotheses tested**:
-  - Empty payloads causing panics or unhandled errors -> PASS (rejection with clean error message)
-  - Malformed JSON / raw binary / invalid UTF-8 bytes causing crashes -> PASS (safely caught by `json.Unmarshal`)
-  - Unexpected / injected properties bypassing validation -> PASS (rejected by `"additionalProperties": false` on all 22 schemas)
-  - Null required or optional fields causing panics or schema passes -> PASS (rejected with type mismatch error)
-  - Out-of-range numbers / negative counters / scores > 1.0 -> PASS (rejected by min/max schema bounds)
-  - SchemaType path traversal / SQL injection / XSS strings -> PASS (safely normalized and matched against cache, returning "unknown schema type")
-  - Stack exhaustion via deeply nested JSON -> PASS (safely rejected by JSON parser)
-  - Data races under high concurrency -> PASS (`go test -race` clean with 20 workers / 10,000 runs)
-- **Vulnerabilities found**: None. ValidateEvent is empirically robust.
-- **Untested angles**: Full fuzzing with `go test -fuzz` (beyond scope of unit/stress harness).
-
-## Loaded Skills
-- None loaded
+- Executed full empirical test suite (`go test -v -count=1 -race ./pkg/protocol/...`).
+- Created `empiric_edge_cases_test.go` covering all 5 edge case categories.
+- Rendered verdict: APPROVE.
 
 ## Artifact Index
-- /Users/iml1s/Documents/mine/reinframe/.agents/challenger_2/DISPATCH.md — Task dispatch
-- /Users/iml1s/Documents/mine/reinframe/.agents/challenger_2/BRIEFING.md — Working memory
-- /Users/iml1s/Documents/mine/reinframe/.agents/challenger_2/progress.md — Liveness heartbeat
-- /Users/iml1s/Documents/mine/reinframe/pkg/protocol/adversarial_stress_test.go — Empirical stress test suite
+- `.agents/challenger_2/DISPATCH.md` — Initial dispatch message log
+- `.agents/challenger_2/progress.md` — Liveness heartbeat
+- `.agents/challenger_2/handoff.md` — Final verdict handoff report
+- `pkg/protocol/empiric_edge_cases_test.go` — Edge case test suite

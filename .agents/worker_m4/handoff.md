@@ -1,82 +1,42 @@
-# Handoff Report — Worker M4 (Git Commit, GitHub Issue & PR Integration)
+# Handoff Report — M4 (Capability Test Suite Rewrite)
 
 ## 1. Observation
 
-### Git Branch & Commit Verification
-- **Branch**: `issue-6-canonical-agent-event-schema`
-- **Commit Hash**: `72428270e14bd0f70706be7c947c3341703721c0`
-- **Commit Message**: `feat(protocol): implement canonical agent event schema & JSON validation (#6)`
-- **Files Staged & Committed**:
-  - `go.mod`
-  - `go.sum`
-  - `pkg/protocol/schema.go`
-  - `pkg/protocol/validator.go`
-  - `pkg/protocol/schema_test.go`
-  - `pkg/protocol/adversarial_stress_test.go`
-  - `pkg/protocol/challenger_stress_test.go`
-  - `pkg/protocol/schemas/*.json` (22 JSON schema files)
+Direct code inspection of `pkg/protocol/` test suite showed:
+- `pkg/protocol/capability_test.go` and `pkg/protocol/challenger2_stress_test.go`: Contained legacy test assertions assuming `ToBitmask()` auto-granted capability bitmasks based on `IntegrationLevel` without explicit boolean fields set.
+- Level contract expectations in `capability_test.go`, `challenger2_stress_test.go`, and `capability_stress_test.go` still expected Level 1 to include `CapPause`, `CapCancel`, and `CapResume`, which contradicted the M2 realigned contracts (where `CapPause`, `CapCancel`, `CapResume` belong to Level 2 Guarded).
+- `challenger_stress_test.go`: Contained hardcoded mock payloads (`max_depth: 2` and missing 14 capability boolean properties) that failed `ValidateEvent` following M2 JSON schema constraints.
 
-### Test Verification Command & Output
-```bash
-$ go test -v -race ./pkg/protocol/...
-=== RUN   TestValidateEvent_ValidPayloads
---- PASS: TestValidateEvent_ValidPayloads (0.00s)
-=== RUN   TestValidateEvent_InvalidPayloads
---- PASS: TestValidateEvent_InvalidPayloads (0.00s)
-=== RUN   TestStructJSONRoundtrip
---- PASS: TestStructJSONRoundtrip (0.00s)
-=== RUN   TestRedactionTags
---- PASS: TestRedactionTags (0.00s)
-PASS
-ok  	github.com/reinframe/reinframe/pkg/protocol	1.988s
-```
-
-### GitHub Issue Comment
-- **Issue Number**: `#6`
-- **Comment URL**: `https://github.com/ImL1s/reinframe/issues/6#issuecomment-5155668051`
-- **Command Executed**: `gh issue comment 6 --body "..."`
-
-### GitHub Pull Request
-- **PR URL**: `https://github.com/ImL1s/reinframe/pull/48`
-- **PR Title**: `[P0][Core] Issue #6: Canonical Agent Event Schema & JSON Validation`
-- **Base Branch**: `main`
-- **Head Branch**: `issue-6-canonical-agent-event-schema`
-- **Command Executed**: `gh pr create --title "[P0][Core] Issue #6: Canonical Agent Event Schema & JSON Validation" --body "..." --base main --head issue-6-canonical-agent-event-schema`
-
----
+Verification commands executed:
+- `go test -v -race ./pkg/protocol/...` -> **PASS** (100% of protocol tests pass cleanly, exit code 0).
+- `go test -race -count=5 ./pkg/protocol/...` -> **PASS** (5 consecutive runs pass cleanly under race detector, exit code 0).
 
 ## 2. Logic Chain
 
-1. **Branch & Build Verification**: `git branch --show-current` confirmed we were on `issue-6-canonical-agent-event-schema`. Running `go test -v -race ./pkg/protocol/...` confirmed 100% test pass rate with zero race conditions across unit, adversarial, and challenger stress tests.
-2. **Staging & Clean Commit**: Staged exact implementation files (`go.mod`, `go.sum`, `pkg/protocol/schema.go`, `pkg/protocol/validator.go`, `pkg/protocol/schema_test.go`, `pkg/protocol/adversarial_stress_test.go`, `pkg/protocol/challenger_stress_test.go`, `pkg/protocol/schemas/*.json`) excluding workspace metadata. Created commit `72428270e14bd0f70706be7c947c3341703721c0`.
-3. **GitHub Issue Update**: Executed `gh issue comment 6` providing complete status of the 22 canonical struct models, 22 Draft-07 JSON schemas, validation engine, and test results.
-4. **Push & PR Creation**: Pushed branch `issue-6-canonical-agent-event-schema` to `origin` and opened PR `#48` targeted at `main`.
-
----
+1. **Auto-grant Removal & Explicit Boolean Verification**: Rewrote `capability_test.go` to test that `CapabilityManifest` with `IntegrationLevel: 3` and no boolean fields returns bitmask `0x0` and achievable level `-1`, confirming zero auto-granting behavior.
+2. **Level Contract Verification**:
+   - Level 1 (Advisory) contract verified: `SupportsEventStream` + `SupportsToolInspection` achieves Level 1 without `SupportsPause`, `SupportsCancel`, `SupportsResume`.
+   - Level 2 (Guarded) contract verified: requires process control hooks (`SupportsPause`, `SupportsCancel`, `SupportsResume`) plus `SupportsDiffInspection`, `SupportsCheckpoint`, `SupportsRollback`. Missing `SupportsPause` degrades candidate to Level 1.
+3. **Lossless JSON Round-trip**: Added `TestCapability_JSONRoundTrip_Lossless_Explicit` testing 100% preservation across `json.Marshal` and `json.Unmarshal` for all 20 boolean capability flags (`SupportsEventStream` through `SupportsSDK`) and alternating boolean patterns.
+4. **Stress & Degradation Alignment**: Updated `challenger2_stress_test.go`, `capability_stress_test.go`, and `challenger_stress_test.go` mock definitions to use `FromBitmask(...)` and schema-compliant payloads, ensuring missing flag sorting, bit flip detection, and zero struct handling are tested accurately.
 
 ## 3. Caveats
-- No caveats. All 8 tasks requested in dispatch were completed with exact verification.
 
----
+- None. All protocol tests pass 100% under `-race` and 5-run concurrency testing.
 
 ## 4. Conclusion
-Milestone M4 (Git Commit, GitHub Issue & PR Integration) is 100% complete and verified. Issue #6 implementation has been committed (`72428270e14bd0f70706be7c947c3341703721c0`), commented on Issue #6, and submitted via Pull Request #48.
 
----
+Milestone M4 tasks (1-7) are fully implemented and verified:
+- Legacy auto-granting assertions removed.
+- Bitmask construction verified strictly from 20 explicit boolean flags.
+- Lossless JSON round-trip verified for all 20 capability flags.
+- Level 1 (Advisory) vs Level 2 (Guarded) contracts verified according to ADR specification.
+- 100% clean test execution for `go test -v -race ./pkg/protocol/...`.
 
 ## 5. Verification Method
 
-To independently verify the integration:
-```bash
-# 1. Check git log
-git log -1 --stat 72428270e14bd0f70706be7c947c3341703721c0
-
-# 2. Re-run tests with race detector
-go test -v -race ./pkg/protocol/...
-
-# 3. View GitHub PR
-gh pr view 48
-
-# 4. View GitHub Issue Comment
-gh issue view 6
-```
+To independently verify M4 work:
+1. Run protocol package test suite with race detector:
+   `go test -v -race ./pkg/protocol/...`
+2. Run multi-iteration race stress test:
+   `go test -race -count=5 ./pkg/protocol/...`

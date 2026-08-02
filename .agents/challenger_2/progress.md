@@ -1,18 +1,10 @@
-# Progress — Challenger 2
+# Progress — Challenger 2 (Capability & Schema Focus)
 
-Last visited: 2026-08-02T13:30:37Z
+Last visited: 2026-08-02T06:57:00Z
 
-## Completed Steps
-- [x] Read ORIGINAL_REQUEST.md and PROJECT.md.
-- [x] Examined validator implementation in `pkg/protocol/validator.go` and schema definitions in `pkg/protocol/schemas/`.
-- [x] Created adversarial test suite `pkg/protocol/adversarial_stress_test.go` covering 8 attack vectors:
-  1. Empty & whitespace payloads
-  2. Corrupt bytes, invalid UTF-8, and truncated JSON
-  3. Unexpected / injected properties
-  4. Null required and optional fields
-  5. Out-of-range numbers, negative metrics, score bounds
-  6. Malicious schemaType strings (path traversal, XSS, NUL bytes, long strings)
-  7. Deeply nested JSON recursion stress
-  8. Concurrent stress (20 goroutines, 10,000 operations) with `-race`
-- [x] Verified zero panics, zero data races, clear error handling, and complete schema strictness.
-- [x] Prepared verdict: APPROVE.
+- Status: Completed Empirical Verification
+- Step 1: Read ORIGINAL_REQUEST.md & PROJECT.md - COMPLETE
+- Step 2: Inspect pkg/protocol codebase and tests - COMPLETE
+- Step 3: Run existing tests and construct empirical test cases in empiric_edge_cases_test.go - COMPLETE
+- Step 4: Run go test -v -count=1 -race ./pkg/protocol/... - ALL PASS
+- Step 5: Render verdict (APPROVE) in handoff.md - COMPLETE

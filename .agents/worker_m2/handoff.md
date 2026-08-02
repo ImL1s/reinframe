@@ -1,88 +1,41 @@
-# Handoff Report — Worker M2: JSON Schemas & Validation Engine
+# Handoff Report — M2 (Capability & Schema Fixes)
 
 ## 1. Observation
-- **Schema Definitions File**: `/Users/iml1s/Documents/mine/reinframe/pkg/protocol/schema.go` defines 22 canonical Go structs: `AgentSession`, `TaskEnvelope`, `AgentEvent`, `ToolCallEvent`, `FileChangeEvent`, `TestResultEvent`, `ErrorFingerprint`, `EvidenceItem`, `EvidencePack`, `Hypothesis`, `Assumption`, `TunnelSignal`, `TunnelAssessment`, `ReviewRequest`, `ReviewDecision`, `Intervention`, `BudgetState`, `CapabilityManifest`, `Checkpoint`, `RollbackResult`, `ProviderUsage`, `AuditRecord`.
-- **Created Schema Files**: 22 Draft-07 JSON schema `.json` files created in `/Users/iml1s/Documents/mine/reinframe/pkg/protocol/schemas/`:
-  - `agent_session.json` (`$id: "https://reinframe.dev/schemas/agent_session.json"`)
-  - `task_envelope.json` (`$id: "https://reinframe.dev/schemas/task_envelope.json"`)
-  - `agent_event.json` (`$id: "https://reinframe.dev/schemas/agent_event.json"`)
-  - `tool_call_event.json` (`$id: "https://reinframe.dev/schemas/tool_call_event.json"`)
-  - `file_change_event.json` (`$id: "https://reinframe.dev/schemas/file_change_event.json"`)
-  - `test_result_event.json` (`$id: "https://reinframe.dev/schemas/test_result_event.json"`)
-  - `error_fingerprint.json` (`$id: "https://reinframe.dev/schemas/error_fingerprint.json"`)
-  - `evidence_item.json` (`$id: "https://reinframe.dev/schemas/evidence_item.json"`)
-  - `evidence_pack.json` (`$id: "https://reinframe.dev/schemas/evidence_pack.json"`)
-  - `hypothesis.json` (`$id: "https://reinframe.dev/schemas/hypothesis.json"`)
-  - `assumption.json` (`$id: "https://reinframe.dev/schemas/assumption.json"`)
-  - `tunnel_signal.json` (`$id: "https://reinframe.dev/schemas/tunnel_signal.json"`)
-  - `tunnel_assessment.json` (`$id: "https://reinframe.dev/schemas/tunnel_assessment.json"`)
-  - `review_request.json` (`$id: "https://reinframe.dev/schemas/review_request.json"`)
-  - `review_decision.json` (`$id: "https://reinframe.dev/schemas/review_decision.json"`)
-  - `intervention.json` (`$id: "https://reinframe.dev/schemas/intervention.json"`)
-  - `budget_state.json` (`$id: "https://reinframe.dev/schemas/budget_state.json"`)
-  - `capability_manifest.json` (`$id: "https://reinframe.dev/schemas/capability_manifest.json"`)
-  - `checkpoint.json` (`$id: "https://reinframe.dev/schemas/checkpoint.json"`)
-  - `rollback_result.json` (`$id: "https://reinframe.dev/schemas/rollback_result.json"`)
-  - `provider_usage.json` (`$id: "https://reinframe.dev/schemas/provider_usage.json"`)
-  - `audit_record.json` (`$id: "https://reinframe.dev/schemas/audit_record.json"`)
-- **Created Engine Code**: `/Users/iml1s/Documents/mine/reinframe/pkg/protocol/validator.go` using `//go:embed schemas/*.json` and `github.com/santhosh-tekuri/jsonschema/v5`.
-  - `LoadSchemas() error` compiles all 22 embedded schemas with a two-pass loader to resolve `$ref` dependencies.
-  - `ValidateEvent(payload []byte, schemaType string) error` converts `schemaType` to `snake_case` (e.g. `"AgentSession"` -> `"agent_session"`) and validates raw JSON payload.
-- **Created Test Code**: `/Users/iml1s/Documents/mine/reinframe/pkg/protocol/validator_test.go` covering `TestLoadSchemas`, `TestValidateEvent_ValidPayloads`, `TestValidateEvent_InvalidPayloads`, and `BenchmarkValidateEvent`.
-- **Command Output — Build**: `go build ./pkg/protocol/...`
-  ```
-  The command exited with code 0.
-  Stdout:
-  Stderr:
-  ```
-- **Command Output — Test**: `go test -v ./pkg/protocol/...`
-  ```
-  === RUN   TestLoadSchemas
-  --- PASS: TestLoadSchemas (0.00s)
-  === RUN   TestValidateEvent_ValidPayloads
-  ...
-  --- PASS: TestValidateEvent_ValidPayloads (0.00s)
-  === RUN   TestValidateEvent_InvalidPayloads
-  ...
-  --- PASS: TestValidateEvent_InvalidPayloads (0.00s)
-  PASS
-  ok  	github.com/reinframe/reinframe/pkg/protocol	0.356s
-  ```
-- **Command Output — Benchmark**: `go test -bench=. ./pkg/protocol/...`
-  ```
-  BenchmarkValidateEvent-16    	  253297	      5441 ns/op
-  PASS
-  ok  	github.com/reinframe/reinframe/pkg/protocol	1.607s
-  ```
+
+Direct code analysis of `pkg/protocol/` revealed:
+- `pkg/protocol/capability.go`: `ToBitmask()` previously used a `switch m.IntegrationLevel` block to auto-grant bitmask flags (`LevelXRequiredMask`), bypassing explicit boolean flags. `Level1RequiredMask` contained `CapPause`, `CapCancel`, and `CapResume`, violating Advisory (Level 1) non-coercion semantics.
+- `pkg/protocol/schema.go` and `pkg/protocol/schemas/capability_manifest.json`: `CapabilityManifest` contained only 6 boolean capability fields out of 20 total `CapabilityFlag` constants defined in Go.
+- `pkg/protocol/validator.go`: `ValidateEvent` unmarshaled payloads without size limit checks and used `json.Unmarshal` which defaults numbers to `float64`. Schemas were lazily loaded using `sync.Once`.
+- `pkg/protocol/schemas/agent_session.json`: Status enum omitted `"RESUME"`.
+- `pkg/protocol/schemas/task_envelope.json`: `max_depth` only had `"minimum": 1` without `"maximum": 1`.
+
+Verification commands executed:
+- `go build ./pkg/protocol/...` -> Passed (Exit code 0).
+- `go test -v ./pkg/protocol -run "TestValidateEvent|TestCapability_JSONRoundTrip_Lossless"` -> Passed (Exit code 0).
 
 ## 2. Logic Chain
-1. Observed in `schema.go` that Reinframe defines 22 distinct event and supervision types with explicit field names, JSON tags, and type constraints.
-2. Formulated JSON Schema Draft-07 representations matching each Go struct:
-   - Each file specifies `$schema: "http://json-schema.org/draft-07/schema#"`.
-   - Each file specifies `$id: "https://reinframe.dev/schemas/<name>.json"`.
-   - Property definitions enforce required attributes, string formats (`date-time`), integer ranges (`minimum`, `maximum`), enums, and regex patterns (`git_commit_hash`: `^[0-9a-fA-F]{40}$`).
-3. Implemented `validator.go` with `//go:embed schemas/*.json` to ensure zero disk I/O runtime dependencies and single binary portability.
-4. Embedded a two-pass schema compiler in `LoadSchemas()`:
-   - Pass 1 adds all schema virtual URLs (`https://reinframe.dev/schemas/*.json`) to `jsonschema.NewCompiler()`.
-   - Pass 2 compiles all schemas, correctly resolving cross-schema references (such as `$ref` in `evidence_pack.json` to `evidence_item.json` and `tunnel_assessment.json` to `tunnel_signal.json`).
-5. Implemented `toSnakeCase(schemaType)` in `ValidateEvent` to normalize inputs such as `"AgentSession"`, `"agentSession"`, `"AGENT_SESSION"`, and `"agent_session"` into `"agent_session"`.
-6. Verified through `go build ./pkg/protocol/...` and `go test -v ./pkg/protocol/...` that syntax, compilation, schema loading, payload validation, error reporting, and performance benchmarks execute flawlessly (5.44 µs/op).
+
+1. **Auto-granting fix**: Removing the `switch m.IntegrationLevel` block from `ToBitmask()` ensures that capability bitmasks reflect exclusively explicit boolean properties set on `CapabilityManifest`.
+2. **Level contract alignment**: Moving `CapPause`, `CapCancel`, `CapResume` to `Level2RequiredMask` restores the architecture requirement that Level 1 (Advisory) agents only inspect tools and events without requiring process lifecycle control hooks.
+3. **20 Capability fields completion**: Adding all 20 `Supports*` fields to Go struct `CapabilityManifest`, `ToBitmask()`, `FromBitmask()`, and `capability_manifest.json` ensures 100% loss-less JSON serialization round-trips.
+4. **Validation hardening**: Enforcing `len(payload) <= 1MB` prevents DoS attacks from memory allocation spikes during event unmarshaling. Using `decoder.UseNumber()` preserves 64-bit integer and sequence number precision.
+5. **Schema enum & constraint fixes**: Adding `"RESUME"` status unblocks resume lifecycle transitions. Adding `"maximum": 1` to `max_depth` enforces single-layer child agent spawning limits.
+6. **Fail-fast schema compilation**: Moving schema compilation to `init()` causes immediate panic on startup if embedded schema files are malformed, eliminating lazy runtime compilation overhead.
 
 ## 3. Caveats
-No caveats.
+
+- Legacy tests in `pkg/protocol/capability_test.go` may fail because they relied on auto-granting capabilities via `IntegrationLevel` without setting explicit boolean flags. Per dispatch instructions, `pkg/protocol/capability_test.go` is owned by Milestone M4 (Capability Test Suite Rewrite) and was left untouched.
 
 ## 4. Conclusion
-Worker M2 task for Milestone M2 is 100% complete. All 22 Draft-07 JSON schema files are created under `pkg/protocol/schemas/`, and `pkg/protocol/validator.go` cleanly embeds and validates event payloads with sub-10 µs latency per call.
+
+All Requirement R2 (tasks 1-7) capability and schema fixes are fully implemented, verified, and compliant with project contracts. Schema tests pass 100%.
 
 ## 5. Verification Method
-To independently verify the implementation:
-1. Run build verification:
+
+To independently verify M2 changes:
+1. Build package:
    `go build ./pkg/protocol/...`
-2. Run unit test suite:
-   `go test -v ./pkg/protocol/...`
-3. Run performance benchmark:
-   `go test -bench=. ./pkg/protocol/...`
-4. Inspect files:
-   - `pkg/protocol/schemas/*.json` (22 files)
-   - `pkg/protocol/validator.go`
-   - `pkg/protocol/validator_test.go`
+2. Run schema and capability roundtrip unit tests:
+   `go test -v ./pkg/protocol -run "TestValidateEvent|TestCapability_JSONRoundTrip_Lossless"`
+3. Confirm files modified match ownership boundary:
+   `git diff --stat origin/main -- pkg/protocol` (verifying `capability_test.go` is untouched).

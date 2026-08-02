@@ -1,69 +1,45 @@
-# BRIEFING — 2026-08-02T13:29:00Z
+# BRIEFING — 2026-08-02T14:51:30Z
 
 ## Mission
-Implement 22 Draft-07 JSON schemas and the JSON validation engine for reinframe in `pkg/protocol/` (schemas/*.json and validator.go).
+Milestone M2 (Capability & Schema Fixes) implementation and verification.
 
 ## 🔒 My Identity
-- Archetype: worker
+- Archetype: implementer / qa / specialist
 - Roles: implementer, qa, specialist
 - Working directory: /Users/iml1s/Documents/mine/reinframe/.agents/worker_m2
-- Original parent: 3bda1ded-11e5-4687-b5da-606946afc434
-- Milestone: JSON Schemas & Validation Engine (Worker M2)
+- Original parent: 8225f967-1635-469b-adde-b081c9d6e3ab
+- Milestone: M2 (Capability & Schema Fixes)
 
 ## 🔒 Key Constraints
-- Genuine implementation required (no hardcoding, no facades, no shortcuts).
-- 22 Draft-07 JSON schema files in `pkg/protocol/schemas/`.
-- Schema `$schema`: `"http://json-schema.org/draft-07/schema#"`.
-- Schema `$id`: `"https://reinframe.dev/schemas/<name>.json"`.
-- Implement `pkg/protocol/validator.go` using `go:embed schemas/*.json` and `github.com/santhosh-tekuri/jsonschema/v5`.
-- `LoadSchemas() error` and `ValidateEvent(payload []byte, schemaType string) error`.
-- Verify with `go build ./pkg/protocol/...` and write handoff.md.
+- Write Ownership Boundary: Exclusively own files in `pkg/protocol/` (`capability.go`, `schema.go`, `validator.go`, `schemas/*.json`).
+- Do NOT modify `pkg/protocol/capability_test.go` (owned by M4) or files outside `pkg/protocol/`.
+- Maintain integrity: NO hardcoded test results, facade implementations, or cheating.
 
 ## Current Parent
-- Conversation ID: 3bda1ded-11e5-4687-b5da-606946afc434
-- Updated: 2026-08-02T13:29:00Z
+- Conversation ID: 8225f967-1635-469b-adde-b081c9d6e3ab
+- Updated: 2026-08-02T14:51:30Z
 
 ## Task Summary
-- **What to build**: 22 JSON schemas in `pkg/protocol/schemas/` corresponding to `pkg/protocol/schema.go`, and validation logic in `pkg/protocol/validator.go`.
-- **Success criteria**: All 22 schema files compile with `jsonschema/v5`, `ValidateEvent` correctly normalizes camelCase/PascalCase/snake_case `schemaType` strings and validates JSON payloads, `go build ./pkg/protocol/...` succeeds, and unit tests pass.
+- **What to build**: Fix ToBitmask(), Level contracts, complete 20 capability fields, harden ValidateEvent, update schemas (agent_session.json, task_envelope.json), refactor schema compilation to init() fail-fast.
+- **Success criteria**: Genuine implementation passing protocol schema tests and build cleanly.
+- **Interface contracts**: PROJECT.md & explorer_survey_2/analysis.md
 
 ## Change Tracker
-- **Files created**:
-  - `pkg/protocol/schemas/agent_session.json`
-  - `pkg/protocol/schemas/task_envelope.json`
-  - `pkg/protocol/schemas/agent_event.json`
-  - `pkg/protocol/schemas/tool_call_event.json`
-  - `pkg/protocol/schemas/file_change_event.json`
-  - `pkg/protocol/schemas/test_result_event.json`
-  - `pkg/protocol/schemas/error_fingerprint.json`
-  - `pkg/protocol/schemas/evidence_item.json`
-  - `pkg/protocol/schemas/evidence_pack.json`
-  - `pkg/protocol/schemas/hypothesis.json`
-  - `pkg/protocol/schemas/assumption.json`
-  - `pkg/protocol/schemas/tunnel_signal.json`
-  - `pkg/protocol/schemas/tunnel_assessment.json`
-  - `pkg/protocol/schemas/review_request.json`
-  - `pkg/protocol/schemas/review_decision.json`
-  - `pkg/protocol/schemas/intervention.json`
-  - `pkg/protocol/schemas/budget_state.json`
-  - `pkg/protocol/schemas/capability_manifest.json`
-  - `pkg/protocol/schemas/checkpoint.json`
-  - `pkg/protocol/schemas/rollback_result.json`
-  - `pkg/protocol/schemas/provider_usage.json`
-  - `pkg/protocol/schemas/audit_record.json`
-  - `pkg/protocol/validator.go`
-  - `pkg/protocol/validator_test.go`
-- **Build status**: PASS (`go build ./pkg/protocol/...` exit code 0)
+- **Files modified**:
+  - `pkg/protocol/capability.go`: Fixed `ToBitmask()`, `FromBitmask()`, re-aligned Level contracts.
+  - `pkg/protocol/schema.go`: Added all 20 boolean capability fields to `CapabilityManifest`.
+  - `pkg/protocol/schemas/capability_manifest.json`: Added all 20 boolean fields to schema.
+  - `pkg/protocol/schemas/agent_session.json`: Added `"RESUME"` to status enum.
+  - `pkg/protocol/schemas/task_envelope.json`: Added `"maximum": 1` to `max_depth`.
+  - `pkg/protocol/validator.go`: Added 1MB payload limit, `json.Decoder.UseNumber()`, `init()` schema compilation.
+  - `pkg/protocol/schema_test.go`: Added unit tests for RESUME status, max_depth limit, payload size limit, and 20-field capability roundtrip.
+- **Build status**: Pass (`go build ./pkg/protocol/...` succeeded)
 - **Pending issues**: None
 
 ## Quality Status
-- **Build/test result**: PASS (22 schema tests, valid payload matrix, invalid payload matrix, benchmark 5.44 µs/op)
-- **Lint status**: Clean
-- **Tests added/modified**: `pkg/protocol/validator_test.go` added
+- **Build/test result**: Pass (Schema tests 100% pass)
+- **Lint status**: Pass
+- **Tests added/modified**: `TestValidateEvent_ValidPayloads/AgentSession_RESUME`, `TestValidateEvent_InvalidPayloads/MaxDepthExceeded_TaskEnvelope`, `TestValidateEvent_InvalidPayloads/PayloadExceedsMaxSize`, `TestCapability_JSONRoundTrip_Lossless`
 
 ## Loaded Skills
 - None
-
-## Key Decisions Made
-- Used two-pass loading in `LoadSchemas()` to register all schema files as compiler resources before compilation, allowing cross-schema `$ref` resolutions (e.g. `evidence_pack` -> `evidence_item`, `tunnel_assessment` -> `tunnel_signal`).
-- Implemented `toSnakeCase` to normalize PascalCase (`AgentSession`), camelCase (`agentSession`), and UPPER_CASE (`AGENT_SESSION`) strings to standard snake_case schema type identifiers (`agent_session`).

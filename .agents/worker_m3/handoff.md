@@ -1,42 +1,42 @@
-# Handoff Report — Worker M3 (Unit Testing & Schema Verification)
+# Handoff Report — Milestone M3 (Governance, CI & Directory Refactoring)
 
 ## 1. Observation
-- Executed `find_by_name` on `pkg/protocol`: initial state contained `schema.go`, `validator.go`, 22 JSON schema files in `schemas/`, and `validator_test.go`.
-- Created `/Users/iml1s/Documents/mine/reinframe/pkg/protocol/schema_test.go` and consolidated all unit test suites into it, removing `validator_test.go` to match the project layout specified in `PROJECT.md § Code Layout`.
-- Added required test suites covering all 22 canonical types:
-  1. `TestLoadSchemas`: verifies all 22 embedded Draft-07 JSON schemas compile and cache in `schemaCache`.
-  2. `TestValidateEvent_ValidPayloads`: table-driven test verifying validation succeeds for valid payloads across all 22 canonical types (`AgentSession`, `TaskEnvelope`, `AgentEvent`, `ToolCallEvent`, `FileChangeEvent`, `TestResultEvent`, `ErrorFingerprint`, `EvidenceItem`, `EvidencePack`, `Hypothesis`, `Assumption`, `TunnelSignal`, `TunnelAssessment`, `ReviewRequest`, `ReviewDecision`, `Intervention`, `BudgetState`, `CapabilityManifest`, `Checkpoint`, `RollbackResult`, `ProviderUsage`, `AuditRecord`).
-  3. `TestValidateEvent_InvalidPayloads`: tests rejection of missing required fields, field type mismatches, out-of-bound numbers/scores, invalid enum values, malformed JSON, and unknown schema types.
-  4. `TestStructJSONRoundtrip`: tests JSON marshaling and unmarshaling roundtrip parity for all 22 Go struct models.
-  5. `TestRedactionTags`: reflection test confirming that every exported field across all 22 Go struct models contains a valid `redact:"none|path|sensitive|sanitize"` tag.
-  6. `BenchmarkValidateEvent`: benchmark measuring event validation latency.
-- Executed `go test -v -cover ./pkg/protocol/...`:
-  - Result: `PASS` across all test suites with `80.4%` statement coverage in `pkg/protocol`.
-- Executed `go test -v -bench=. ./pkg/protocol/...`:
-  - Result: `BenchmarkValidateEvent-16`: 409,815 operations, `2,840 ns/op` (~2.84 µs per validation, well below the <20 µs target).
-- Executed `go test -v -race -bench=. ./pkg/protocol/...`:
-  - Result: `PASS` with zero data races detected.
+- **Go Version Mismatch**: `go.mod` line 3 specified `go 1.25.0` while `.github/workflows/ci.yml` line 17 ran `go-version: ['1.22.x']`.
+- **Missing Root Files**: `README.md` and `.gitignore` were absent from repository root.
+- **Root Directory Pollution**: Internal specification files (`ORIGINAL_REQUEST.md`, `PROJECT.md`, `TEST_INFRA.md`, `TEST_READY.md`) were located in root directory.
+- **Missing Lint Step**: `.github/workflows/ci.yml` lacked a static analysis step using `golangci-lint`.
+- **Legacy Test Directory**: Tests were located in `tests/e2e/` with package `package e2e_test`.
+- **Flaky Lock Timeout**: `tests/e2e/store_e2e_test.go` line 1167 had `BusyTimeout: 50 * time.Millisecond`.
+- **Non-Standard Temp Dirs**: 10 occurrences of `os.MkdirTemp` with `defer os.RemoveAll` across `tests/e2e/integration_e2e_test.go`, `realworld_e2e_test.go`, and `store_e2e_test.go`.
 
 ## 2. Logic Chain
-- **Step 1 (Requirement Verification)**: Task instructions require all unit tests and benchmarks to be located in `pkg/protocol/schema_test.go` and cover 5 unit test suites plus 1 benchmark suite for all 22 canonical schema/struct types.
-- **Step 2 (Layout Standardization)**: `validator_test.go` was removed and its functionality was consolidated into `schema_test.go`, aligning 100% with `PROJECT.md § Code Layout`.
-- **Step 3 (Tag Audit Logic)**: `TestRedactionTags` uses Go `reflect` to iterate over all exported fields of the 22 struct types and asserts that `Tag.Get("redact")` is non-empty and belongs to `{"none", "path", "sensitive", "sanitize"}`. All exported fields passed.
-- **Step 4 (Roundtrip Parity Logic)**: `TestStructJSONRoundtrip` marshals instances of each struct, unmarshals them into fresh instances, re-marshals to JSON, and checks byte string equality (`b1 == b2`). All 22 structs passed cleanly.
-- **Step 5 (Validation & Performance Logic)**: `ValidateEvent` correctly accepts all 22 valid event payloads and rejects all invalid inputs (malformed JSON, bad type, missing required field, out-of-bound score, invalid enum, unknown type). Benchmark shows ~2.84 µs latency, satisfying performance constraints.
+1. **Go Version Alignment**: Setting `go-version-file: 'go.mod'` in `actions/setup-go@v5` ensures GitHub Actions directly uses the Go version specified in `go.mod` (1.25.0), eliminating background toolchain downloads (`GOTOOLCHAIN=auto`).
+2. **Governance & Documentation**: Creating `README.md` and `.gitignore` establishes clear project documentation and prevents database files (*.db, *.db-wal, *.db-shm) and agent logs (.agents/*) from leaking into git history.
+3. **Directory Cleaning**: Relocating `ORIGINAL_REQUEST.md`, `PROJECT.md`, `TEST_INFRA.md`, `TEST_READY.md` to `docs/dev/` cleans up root structure while preserving developer documentation.
+4. **CI Linter Integration**: Adding `golangci-lint-action@v6` step enforces static analysis on all pull requests and pushes to main.
+5. **Directory & Package Refactoring**: Renaming `tests/e2e/` to `tests/integration/` and updating package declarations to `package integration_test` aligns the repo with standard Go testing conventions.
+6. **Flakiness Reduction**: Increasing `BusyTimeout` to `500 * time.Millisecond` provides sufficient headroom for slow CI environments without failing under lock contention.
+7. **Temp Directory Standardization**: Replacing `os.MkdirTemp` + `defer os.RemoveAll` with `t.TempDir()` ensures automatic directory cleanup by the Go testing framework, preventing dangling temporary files even when tests fail early or panic.
 
 ## 3. Caveats
-- No caveats. All 22 schemas, structs, validation edge cases, reflection tags, and benchmarks are 100% genuine and fully tested.
+- No caveats.
 
 ## 4. Conclusion
-- The unit test and schema verification suite for `pkg/protocol` in `pkg/protocol/schema_test.go` is complete, 100% passing, race-free, and exceeds performance standards.
+All 9 tasks for Milestone M3 (Governance, CI & Directory Refactoring) have been implemented, verified, and confirmed passing cleanly under `go test -v -race ./tests/integration/...`.
 
 ## 5. Verification Method
-To independently verify the test suite:
-1. Run `go test -v ./pkg/protocol/...`
-   - Expect: `PASS` for `TestLoadSchemas`, `TestValidateEvent_ValidPayloads`, `TestValidateEvent_InvalidPayloads`, `TestStructJSONRoundtrip`, and `TestRedactionTags`.
-2. Run `go test -v -cover ./pkg/protocol/...`
-   - Expect: Statement coverage ~80.4%.
-3. Run `go test -v -bench=. ./pkg/protocol/...`
-   - Expect: `BenchmarkValidateEvent` runs successfully with latency ~2.84 µs/op.
-4. Run `go test -v -race ./pkg/protocol/...`
-   - Expect: Zero race condition warnings.
+To independently verify Milestone M3 completion:
+
+1. **Verify Directory Structure**:
+   - Check `tests/integration/` exists and `tests/e2e/` does not exist.
+   - Check `docs/dev/` contains `ORIGINAL_REQUEST.md`, `PROJECT.md`, `TEST_INFRA.md`, `TEST_READY.md`.
+   - Check `README.md` and `.gitignore` exist at root.
+
+2. **Verify CI Workflow File**:
+   - Inspect `.github/workflows/ci.yml`: confirm `go-version-file: 'go.mod'` and `golangci-lint-action@v6` step.
+
+3. **Run Integration Test Suite**:
+   ```bash
+   go test -v -race ./tests/integration/...
+   ```
+   *Expected Output*: Exit code 0, all tests pass, zero data races reported.

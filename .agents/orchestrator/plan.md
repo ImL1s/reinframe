@@ -1,25 +1,43 @@
-# Plan — Issue #6: Canonical Agent Event Schema & JSON Validation
+# Orchestration Plan: Reinframe P0/P1 Issue Resolution
 
-## Objective
-Implement canonical agent event schema and JSON validation for Reinframe according to Issue #6 specifications.
+## Executive Summary
+Resolving 13 P0 Blocker and 8 P1 issues across SQLite state engine, Protocol schema/capability, and Governance/CI structure.
 
-## High-Level Execution Plan
-1. **Phase 0: Repository & Requirements Survey**
-   - Dispatch 3 Explorers / Spec Miners to survey existing repository layout (`/Users/iml1s/Documents/mine/reinframe`), check `ORIGINAL_REQUEST.md`, inspect existing `pkg/protocol/` (if any), check Go dependencies, and map requirements.
-   - Formulate `PROJECT.md` and `TEST_INFRA.md`.
+## Milestone Plan
 
-2. **Phase 1: Decomposition & Track Setup**
-   - Setup Dual Track: Implementation Track & E2E/Unit Testing Track.
-   - Branch creation: `issue-6-canonical-agent-event-schema`.
+### Survey Phase (Step 0)
+- **Explorer 1 (State Focus)**: Inspect `pkg/state/store.go`, migrations, DSN pragmas, mutex usages, BeginTx, `:memory:` pooling, and existing stress tests.
+- **Explorer 2 (Protocol Focus)**: Inspect `pkg/protocol/` (schema.go, capability.go, json validation, bitmask logic, RESUME status, capability flags, schemas).
+- **Explorer 3 (Governance/CI Focus)**: Inspect `go.mod`, `.github/workflows/`, README.md, `.gitignore`, directory structure (`docs/dev/`, `tests/e2e`), migration tests, Issue tracker status.
 
-3. **Phase 2: Milestone Execution**
-   - **Milestone 1**: Go Struct definitions in `pkg/protocol/schema.go` for all 22 data models (AgentSession, TaskEnvelope, AgentEvent, ToolCallEvent, FileChangeEvent, TestResultEvent, ErrorFingerprint, EvidenceItem, EvidencePack, Hypothesis, Assumption, TunnelSignal, TunnelAssessment, ReviewRequest, ReviewDecision, Intervention, BudgetState, CapabilityManifest, Checkpoint, RollbackResult, ProviderUsage, AuditRecord) with JSON tags and redaction metadata tags.
-   - **Milestone 2**: JSON Schema definitions in `pkg/protocol/schemas/*.json` and `ValidateEvent(payload []byte, schemaType string) error` implementation in `pkg/protocol/`.
-   - **Milestone 3**: Comprehensive unit tests in `pkg/protocol/schema_test.go` covering all valid/invalid schemas and edge cases.
-
-4. **Phase 3: Verification & Auditing**
-   - Independent Reviewers, Challengers, and Forensic Auditor (`teamwork_preview_auditor`).
-   - Strict Gate check: build/tests pass, all Reviewers approve, Challengers approve, Forensic Auditor CLEAN.
-
-5. **Phase 4: Git & Delivery**
-   - Commit changes cleanly, update Issue #6 comment on GitHub, create Pull Request, deliver final completion report.
+### Milestone Decomposition
+1. **M1: SQLite Concurrency Architecture Fixes (R1)**
+   - Fix DSN Pragma configuration.
+   - Remove global `sync.RWMutex` / `sync.Mutex` in `store.go`, replace closed status with `atomic.Bool`.
+   - Replace manual connection `BEGIN IMMEDIATE` with `db.BeginTx(ctx, nil)` and `_txlock=immediate` DSN parameter.
+   - Fix default `:memory:` DB pooling with `cache=shared` or `maxOpen=1`.
+2. **M2: Protocol Capability & Schema Fixes (R2)**
+   - Remove auto-granting `IntegrationLevel` logic in `ToBitmask()`.
+   - Re-align Level contracts with original ADR specs.
+   - Expand `CapabilityManifest` struct and JSON schema to include all 20 boolean capability flags.
+   - Secure `ValidateEvent()` with payload size limit check and `json.Decoder.UseNumber()`.
+   - Add `RESUME` status to `AgentSession` status enum.
+   - Add `maximum: 1` constraint to `max_depth` in JSON schema.
+3. **M3: Governance, CI & Directory Refactoring (R3)**
+   - Align `go.mod` Go version with CI workflow (`go-version-file: go.mod`).
+   - Create root `README.md` and `.gitignore`.
+   - Move `ORIGINAL_REQUEST.md`, `PROJECT.md`, `TEST_INFRA.md`, `TEST_READY.md` to `docs/dev/`.
+   - Add `golangci-lint` step to CI workflow.
+   - Move `SELECT EXISTS` inside transaction in migration logic.
+   - Replace `sync.Once` with `init()` fail-fast for schema compilation.
+   - Rename `tests/e2e/` to `tests/integration/` and update CI workflow.
+   - Increase `BusyTimeout` in flaky tests to 500ms.
+   - Refactor tests to use `t.TempDir()`.
+4. **M4: Capability Test Suite Rewrite (R4)**
+   - Rewrite capability tests to remove assertions expecting auto-granted permissions.
+   - Add `TestCapability_JSONRoundTrip_Lossless` test.
+   - Verify degradation and missing boolean handling.
+5. **M5: Stress Testing & Verification (R5)**
+   - Re-run 100 writers / 50 readers stress tests.
+   - Re-run 500 goroutine high concurrency stress tests with race detector (`go test -race -count=5`).
+   - Verify full CI pipeline pass.

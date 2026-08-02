@@ -1,52 +1,48 @@
-# BRIEFING — 2026-08-02T13:30:25+08:00
+# BRIEFING — 2026-08-02T14:57:15Z
 
 ## Mission
-Review protocol package in `/Users/iml1s/Documents/mine/reinframe/pkg/protocol/` against specs in `ORIGINAL_REQUEST.md` and `PROJECT.md`.
+Protocol & Governance Code Review and Adversarial Critique for Reinframe codebase changes.
 
 ## 🔒 My Identity
-- Archetype: reviewer / critic
+- Archetype: reviewer_critic
 - Roles: reviewer, critic
 - Working directory: /Users/iml1s/Documents/mine/reinframe/.agents/reviewer_1
-- Original parent: 3bda1ded-11e5-4687-b5da-606946afc434
-- Milestone: protocol package review
+- Original parent: 8225f967-1635-469b-adde-b081c9d6e3ab
+- Milestone: protocol_and_governance_review
 - Instance: 1 of 1
 
 ## 🔒 Key Constraints
-- Review-only — do NOT modify implementation code
-- Check for integrity violations (hardcoded tests, dummy facades, shortcuts, self-certifying work)
-- Output responses in Traditional Chinese (繁體中文) where applicable, follow system guidelines.
+- Review-only — do NOT modify implementation code.
+- Write findings, verification, and verdict in /Users/iml1s/Documents/mine/reinframe/.agents/reviewer_1/handoff.md.
+- Send results back to parent agent via send_message tool.
 
 ## Current Parent
-- Conversation ID: 3bda1ded-11e5-4687-b5da-606946afc434
-- Updated: 2026-08-02T13:30:25+08:00
+- Conversation ID: 8225f967-1635-469b-adde-b081c9d6e3ab
+- Updated: 2026-08-02T14:57:15Z
 
 ## Review Scope
-- **Files to review**:
-  - ORIGINAL_REQUEST.md
-  - PROJECT.md
-  - pkg/protocol/schema.go
-  - pkg/protocol/validator.go
-  - pkg/protocol/schema_test.go
-  - pkg/protocol/schemas/*.json
-- **Interface contracts**: PROJECT.md
-- **Review criteria**: correctness, completeness, schema compliance, test coverage, integrity violations
+- **Files to review**: `pkg/protocol/` (`capability.go`, `schema.go`, `capability_test.go`, `schema_test.go`, `schemas/*.json`), `go.mod`, `.github/workflows/ci.yml`, `README.md`, `.gitignore`, `docs/dev/`, `tests/integration/`.
+- **Interface contracts**: `docs/dev/ORIGINAL_REQUEST.md`, `docs/dev/PROJECT.md`
+- **Review criteria**: Protocol correctness, 20 capability bitmask/struct mapping, level contract alignment, payload size check & json.Number usage, RESUME status & max_depth: 1, CI/Governance consistency, test suite pass with race detector.
 
 ## Review Checklist
-- **Items reviewed**: schema.go, validator.go, schema_test.go, schemas/*.json
+- **Items reviewed**: `pkg/protocol/capability.go`, `pkg/protocol/schema.go`, `pkg/protocol/validator.go`, `pkg/protocol/schemas/*.json` (22 schemas), `pkg/protocol/capability_test.go`, `pkg/protocol/schema_test.go`, `go.mod`, `.github/workflows/ci.yml`, `README.md`, `.gitignore`, `docs/dev/`, `tests/integration/`
 - **Verdict**: APPROVE
-- **Unverified claims**: none
+- **Unverified claims**: None
 
 ## Attack Surface
-- **Hypotheses tested**: Checked for dummy implementations, hardcoded outputs, missing struct tags, schema cross-reference failures, and unhandled invalid JSON.
-- **Vulnerabilities found**: None.
-- **Untested angles**: None within pkg/protocol scope.
+- **Hypotheses tested**: Auto-granting bypass, integer precision loss in ValidateEvent, missing capability flags in JSON round-trips, DoS via oversized payload, invalid level negotiation degradation.
+- **Vulnerabilities found**: None remaining in current code.
+- **Untested angles**: None within protocol and governance review scope.
 
 ## Key Decisions Made
-- Confirmed all 22 structs and JSON schemas match requirements.
-- Confirmed test suite coverage (80.4%) and thread-safe validation engine.
-- Issued verdict: APPROVE.
+- Confirmed bitmask construction in `ToBitmask()` relies strictly on explicit boolean fields.
+- Verified Level 1 re-alignment (Advisory mode) and Level 2 process control assignment.
+- Confirmed `ValidateEvent` payload size check (1MB) and `json.Decoder.UseNumber()` precision defense.
+- Verified schema compilation fail-fast `init()`.
+- Verified all unit and integration test suites pass cleanly with `-race`.
 
 ## Artifact Index
-- /Users/iml1s/Documents/mine/reinframe/.agents/reviewer_1/DISPATCH.md
-- /Users/iml1s/Documents/mine/reinframe/.agents/reviewer_1/BRIEFING.md
-- /Users/iml1s/Documents/mine/reinframe/.agents/reviewer_1/handoff.md
+- `/Users/iml1s/Documents/mine/reinframe/.agents/reviewer_1/DISPATCH.md` — Dispatch log
+- `/Users/iml1s/Documents/mine/reinframe/.agents/reviewer_1/BRIEFING.md` — Briefing document
+- `/Users/iml1s/Documents/mine/reinframe/.agents/reviewer_1/handoff.md` — Final handoff report

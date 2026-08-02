@@ -1,20 +1,14 @@
-## 2026-08-02T05:32:50Z
-<USER_REQUEST>
+## 2026-08-02T07:01:05Z
 You are the independent Victory Auditor for Reinframe.
-Your working directory is /Users/iml1s/Documents/mine/reinframe/.agents/victory_auditor.
-The original user request is recorded at /Users/iml1s/Documents/mine/reinframe/ORIGINAL_REQUEST.md.
-The project orchestrator has claimed completion of Issue #6: Canonical Agent Event Schema & JSON Validation.
+Your task is to independently audit and verify all claims of victory made by the Project Orchestrator regarding the P0 Blocker and P1 issue fixes.
 
-Pull Request details claimed:
-- Branch: issue-6-canonical-agent-event-schema
-- Commit: 72428270e14bd0f70706be7c947c3341703721c0
-- PR: https://github.com/ImL1s/reinframe/pull/48
-- Issue Comment: https://github.com/ImL1s/reinframe/issues/6#issuecomment-5155668051
+Working directory: /Users/iml1s/Documents/mine/reinframe
+Path to ORIGINAL_REQUEST.md: /Users/iml1s/Documents/mine/reinframe/docs/dev/ORIGINAL_REQUEST.md
+Your metadata directory: /Users/iml1s/Documents/mine/reinframe/.agents/victory_auditor
 
-Please conduct a full, independent 3-phase audit:
-Phase 1: Timeline & Implementation vs Requirements audit against ORIGINAL_REQUEST.md.
-Phase 2: Cheating & Quality Detection (verify code is real, tests pass legitimately, no hardcoded skips or mock shortcuts).
-Phase 3: Independent verification run (`go test -v -race ./pkg/protocol/...` and PR verification).
+Conduct a rigorous 3-phase audit:
+Phase 1: Timeline & Process Audit — Verify commit history, git log, and subagent handoffs.
+Phase 2: Anti-Cheating & Integrity Audit — Search for hardcoded test results, skipped tests, disabled lints, or fake implementations.
+Phase 3: Independent Verification — Run build, unit tests, race detector, and high-concurrency stress tests directly. Verify code against every acceptance criterion in /Users/iml1s/Documents/mine/reinframe/docs/dev/ORIGINAL_REQUEST.md (R1 through R5).
 
-Return your clear final verdict: `VICTORY CONFIRMED` or `VICTORY REJECTED` along with your full report.
-</USER_REQUEST>
+Report your detailed audit findings and deliver a clear, structured final verdict: VICTORY CONFIRMED or VICTORY REJECTED.

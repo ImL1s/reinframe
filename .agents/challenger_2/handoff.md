@@ -1,80 +1,114 @@
-# Handoff Report — Challenger 2
+# Challenger 2 Handoff Report — Capability & Schema Focus
 
 **Verdict**: **APPROVE**
 
+---
+
 ## 1. Observation
 
-- **Implementation Inspection**:
-  - `pkg/protocol/validator.go` implements `ValidateEvent(payload []byte, schemaType string) error` using `go:embed` for `schemas/*.json` and `github.com/santhosh-tekuri/jsonschema/v5`.
-  - Line 86-90 of `validator.go`: `toSnakeCase(schemaType)` normalizes input string and checks `schemaCache[normalized]`. Unknown types return `unknown schema type: ...`.
-  - Line 92-95 of `validator.go`: `json.Unmarshal(payload, &v)` catches malformed JSON and returns `malformed JSON payload: ...`.
-  - Line 97-99 of `validator.go`: `sch.Validate(v)` checks JSON payload against compiled Draft-07 schema and returns `validation error for ...`.
+Direct observations from examining code files, running tests, and executing edge-case verification:
 
-- **Empirical Stress Test Execution**:
-  Created and executed `pkg/protocol/adversarial_stress_test.go` with command:
-  `go test -race -v -run TestAdversarial ./pkg/protocol/...`
-  Result output:
-  ```
-  === RUN   TestAdversarial_EmptyPayloads
-  --- PASS: TestAdversarial_EmptyPayloads (0.00s)
-  === RUN   TestAdversarial_CorruptBytes
-  --- PASS: TestAdversarial_CorruptBytes (0.00s)
-  === RUN   TestAdversarial_UnexpectedProperties
-  --- PASS: TestAdversarial_UnexpectedProperties (0.00s)
-  === RUN   TestAdversarial_NullFields
-  --- PASS: TestAdversarial_NullFields (0.00s)
-  === RUN   TestAdversarial_OutOfRangeNumbers
-  --- PASS: TestAdversarial_OutOfRangeNumbers (0.00s)
-  === RUN   TestAdversarial_SchemaTypeSecurity
-  --- PASS: TestAdversarial_SchemaTypeSecurity (0.00s)
-  === RUN   TestAdversarial_DeepRecursionPayload
-  --- PASS: TestAdversarial_DeepRecursionPayload (0.00s)
-  === RUN   TestAdversarial_ConcurrentStress
-  --- PASS: TestAdversarial_ConcurrentStress (0.02s)
-  PASS
-  ok  	github.com/reinframe/reinframe/pkg/protocol	1.454s
-  ```
+1. **Test Execution Result**:
+   Command: `go test -v -count=1 -race ./pkg/protocol/...`
+   Output:
+   ```
+   PASS
+   ok  github.com/reinframe/reinframe/pkg/protocol  3.600s
+   ```
+   All existing unit tests (`schema_test.go`, `capability_test.go`, `adversarial_stress_test.go`, `capability_stress_test.go`, `challenger2_stress_test.go`) and the new edge-case suite (`empiric_edge_cases_test.go`) passed with 0 failures and 0 race conditions.
 
-- **Stress Vector Breakdowns**:
-  1. *Empty payloads*: Rejects `""`, `" "`, `"\t\n"`, `null`, `""`, `[]`, `{}` gracefully with explicit error messages without crashing.
-  2. *Corrupt bytes*: Rejects non-UTF-8 bytes (`\xff\xfe\xfd`), truncated JSON (`{"session_id": "123`), trailing commas, single quotes, embedded NULs, and ELF binary header.
-  3. *Unexpected properties*: Schema enforcing `"additionalProperties": false` across all 22 JSON schemas successfully rejects extra injected fields (e.g. `unauthorized_field`, `admin_override`).
-  4. *Null fields*: Correctly rejects required string, integer, date-time, array, and map fields set to JSON `null`.
-  5. *Out-of-range numbers*: Enforces bounds: `integration_level` [-1, 4], `max_depth` [0], `timeout_seconds` [-30], `sequence_num` [0], `duration_ms` [-10], `weight` [1.05], `score` [-0.01], `max_tokens` [-100], `max_cost_usd` [-5.0].
-  6. *Malicious schemaType strings*: Path traversal (`../../etc/passwd`), null bytes (`agent_session\x00`), SQL injection strings, XSS HTML tags, whitespace, and 10,000 character strings safely return `unknown schema type` errors.
-  7. *Deep recursion*: 500-level nested JSON object rejected gracefully without stack overflow.
-  8. *Concurrency*: 20 goroutines running 500 iterations (10,000 total calls) under `-race` passed with zero race conditions or deadlocks.
+2. **Schema & Code Structure Inspections**:
+   - `pkg/protocol/schema.go`: `CapabilityManifest` contains all 20 explicit boolean capability fields (`SupportsEventStream` through `SupportsSDK`).
+   - `pkg/protocol/schemas/capability_manifest.json`: Defines 20 boolean properties and lists all 20 in the `required` array.
+   - `pkg/protocol/capability.go`:
+     - `ToBitmask()` (lines 103-172) constructs the bitmask exclusively from explicit booleans, completely eliminating auto-granting by `IntegrationLevel`.
+     - `Level1RequiredMask` (line 45) requires `CapEventStream` and `CapToolInspection`, accurately representing Advisory level without mandatory process control (`CapPause`, `CapCancel`, `CapResume`).
+     - `NegotiateLevel` (lines 235-278) degrades requested levels cleanly when missing required flags and returns missing flag strings.
+   - `pkg/protocol/validator.go`:
+     - `MaxPayloadSize = 1 * 1024 * 1024` (1MB limit enforced at line 80).
+     - Uses `json.Decoder.UseNumber()` (line 91) before `sch.Validate(v)`.
+     - Schemas loaded at `init()` (lines 23-68) for fail-fast behavior.
+   - `pkg/protocol/schemas/agent_session.json`: `status` enum includes `"RESUME"` (line 51).
+   - `pkg/protocol/schemas/task_envelope.json`: `max_depth` specifies `"minimum": 1, "maximum": 1` (lines 35-36).
+
+3. **Empirical Edge-Case Validation Results**:
+   Created `pkg/protocol/empiric_edge_cases_test.go` and verified:
+   - **Oversized payloads (>1MB)**:
+     - 1,048,576 bytes (1MB) -> passes size limit check.
+     - 1,048,577 bytes (1MB+1) -> rejected with `payload size 1048577 exceeds maximum limit of 1048576 bytes`.
+   - **Floating-point numbers in integer fields**:
+     - `integration_level: 1.5` in `agent_session` -> rejected with validation error.
+     - `max_depth: 1.5` in `task_envelope` -> rejected with validation error.
+     - `lines_added: 10.7` in `file_change_event` -> rejected with validation error.
+     - `duration_ms: 150.99` in `tool_call_event` -> rejected with validation error.
+     - `passed_count: 5.5` in `test_result_event` -> rejected with validation error.
+   - **Missing boolean fields in capability negotiation**:
+     - Schema validation: Payload missing any of the 20 boolean fields fails `ValidateEvent([]byte, "capability_manifest")`.
+     - Go Struct Unmarshaling: Missing fields default to `false`. `NegotiateLevel` evaluates achievable level without auto-granting, degrading from Level 2 to Level 1 when process control flags are missing.
+   - **`RESUME` session state transitions**:
+     - `AgentSession` with `Status: "RESUME"` passes schema validation. Invalid statuses (`"resume"`, `"RESUMING"`, `"INVALID"`) fail validation.
+   - **Invalid `max_depth` (>1)**:
+     - `max_depth` set to 2, 3, 5, 10, 100 or 0/-1 fail schema validation. Only `max_depth: 1` passes.
+
+---
 
 ## 2. Logic Chain
 
-1. **Observation**: `ValidateEvent` unmarshals raw payload using `json.Unmarshal` into an `any` interface, then validates against `schemaCache[normalized]`.
-2. **Reasoning**: Any invalid JSON syntax, binary input, or non-UTF-8 byte sequence is intercepted at `json.Unmarshal`, returning a wrapped `malformed JSON payload` error before touching the schema validator.
-3. **Observation**: All 22 schema files in `pkg/protocol/schemas/` specify strict JSON types, `minLength: 1` for IDs/strings, minimum/maximum bounds for integers/floats, enums for status/types, and `"additionalProperties": false`.
-4. **Reasoning**: Null fields, extra fields, out-of-range numbers, and invalid enum values are caught at `sch.Validate(v)`, preventing invalid or corrupt data models from passing validation.
-5. **Observation**: `schemaCache` map read access inside `ValidateEvent` is read-only after `schemaOnce.Do` initialization in `LoadSchemas()`.
-6. **Reasoning**: Concurrent invocations across goroutines are thread-safe and free from data races, as confirmed empirically by `go test -race`.
-7. **Conclusion**: `ValidateEvent` is robust against adversarial payloads, unexpected properties, null fields, corrupt bytes, out-of-range numbers, and concurrent access.
+1. **Premise 1**: Issue #6 and #7 requirements specify strict schema completeness (20 boolean capability flags), denial of auto-granted permissions via `ToBitmask()`, size limit protection against DoS (>1MB), exact level contract mapping, strict `max_depth: 1` constraint, fail-fast schema compilation, and inclusion of `"RESUME"` in `AgentSession.status`.
+2. **Premise 2**: Direct inspection of `pkg/protocol/schema.go`, `pkg/protocol/capability.go`, `pkg/protocol/validator.go`, and all 22 JSON schema files confirms exact implementation of these specs.
+3. **Premise 3**: Running `go test -v -count=1 -race ./pkg/protocol/...` (including `empiric_edge_cases_test.go`, `challenger2_stress_test.go`, and `adversarial_stress_test.go`) empirically confirms that valid payloads pass, edge cases fail as specified, round-trips are 100% lossless across all 20 capability flags, and no race conditions exist.
+4. **Conclusion**: `pkg/protocol` fulfills all functional, safety, and performance criteria for Milestone M2.
+
+---
 
 ## 3. Caveats
 
-- Randomized long-duration fuzz testing (`go test -fuzz`) was not run beyond the 8 deterministic adversarial stress test suites.
-- Payload sizes above 50MB were not tested due to memory constraints in local test runs (500-level nesting and 10KB strings were tested).
+- **Scope Boundary**: This evaluation focuses exclusively on `pkg/protocol`. SQLite WAL event store persistence (`pkg/state`) and integration runner (`tests/integration`) are evaluated by peer challengers.
+- **External Dependencies**: Schema validation relies on `github.com/santhosh-tekuri/jsonschema/v5`. No issues or unexpected behaviors were found with `Draft7` compilation and `json.Decoder.UseNumber()`.
+
+---
 
 ## 4. Conclusion
 
-Verdict: **APPROVE**
+**Verdict: APPROVE**
 
-`ValidateEvent` in `pkg/protocol/validator.go` meets all robustness, error handling, and security requirements. It handles empty inputs, corrupt bytes, extra properties, null fields, out-of-range values, and malicious schema types cleanly and safely.
+`pkg/protocol` meets all canonical schema validation, capability negotiation, DoS payload protection, and type safety requirements. The implementation is robust, loss-free, thread-safe, and fully verified by empirical testing.
+
+---
 
 ## 5. Verification Method
 
-To re-verify independently:
+To independently reproduce and verify this assessment, run the following command in the workspace directory `/Users/iml1s/Documents/mine/reinframe`:
 
-Run the full protocol test suite including adversarial stress tests with race detector:
 ```bash
-cd /Users/iml1s/Documents/mine/reinframe
-go test -race -v ./pkg/protocol/...
+go test -v -count=1 -race ./pkg/protocol/...
 ```
 
-Inspect test file:
-- `/Users/iml1s/Documents/mine/reinframe/pkg/protocol/adversarial_stress_test.go`
+Expected output:
+- PASS for all tests.
+- 0 race condition warnings.
+
+---
+
+## Challenge Summary
+
+**Overall risk assessment**: **LOW**
+
+### Stress Test Results
+
+| Scenario | Expected Behavior | Actual Behavior | Result |
+|---|---|---|---|
+| Payload size = 1,048,576 bytes (1MB) | Passes size limit check | Passes size limit check | **PASS** |
+| Payload size = 1,048,577 bytes (1MB+1) | Rejects with size limit error | Rejects with `payload size 1048577 exceeds maximum limit...` | **PASS** |
+| Float `1.5` for `integration_level` | Validation error | Rejects with validation error | **PASS** |
+| Float `1.5` for `max_depth` | Validation error | Rejects with validation error | **PASS** |
+| Float `10.7` for `lines_added` | Validation error | Rejects with validation error | **PASS** |
+| Missing boolean field in JSON `capability_manifest` | Validation error | Rejects with validation error | **PASS** |
+| Missing process control booleans in Go struct | Degrades from Level 2 to Level 1 | NegotiatedLevel=1, IsDegraded=true, MissingFlags=[CapPause, CapCancel, CapResume] | **PASS** |
+| `AgentSession` status = `"RESUME"` | Passes validation | Passes validation | **PASS** |
+| `TaskEnvelope` `max_depth` = 2 | Rejects with validation error | Rejects with validation error | **PASS** |
+| Concurrent `NegotiateLevel` (100 goroutines) | Thread safe, deterministic | Thread safe, deterministic | **PASS** |
+| 20-bit CapabilityManifest JSON round-trip | Lossless 20-bit bitmask preservation | Bitmask 0xFFFFF preserved losslessly | **PASS** |
+
+### Unchallenged Areas
+- SQLite WAL persistence and concurrent database writing — checked by state challenger.

@@ -1,12 +1,33 @@
 # Target Agent Harness Capability & Integration Surface Matrix
 
 ## Overview
-This matrix provides a detailed analysis of 12+ coding agent frameworks and harnesses evaluated on **2026-08-02**.
-It rates each harness against 24 specific operational dimensions and categorizes them into one of four Anti-Tunnel Harness Integration Levels:
-- **Level 0 (Observe-only)**: Passive log/stdout tailing and diff analysis.
-- **Level 1 (Advisory)**: Injects zoom-out guidance and contrarian perspectives via messages or prompt context.
-- **Level 2 (Guarded)**: Can pause, cancel, restrict tools, or request re-planning.
-- **Level 3 (Full-control)**: Full process control, checkpointing, session rollback, model switching, and subagent orchestration.
+This matrix analyses coding agent frameworks/harnesses against operational dimensions relevant to **external Anti-Tunnel supervision**.
+
+**Last revalidated:** 2026-08-02 (deep-research pass).  
+**Status:** *Partial* — high-signal version pins and known conflicts refreshed; **not** every Yes/No cell re-proven against first-party sources. Treat cells without a per-cell citation as **hypotheses**, not hard gates.
+
+### Integration Level (this document’s axis)
+These levels describe **how deeply Reinframe can integrate with a target harness** (capability surface), **not** the intervention escalation ladder after tunnel detection.  
+See [`level_axes_mapping.md`](./level_axes_mapping.md) for the dual-axis map vs Intervention Levels.
+
+| Integration Level | Meaning (capability surface) |
+|---|---|
+| **L0 Observe-only** | Passive log/stdout tailing, git/diff observation; no reliable advice delivery |
+| **L1 Advisory** | Can inject zoom-out / replan guidance (requires advice/context delivery) |
+| **L2 Guarded** | Can pause/cancel/restrict tools **via harness-native control** (or an explicitly accepted OS pause contract) |
+| **L3 Full-control** | Checkpoint/rollback, model switch, subagent orchestration, headless control |
+
+### Protocol contract (code) — do not conflate with matrix “target level”
+From `pkg/protocol/capability.go` (handshake gates):
+
+| Negotiated level | Required flags (current code) |
+|---|---|
+| L0 | `CapEventStream` only |
+| L1 | + `CapToolInspection` (**#65 will also require `CapAdviceDelivery` for true Advisory**) |
+| L2 | + `CapDiffInspection`, `CapPause`, `CapCancel`, `CapResume` |
+| L3 | + `CapCheckpoint`, `CapRollback`, `CapHeadless`, `CapCLIControl`, `CapMCP`, `CapSubagents`, `CapSwitchModel` |
+
+**Hard rule:** A harness with matrix **Pause Task = No** cannot be handshake-gated as protocol L2 under current `Level2RequiredMask` unless `CapPause` is redefined (e.g. OS SIGSTOP accepted) — tracked as a product decision issue.
 
 ---
 
@@ -14,15 +35,15 @@ It rates each harness against 24 specific operational dimensions and categorizes
 
 | Metric / Dimension | Claude Code | OpenAI Codex CLI | Cursor Agent | Aider | OpenHands | Cline | Roo Code | Goose | LangGraph | AutoGen | OpenAI Agents SDK | Automode (oh-my-agy) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **1. Native Subagents** | Yes | No | No | No | Yes | No | No | No | Yes | Yes | Yes | Yes |
+| **1. Native Subagents** | Yes | No* | No | No | Yes | No | No | **Yes** | Yes | Yes | Yes | Yes |
 | **2. Headless Mode** | Yes (`-p`) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | **3. CLI Control** | Yes | Yes | Yes | Yes | Yes | Extension | Extension | Yes | CLI/API | CLI/Python | Python SDK | CLI |
 | **4. SDK / API** | Anthropic API | OpenAI API | Cursor RPC | Python API | REST/Python | VSCode Extension | VSCode Extension | Rust/Python | Python/TS | Python API | Python SDK | CLI / Hooks |
-| **5. Hook Support** | Yes (`~/.claude/hooks`) | Custom scripts | No | Git / Pre-commit | Event Hooks | VSCode Events | VSCode Events | Extensions | State Graph | Event Callbacks | Agent Hooks | Lifecycle Hooks |
+| **5. Hook Support** | Yes (hooks / settings) | Custom scripts | No | Git / Pre-commit | Event Hooks | VSCode Events | VSCode Events | Extensions | State Graph | Event Callbacks | Agent Hooks | Lifecycle Hooks |
 | **6. Event Stream** | Stdio / JSONL | Stdio JSON | RPC | Stdio | WebSocket / REST | Extension Host | Extension Host | Stdio | State Stream | Event Stream | Event Stream | NDJSON Stream |
-| **7. MCP Support** | Yes | Yes | Yes | Partial | Yes | Yes | Yes | Yes | Custom Tool | Custom Tool | Custom Tool | Native |
-| **8. Pause Task** | No (SIGSTOP) | No | No | No | Yes | Yes | Yes | No | State Interrupt | No | State Interrupt | Yes |
-| **9. Cancel Task** | Yes (SIGINT) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| **7. MCP Support** | Yes | Yes | Yes | Partial* | Yes | Yes | Yes | Yes | Custom Tool | Custom Tool | Custom Tool | Native |
+| **8. Pause Task** | **No** (OS SIGSTOP only) | **No** | No | No | **Yes** (SDK pause/resume) | Yes | Yes | No | State Interrupt | No | State Interrupt | Yes |
+| **9. Cancel Task** | Yes (SIGINT / stop) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | **10. Resume Session** | Yes (`--resume`) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Checkpoint Resume | State Resume | Thread Resume | Yes |
 | **11. Checkpoint** | Git / Session | Git | Git | Git Commit | Docker / Git | Git | Git | Git | Memory Checkpoint | DB State | Thread State | Git / State |
 | **12. Rollback** | Git reset | Git reset | Git restore | Git undo | Container Reset | Git restore | Git restore | Git undo | State Rewind | State Rollback | Thread Rollback | Git Checkpoint |
@@ -35,30 +56,46 @@ It rates each harness against 24 specific operational dimensions and categorizes
 | **19. Patch / Diff / Error** | Git Diff | Git Diff | Workspace Diff | Git Diff | Event Diff | Editor Diff | Editor Diff | Git Diff | State Diff | Execution Log | Run Artifacts | Audit Diff |
 | **20. Extension Point** | Hooks / Subagents | Custom Scripts | VSCode Ext | Python Modules | Micro-agents | VSCode Ext | VSCode Ext | Extensions | Custom Nodes | Custom Agents | Custom Tools | Adapters / Hooks |
 | **21. License** | Proprietary CLI | MIT / Apache | Proprietary | Apache-2.0 | MIT | Apache-2.0 | Apache-2.0 | Apache-2.0 | MIT | MIT | MIT | MIT |
-| **22. Known Limits** | Terminal UI lock | Rate Limits | Closed Ext API | Stdio parsing | Docker overhead | IDE bound | IDE bound | Rust plugin API | Code overhead | Python runtime | SDK preview | Subagent max_depth |
-| **23. Verified Version** | v1.0.4 (2026-07) | v0.8.2 (2026-07) | v0.42 (2026-07) | v0.35 (2026-06) | v0.14 (2026-07) | v3.2 (2026-07) | v2.1 (2026-07) | v1.2 (2026-06) | v0.2.8 (2026-07) | v0.4.0 (2026-07) | v0.1.0 (2026-07) | v2.4 (2026-07) |
-| **24. Source Link** | github.com/anthropic | github.com/openai | cursor.com | github.com/aider | github.com/All-Hands-AI | github.com/cline | github.com/RooVetGit | github.com/block | github.com/langchain-ai | github.com/microsoft | github.com/openai | github.com/ImL1s |
+| **22. Known Limits** | Pause not native; UI lock | Rate limits | Closed Ext API | Stdio parsing | Docker overhead | IDE bound | IDE bound | Rust plugin API | Code overhead | Python runtime | SDK preview | Subagent max_depth |
+| **23. Verified Version** | **v2.1.220** (npm 2026-08-02) | **rust-v0.146.0** (2026-07-29) | v0.42 *(not revalidated 2026-08-02)* | **v0.86.2** (PyPI aider-chat) | **v1.8.0** (GH 2026-07-30) | v3.2 *(not revalidated)* | v2.1 *(not revalidated)* | v1.2 *(subagents docs revalidated)* | **v1.2.10** (PyPI) | v0.4.0 *(not revalidated)* | v0.1.0 *(not revalidated)* | v2.4 *(not revalidated)* |
+| **24. Source Link** | npm `@anthropic-ai/claude-code` | github.com/openai/codex | cursor.com | github.com/Aider-AI/aider | github.com/All-Hands-AI/OpenHands | github.com/cline | github.com/RooVetGit | goose-docs.ai | pypi.org/project/langgraph | github.com/microsoft/autogen | github.com/openai | github.com/ImL1s |
+
+\* **Footnotes (2026-08-02 revalidation)**  
+1. **Goose Native Subagents:** previously marked No; first-party docs describe first-class internal/external subagents → **Yes**.  
+2. **Claude Code Pause:** still **No** as harness-native pause; OS `SIGSTOP` is **not** automatically `CapPause` until product decides (#72).  
+3. **Claude Code / Codex as “L2 targets”:** under current protocol masks they **cannot hard-gate L2** while Pause=No. Recommended mapping: **Integration L1 (hooks + advisory)** with *aspirational* L2 if pause contract is solved.  
+4. **OpenHands Pause=Yes** matches current SDK pause/resume docs — valid L2 *capability* candidate for that harness only.  
+5. **Codex Native Subagents=No** not deeply revalidated; ecosystem plugins ≠ native CLI subagents.  
+6. **Aider MCP=Partial** retained: native MCP still incomplete; third-party bridges exist.  
+7. Cells marked *not revalidated* keep prior pins; do not use for release gating.
 
 ---
 
-## Integration Level Mapping
+## Integration Level Mapping (capability surface only)
 
 ### Level 0: Observe-only Integration
-- **Target Harnesses**: Proprietary IDE Extensions (Cursor, Cline, Roo Code) when running without explicit control APIs.
-- **Supervision Capability**: Tail log files, git status, diff churn, and process CPU/RAM.
-- **Intervention Capability**: Read-only alerts, developer notifications, audit logs.
+- **Typical harnesses:** IDE extensions without control APIs; any agent when only logs/git are available.
+- **Supervision:** Tail logs, git status, diff churn, process stats.
+- **Intervention:** Human notifications / audit only (no `CapAdviceDelivery`).
 
 ### Level 1: Advisory Integration
-- **Target Harnesses**: Stdio-based agents (Aider, Goose, OpenAI Agents SDK).
-- **Supervision Capability**: Full stdio inspection, tool call parsing, cost tracking.
-- **Intervention Capability**: Send advisory prompts (`/zoom-out`), inject alternative hypotheses into context.
+- **Typical harnesses:** Stdio agents + hook-capable CLIs (Aider, Goose, **Claude Code with hooks**, Codex with custom scripts).
+- **Supervision:** Event/tool streams, cost signals where available.
+- **Intervention:** Inject zoom-out / replan advice; requires delivery caps (#65). **Does not require CapPause.**
 
 ### Level 2: Guarded Integration
-- **Target Harnesses**: Headless CLI agents with lifecycle hooks (Claude Code, OpenAI Codex CLI, OpenHands).
-- **Supervision Capability**: Real-time event streams, pre-tool-call inspection, exact error fingerprinting.
-- **Intervention Capability**: Pause process, cancel current action, reject tool call execution, request re-planning.
+- **Typical harnesses:** Agents with **native pause/cancel/tool gate** (e.g. OpenHands pause API; agents with true PreTool deny).
+- **Supervision:** Real-time events, pre-tool inspection.
+- **Intervention:** Pause, cancel, reject tool, request re-plan.
+- **Gate:** Must satisfy protocol `Level2RequiredMask` **or** a documented CapPause equivalence decision.
 
 ### Level 3: Full-control Integration
-- **Target Harnesses**: Supervisor-native agents (oh-my-agy, LangGraph with state persistence, custom Agent SDKs).
-- **Supervision Capability**: Direct memory checkpoint inspection, subagent state tree, full token/cost accounting.
-- **Intervention Capability**: Full workspace checkpointing, Git session rollback, automatic model switching, subagent replacement.
+- **Typical harnesses:** Supervisor-native / graph agents with checkpoint+subagent+model switch (LangGraph-class, custom SDKs, Automode).
+- **Intervention:** Workspace checkpoint/rollback, model switch, subagent replace, terminate.
+
+---
+
+## Revalidation log
+| Date | Change |
+|---|---|
+| 2026-08-02 | Deep-research: refresh Claude Code / OpenHands / Codex / LangGraph / Aider versions; Goose Subagents→Yes; document Pause/L2 gate conflict; dual-axis pointer |

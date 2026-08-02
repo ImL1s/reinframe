@@ -370,14 +370,14 @@ func TestTier1_Negotiate_MissingFlagsReported(t *testing.T) {
 	if resp.NegotiatedLevel != 1 {
 		t.Errorf("Expected degradation to Level 1, got %d", resp.NegotiatedLevel)
 	}
-	foundCheckpoint := false
+	foundPause := false
 	for _, flag := range resp.MissingFlags {
-		if flag == "CapCheckpoint" {
-			foundCheckpoint = true
+		if flag == "CapPause" {
+			foundPause = true
 		}
 	}
-	if !foundCheckpoint {
-		t.Errorf("Expected MissingFlags to include CapCheckpoint, got %v", resp.MissingFlags)
+	if !foundPause {
+		t.Errorf("Expected MissingFlags to include CapPause, got %v", resp.MissingFlags)
 	}
 }
 

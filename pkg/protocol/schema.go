@@ -217,9 +217,6 @@ type CapabilityManifest struct {
 	SupportsOpenAICompat   bool   `json:"supports_openai_compat" redact:"none"`
 	SupportsLocalModels    bool   `json:"supports_local_models" redact:"none"`
 	SupportsSDK            bool   `json:"supports_sdk" redact:"none"`
-
-	rawBitmask    uint64
-	hasRawBitmask bool
 }
 
 // Checkpoint represents a workspace Git commit hash and test status snapshot.

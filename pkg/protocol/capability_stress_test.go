@@ -28,7 +28,7 @@ func TestChallengerR2_HighConcurrencyNegotiation(t *testing.T) {
 		Level3RequiredMask,
 		0xFFFFFFFFFFFFFFFF,
 		Level3RequiredMask &^ uint64(CapSwitchModel),
-		Level2RequiredMask &^ uint64(CapCheckpoint),
+		Level2RequiredMask &^ uint64(CapPause),
 		Level1RequiredMask &^ uint64(CapPause),
 	}
 
@@ -87,13 +87,23 @@ func TestChallengerR2_All64BitsBitmaskMatrix(t *testing.T) {
 			manifest := FromBitmask(mask)
 			reconstructed := manifest.ToBitmask()
 
-			if reconstructed != mask {
-				t.Fatalf("Bit %d loss: got 0x%x, want 0x%x", bit, reconstructed, mask)
+			expected := mask
+			if bit >= 20 {
+				expected = 0
+			}
+			if reconstructed != expected {
+				t.Fatalf("Bit %d mismatch: got 0x%x, want 0x%x", bit, reconstructed, expected)
 			}
 
 			flag := CapabilityFlag(mask)
-			if !manifest.HasCapability(flag) {
-				t.Errorf("Bit %d: HasCapability(flag) returned false, expected true", bit)
+			if bit < 20 {
+				if !manifest.HasCapability(flag) {
+					t.Errorf("Bit %d: HasCapability(flag) returned false, expected true", bit)
+				}
+			} else {
+				if manifest.HasCapability(flag) {
+					t.Errorf("Bit %d: HasCapability(flag) returned true, expected false for unassigned bit", bit)
+				}
 			}
 
 			// Verify other bit positions return false
@@ -125,6 +135,8 @@ func TestChallengerR2_DegradationAndMissingFlagsExactness(t *testing.T) {
 			wantMissing: []string{
 				"CapHeadless",
 				"CapCLIControl",
+				"CapCheckpoint",
+				"CapRollback",
 				"CapMCP",
 				"CapSubagents",
 				"CapSwitchModel",
@@ -161,8 +173,6 @@ func TestChallengerR2_DegradationAndMissingFlagsExactness(t *testing.T) {
 				"CapPause",
 				"CapCancel",
 				"CapResume",
-				"CapCheckpoint",
-				"CapRollback",
 			},
 		},
 		{
@@ -232,8 +242,8 @@ func TestChallengerR2_HighBitsInterferenceCheck(t *testing.T) {
 				t.Errorf("Level mismatch for %s: got %d, want %d", bc.name, achievable, bc.wantLevel)
 			}
 
-			if manifest.ToBitmask() != combinedMask {
-				t.Errorf("ToBitmask mismatch for %s: got 0x%x, want 0x%x", bc.name, manifest.ToBitmask(), combinedMask)
+			if manifest.ToBitmask() != bc.baseMask {
+				t.Errorf("ToBitmask mismatch for %s: got 0x%x, want 0x%x", bc.name, manifest.ToBitmask(), bc.baseMask)
 			}
 		})
 	}

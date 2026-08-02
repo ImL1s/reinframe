@@ -43,8 +43,8 @@ const (
 const (
 	Level0RequiredMask uint64 = uint64(CapEventStream)
 	Level1RequiredMask uint64 = Level0RequiredMask | uint64(CapToolInspection)
-	Level2RequiredMask uint64 = Level1RequiredMask | uint64(CapDiffInspection) | uint64(CapPause) | uint64(CapCancel) | uint64(CapResume) | uint64(CapCheckpoint) | uint64(CapRollback)
-	Level3RequiredMask uint64 = Level2RequiredMask | uint64(CapHeadless) | uint64(CapCLIControl) | uint64(CapMCP) | uint64(CapSubagents) | uint64(CapSwitchModel)
+	Level2RequiredMask uint64 = Level1RequiredMask | uint64(CapDiffInspection) | uint64(CapPause) | uint64(CapCancel) | uint64(CapResume)
+	Level3RequiredMask uint64 = Level2RequiredMask | uint64(CapCheckpoint) | uint64(CapRollback) | uint64(CapHeadless) | uint64(CapCLIControl) | uint64(CapMCP) | uint64(CapSubagents) | uint64(CapSwitchModel)
 )
 
 var flagToStringMap = map[CapabilityFlag]string{
@@ -101,10 +101,6 @@ type HandshakeResponse struct {
 
 // ToBitmask combines explicit boolean capability flags into a uint64 bitmask.
 func (m CapabilityManifest) ToBitmask() uint64 {
-	if m.hasRawBitmask {
-		return m.rawBitmask
-	}
-
 	var mask uint64
 
 	if m.SupportsEventStream {
@@ -194,8 +190,6 @@ func FromBitmask(mask uint64) CapabilityManifest {
 		SupportsOpenAICompat:   (mask & uint64(CapOpenAICompat)) != 0,
 		SupportsLocalModels:    (mask & uint64(CapLocalModels)) != 0,
 		SupportsSDK:            (mask & uint64(CapSDK)) != 0,
-		rawBitmask:             mask,
-		hasRawBitmask:          true,
 	}
 	manifest.IntegrationLevel = EvaluateAchievableLevelFromMask(mask)
 	return manifest

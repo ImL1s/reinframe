@@ -30,7 +30,7 @@ func TestChallenger2_BitFlips(t *testing.T) {
 	t.Run("Level2_SingleBitFlips", func(t *testing.T) {
 		level2Flags := []CapabilityFlag{
 			CapEventStream, CapToolInspection, CapDiffInspection,
-			CapPause, CapCancel, CapResume, CapCheckpoint, CapRollback,
+			CapPause, CapCancel, CapResume,
 		}
 
 		for _, flag := range level2Flags {

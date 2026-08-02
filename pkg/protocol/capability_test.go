@@ -108,8 +108,7 @@ func TestCapabilityManifest_FromBitmask_RoundTrip(t *testing.T) {
 
 	// Level 2 required booleans
 	if !restored.SupportsEventStream || !restored.SupportsToolInspection || !restored.SupportsDiffInspection ||
-		!restored.SupportsPause || !restored.SupportsCancel || !restored.SupportsResume ||
-		!restored.SupportsCheckpoint || !restored.SupportsRollback {
+		!restored.SupportsPause || !restored.SupportsCancel || !restored.SupportsResume {
 		t.Errorf("FromBitmask boolean fields missing for Level 2 mask: %+v", restored)
 	}
 
@@ -584,6 +583,7 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 		checkBit  int
 		wantHas   bool
 		wantLevel int
+		wantMask  uint64
 	}{
 		{
 			name:      "Zero_bitmask",
@@ -591,6 +591,7 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 			checkBit:  0,
 			wantHas:   false,
 			wantLevel: -1,
+			wantMask:  0,
 		},
 		{
 			name:      "Full_uint64_bitmask_(all_bits_set)_bit19",
@@ -598,13 +599,15 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 			checkBit:  19,
 			wantHas:   true,
 			wantLevel: 3,
+			wantMask:  0xFFFFF,
 		},
 		{
 			name:      "Full_uint64_bitmask_(all_bits_set)_bit63",
 			mask:      0xFFFFFFFFFFFFFFFF,
 			checkBit:  63,
-			wantHas:   true,
+			wantHas:   false,
 			wantLevel: 3,
+			wantMask:  0xFFFFF,
 		},
 		{
 			name:      "Bit_19_only_(CapSDK)",
@@ -612,20 +615,23 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 			checkBit:  19,
 			wantHas:   true,
 			wantLevel: -1,
+			wantMask:  1 << 19,
 		},
 		{
 			name:      "Bit_20_(undefined_flag)",
 			mask:      1 << 20,
 			checkBit:  20,
-			wantHas:   true,
+			wantHas:   false,
 			wantLevel: -1,
+			wantMask:  0,
 		},
 		{
 			name:      "Bit_63_(highest_uint64_bit)",
 			mask:      1 << 63,
 			checkBit:  63,
-			wantHas:   true,
+			wantHas:   false,
 			wantLevel: -1,
+			wantMask:  0,
 		},
 		{
 			name:      "Level_1_required_mask_minus_CapToolInspection",
@@ -633,13 +639,15 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 			checkBit:  0, // CapEventStream remains set
 			wantHas:   true,
 			wantLevel: 0,
+			wantMask:  Level1RequiredMask &^ uint64(CapToolInspection),
 		},
 		{
-			name:      "Level_2_required_mask_minus_CapCheckpoint",
-			mask:      Level2RequiredMask &^ uint64(CapCheckpoint),
+			name:      "Level_2_required_mask_minus_CapPause",
+			mask:      Level2RequiredMask &^ uint64(CapPause),
 			checkBit:  2,
 			wantHas:   true,
 			wantLevel: 1,
+			wantMask:  Level2RequiredMask &^ uint64(CapPause),
 		},
 		{
 			name:      "Level_3_required_mask_minus_CapSwitchModel",
@@ -647,6 +655,7 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 			checkBit:  5,
 			wantHas:   true,
 			wantLevel: 2,
+			wantMask:  Level3RequiredMask &^ uint64(CapSwitchModel),
 		},
 	}
 
@@ -662,9 +671,31 @@ func TestChallenger_BoundaryBitmasks(t *testing.T) {
 			if gotHas != tt.wantHas {
 				t.Errorf("HasCapability(shift %d) = %v, want %v", tt.checkBit, gotHas, tt.wantHas)
 			}
-			if m.ToBitmask() != tt.mask {
-				t.Errorf("ToBitmask() = 0x%x, want 0x%x", m.ToBitmask(), tt.mask)
+			if m.ToBitmask() != tt.wantMask {
+				t.Errorf("ToBitmask() = 0x%x, want 0x%x", m.ToBitmask(), tt.wantMask)
 			}
 		})
+	}
+}
+
+func TestFromBitmask_PublicMutationRevokesCapability(t *testing.T) {
+	manifest := FromBitmask(Level3RequiredMask)
+
+	// Verify rollback is initially present
+	if !manifest.HasCapability(CapRollback) {
+		t.Fatal("expected CapRollback to be set from Level3RequiredMask")
+	}
+
+	// Revoke rollback via public field
+	manifest.SupportsRollback = false
+
+	// ToBitmask and HasCapability MUST reflect the revocation
+	if manifest.HasCapability(CapRollback) {
+		t.Fatal("CapRollback should be revoked after setting SupportsRollback=false")
+	}
+
+	mask := manifest.ToBitmask()
+	if (mask & uint64(CapRollback)) != 0 {
+		t.Fatal("ToBitmask should not include CapRollback after revocation")
 	}
 }

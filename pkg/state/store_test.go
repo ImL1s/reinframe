@@ -535,3 +535,75 @@ func TestStore_ConcurrentAppends_Race(t *testing.T) {
 		}
 	}
 }
+
+func TestStore_DefaultMemoryStore_SharedCachePooling(t *testing.T) {
+	ctx := context.Background()
+	store, err := state.NewStore(state.StoreOptions{
+		MaxOpenConns: 10,
+		MaxIdleConns: 5,
+	})
+	if err != nil {
+		t.Fatalf("NewStore with empty DatabasePath failed: %v", err)
+	}
+	defer store.Close()
+
+	var wg sync.WaitGroup
+	for i := 1; i <= 20; i++ {
+		wg.Add(1)
+		go func(seq int) {
+			defer wg.Done()
+			evt := &protocol.AgentEvent{
+				EventID:     fmt.Sprintf("mem-evt-%d", seq),
+				SessionID:   "sess-mem",
+				SequenceNum: int64(seq),
+				EventType:   "mem_test",
+				Timestamp:   time.Now().UTC(),
+				Payload:     json.RawMessage(`{}`),
+			}
+			if err := store.AppendEvent(ctx, evt); err != nil {
+				t.Errorf("AppendEvent failed on default memory store: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	events, err := store.QueryEvents(ctx, state.EventFilter{SessionID: "sess-mem"})
+	if err != nil {
+		t.Fatalf("QueryEvents failed on default memory store: %v", err)
+	}
+	if len(events) != 20 {
+		t.Fatalf("expected 20 events on in-memory store, got %d", len(events))
+	}
+}
+
+func TestStore_ConcurrentMigrations_Race(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "concurrent_migrations.db")
+
+	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate", dbPath))
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(10)
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, 10)
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := state.RunMigrations(db); err != nil {
+				errChan <- err
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		t.Errorf("concurrent RunMigrations error: %v", err)
+	}
+}
+

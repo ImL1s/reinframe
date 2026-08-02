@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -50,23 +50,20 @@ type EventFilter struct {
 	Ascending     bool
 }
 
+var memDBSeq uint64
+
 // Store represents an append-only event store backed by SQLite with WAL mode.
 type Store struct {
 	db     *sql.DB
-	mu     sync.RWMutex
-	closed bool
+	closed atomic.Bool
 }
 
 // NewStore initializes a new SQLite WAL event store with embedded schema migrations applied.
 func NewStore(opts StoreOptions) (*Store, error) {
 	dbPath := opts.DatabasePath
-	if dbPath == "" {
-		dbPath = ":memory:"
-	}
-
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
+	isMemory := dbPath == "" || dbPath == ":memory:" || strings.Contains(dbPath, "mode=memory")
+	if dbPath == "" || dbPath == ":memory:" {
+		dbPath = fmt.Sprintf("file:reinframe-memory-%d?mode=memory&cache=shared", atomic.AddUint64(&memDBSeq, 1))
 	}
 
 	busyTimeoutMs := 5000
@@ -74,36 +71,39 @@ func NewStore(opts StoreOptions) (*Store, error) {
 		busyTimeoutMs = int(opts.BusyTimeout.Milliseconds())
 	}
 
+	pragmas := fmt.Sprintf("_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_txlock=immediate", busyTimeoutMs)
+
+	var dsn string
+	if strings.Contains(dbPath, "?") {
+		dsn = fmt.Sprintf("%s&%s", dbPath, pragmas)
+	} else {
+		dsn = fmt.Sprintf("%s?%s", dbPath, pragmas)
+	}
+
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
+	}
+
 	maxOpen := 10
 	if opts.MaxOpenConns > 0 {
 		maxOpen = opts.MaxOpenConns
+	}
+
+	if isMemory {
+		maxOpen = 1
 	}
 
 	maxIdle := 5
 	if opts.MaxIdleConns > 0 {
 		maxIdle = opts.MaxIdleConns
 	}
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
 
 	db.SetMaxOpenConns(maxOpen)
 	db.SetMaxIdleConns(maxIdle)
-
-	// Apply WAL mode and essential SQLite pragmas
-	pragmas := []string{
-		fmt.Sprintf("PRAGMA busy_timeout = %d;", busyTimeoutMs),
-		"PRAGMA journal_mode = WAL;",
-		"PRAGMA synchronous = NORMAL;",
-		"PRAGMA foreign_keys = ON;",
-	}
-
-	for _, pragma := range pragmas {
-		if _, err := db.Exec(pragma); err != nil {
-			// In-memory sqlite may return error on journal_mode=WAL, proceed gracefully
-			if !strings.Contains(err.Error(), "journal_mode") {
-				db.Close()
-				return nil, fmt.Errorf("failed to apply pragma %q: %w", pragma, err)
-			}
-		}
-	}
 
 	// Run embedded migrations
 	if err := RunMigrations(db); err != nil {
@@ -130,6 +130,10 @@ func (s *Store) AppendEvent(ctx context.Context, event *protocol.AgentEvent) err
 
 // AppendEvents inserts multiple agent events into the store atomically in a single BEGIN IMMEDIATE transaction.
 func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent) error {
+	if s.closed.Load() {
+		return ErrStoreClosed
+	}
+
 	if len(events) == 0 {
 		return nil
 	}
@@ -140,32 +144,14 @@ func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent)
 		}
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return ErrStoreClosed
-	}
-
-	conn, err := s.db.Conn(ctx)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to acquire db connection: %w", err)
-	}
-	defer conn.Close()
-
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return mapSQLiteError(err)
 	}
-
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
-		}
-	}()
+	defer tx.Rollback()
 
 	stmtSQL := `INSERT INTO events (event_id, session_id, sequence_num, event_type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?)`
-	stmt, err := conn.PrepareContext(ctx, stmtSQL)
+	stmt, err := tx.PrepareContext(ctx, stmtSQL)
 	if err != nil {
 		return mapSQLiteError(err)
 	}
@@ -183,20 +169,16 @@ func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent)
 		}
 	}
 
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+	if err := tx.Commit(); err != nil {
 		return mapSQLiteError(err)
 	}
-	committed = true
 
 	return nil
 }
 
 // QueryEvents retrieves events from the store matching the provided EventFilter criteria.
 func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protocol.AgentEvent, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.closed {
+	if s.closed.Load() {
 		return nil, ErrStoreClosed
 	}
 
@@ -292,10 +274,7 @@ func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protoco
 
 // GetLatestSequenceNum returns the highest sequence_num for the given session ID, or 0 if no events exist.
 func (s *Store) GetLatestSequenceNum(ctx context.Context, sessionID string) (int64, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.closed {
+	if s.closed.Load() {
 		return 0, ErrStoreClosed
 	}
 
@@ -314,14 +293,9 @@ func (s *Store) GetLatestSequenceNum(ctx context.Context, sessionID string) (int
 
 // Close closes the database connection pool.
 func (s *Store) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
+	if s.closed.Swap(true) {
 		return nil
 	}
-
-	s.closed = true
 	return s.db.Close()
 }
 

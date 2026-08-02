@@ -2,7 +2,7 @@
 
 ## Test Runner Command
 ```bash
-go test -v -race ./tests/e2e/...
+go test -v -race ./tests/integration/...
 ```
 
 Expected output: All 85+ E2E test cases pass cleanly with exit code 0 and zero data race warnings.
@@ -29,7 +29,7 @@ Expected output: All 85+ E2E test cases pass cleanly with exit code 0 and zero d
 | Multi-Goroutine & Race Safety | 5 | 5 | ✓ | ✓ | READY |
 
 ## Execution Commands
-- **Run E2E Test Suite**: `go test -v -race ./tests/e2e/...`
+- **Run E2E Test Suite**: `go test -v -race ./tests/integration/...`
 - **Run Protocol Package Unit Tests**: `go test -v -race ./pkg/protocol/...`
 - **Run State Package Unit Tests**: `go test -v -race ./pkg/state/...`
 - **Run All Project Tests**: `go test -v -race ./...`

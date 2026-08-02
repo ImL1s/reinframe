@@ -1,0 +1,25 @@
+# Binaries & Executables
+/bin/
+*.exe
+*.exe?
+*.dll
+*.so
+*.dylib
+
+# SQLite Database & Temporary Artifacts
+*.db
+*.db-wal
+*.db-shm
+tmp/
+/tmp/
+
+# OS & IDE Files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime Agent Workspaces & Logs
+.agents/*
+!.agents/README.md

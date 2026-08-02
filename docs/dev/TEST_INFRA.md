@@ -25,5 +25,5 @@
 
 ## Test Execution Command
 ```bash
-go test -v -race ./tests/e2e/...
+go test -v -race ./tests/integration/...
 ```

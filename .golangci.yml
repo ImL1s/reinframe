@@ -9,7 +9,13 @@ linters:
         - (*database/sql.DB).Close
         - (*database/sql.Conn).Close
         - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*database/sql.Tx).Rollback
         - (*os).Chmod
   exclusions:
     paths:
       - .agents
+    rules:
+      - path: "_test\\.go$"
+        linters:
+          - errcheck

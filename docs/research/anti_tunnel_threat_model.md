@@ -56,11 +56,28 @@ $$\text{Confidence Score} = w_1 \cdot S_{\text{error\_count}} + w_2 \cdot S_{\te
 | Scope Drift Warning | 0.15 | Touch outside scope whitelist | Log warning / Advisory |
 | Reviewer Tunnel Classification | 0.25 | Confidence $> 0.85$ | Triggers ZOOM_OUT / REPLAN |
 
+### 3.1 Normative status of weights & thresholds (2026-08-02)
+- Values above are **provisional design defaults**, **not** calibrated hard-gates.
+- **No** ROC / false-positive dataset is checked into this repo yet (#40 / #41 / #74).
+- Implementations MUST expose weights/thresholds as **config knobs** until evaluation evidence exists.
+- Open contract gaps (must close before claiming reproducibility):
+  - Exact normalization of each $S_*$ from raw measurements (fingerprint identity, churn formula, scope whitelist source).
+  - FM-1 prose “$\ge N$” vs table “Count $\ge 3$” — **table wins as default N=3** until config overrides.
+  - How per-signal `weight` fields in `TunnelSignal` combine with global $w_i$ table.
+
+### 3.2 Dual Level axes
+Intervention steps below are **Axis B (escalation)**.  
+They are **not** the same as handshake **Axis A (Integration Level)**.  
+Crosswalk: [`level_axes_mapping.md`](./level_axes_mapping.md).
+
 ---
 
-## 4. Intervention Escalation Ladder
+## 4. Intervention Escalation Ladder (Axis B)
 
-1. **Level 0 (Observe)**: Record event to SQLite WAL audit store.
-2. **Level 1 (Advisory)**: Inject Evidence Pack summary and request re-planning (`ZOOM_OUT`).
-3. **Level 2 (Guarded)**: Pause process execution, require discriminating test run.
-4. **Level 3 (Full-control)**: Rollback workspace Git checkpoint, switch model family, or escalate to human user.
+1. **B0 Observe**: Record event to SQLite WAL audit store.
+2. **B1 Advisory**: Inject Evidence Pack summary and request re-planning (`ZOOM_OUT` / replan advice) with delivery+ACK (#68).
+3. **B2 Guarded**: Pause or tool-defer execution; require discriminating experiment when available.
+4. **B3 Full-control**: Rollback workspace Git checkpoint; **switch model family**; **escalate to human**; or terminate session.
+
+### 4.1 Schema coverage note
+Current `intervention.action_type` / `recommended_action` enums cover advisory zoom-out, pause, cancel, git-rollback, terminate-class actions more clearly than **switch model** / **escalate to human**. Those B3 actions remain product requirements and must land in #57 schema extensions before orchestrator claims B3 completeness.

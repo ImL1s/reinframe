@@ -26,6 +26,9 @@ var (
 	ErrStoreClosed = errors.New("store is closed")
 )
 
+// FixedTimestampLayout ensures fixed-width ISO 8601 formatting for lexically sortable SQLite text comparison.
+const FixedTimestampLayout = "2006-01-02T15:04:05.000000000Z"
+
 // StoreOptions defines configuration parameters for initializing the SQLite Store.
 type StoreOptions struct {
 	DatabasePath string
@@ -169,7 +172,7 @@ func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent)
 	defer stmt.Close()
 
 	for _, e := range events {
-		tsStr := e.Timestamp.UTC().Format(time.RFC3339Nano)
+		tsStr := e.Timestamp.UTC().Format(FixedTimestampLayout)
 		payloadStr := string(e.Payload)
 		if payloadStr == "" {
 			payloadStr = "{}"
@@ -188,7 +191,7 @@ func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent)
 	return nil
 }
 
-// QueryEvents retrieves events matching the provided EventFilter criteria.
+// QueryEvents retrieves events from the store matching the provided EventFilter criteria.
 func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protocol.AgentEvent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -198,9 +201,9 @@ func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protoco
 	}
 
 	var queryBuilder strings.Builder
-	var args []interface{}
-
 	queryBuilder.WriteString("SELECT event_id, session_id, sequence_num, event_type, timestamp, payload FROM events WHERE 1=1")
+
+	var args []interface{}
 
 	if filter.SessionID != "" {
 		queryBuilder.WriteString(" AND session_id = ?")
@@ -213,7 +216,7 @@ func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protoco
 			placeholders[i] = "?"
 			args = append(args, et)
 		}
-		queryBuilder.WriteString(fmt.Sprintf(" AND event_type IN (%s)", strings.Join(placeholders, ", ")))
+		queryBuilder.WriteString(fmt.Sprintf(" AND event_type IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	if filter.StartSequence != nil {
@@ -228,12 +231,12 @@ func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protoco
 
 	if filter.StartTime != nil {
 		queryBuilder.WriteString(" AND timestamp >= ?")
-		args = append(args, filter.StartTime.UTC().Format(time.RFC3339Nano))
+		args = append(args, filter.StartTime.UTC().Format(FixedTimestampLayout))
 	}
 
 	if filter.EndTime != nil {
 		queryBuilder.WriteString(" AND timestamp <= ?")
-		args = append(args, filter.EndTime.UTC().Format(time.RFC3339Nano))
+		args = append(args, filter.EndTime.UTC().Format(FixedTimestampLayout))
 	}
 
 	if filter.Ascending {
@@ -323,6 +326,9 @@ func (s *Store) Close() error {
 }
 
 func parseTimestamp(tsStr string) (time.Time, error) {
+	if t, err := time.Parse(FixedTimestampLayout, tsStr); err == nil {
+		return t.UTC(), nil
+	}
 	if t, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {
 		return t.UTC(), nil
 	}

@@ -231,6 +231,65 @@ func TestStore_DuplicateEventID(t *testing.T) {
 	}
 }
 
+func TestStore_FixedWidthTimestampLexicalOrdering(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "lexical_ts.db")
+	store, err := state.NewStore(state.StoreOptions{DatabasePath: dbPath})
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	baseTime := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+
+	// Exact second boundary
+	e1 := &protocol.AgentEvent{
+		EventID:     "evt-exact-sec",
+		SessionID:   "sess-ts",
+		SequenceNum: 1,
+		EventType:   "tool_call",
+		Timestamp:   baseTime,
+		Payload:     json.RawMessage(`{}`),
+	}
+	// Fractional second
+	e2 := &protocol.AgentEvent{
+		EventID:     "evt-frac-sec",
+		SessionID:   "sess-ts",
+		SequenceNum: 2,
+		EventType:   "tool_call",
+		Timestamp:   baseTime.Add(100 * time.Millisecond),
+		Payload:     json.RawMessage(`{}`),
+	}
+
+	if err := store.AppendEvents(ctx, []*protocol.AgentEvent{e1, e2}); err != nil {
+		t.Fatalf("AppendEvents failed: %v", err)
+	}
+
+	// Filter with StartTime at exact second
+	events, err := store.QueryEvents(ctx, state.EventFilter{
+		SessionID: "sess-ts",
+		StartTime: &baseTime,
+	})
+	if err != nil {
+		t.Fatalf("QueryEvents with StartTime failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Errorf("expected 2 events, got %d", len(events))
+	}
+
+	// Filter with EndTime at exact second -> should only match e1
+	eventsExact, err := store.QueryEvents(ctx, state.EventFilter{
+		SessionID: "sess-ts",
+		EndTime:   &baseTime,
+	})
+	if err != nil {
+		t.Fatalf("QueryEvents with EndTime failed: %v", err)
+	}
+	if len(eventsExact) != 1 || eventsExact[0].EventID != "evt-exact-sec" {
+		t.Errorf("expected 1 event ('evt-exact-sec'), got %d", len(eventsExact))
+	}
+}
+
 func TestStore_InvalidEvent(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "invalid.db")

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -692,6 +693,10 @@ func TestTier1_Concurrency_SequenceContiguity(t *testing.T) {
 // --- Feature 5: SQL Schema & Migration Engine (Boundaries) ---
 
 func TestTier2_Migration_ReadOnlyDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory permission bit 0444 is not enforced on Windows NTFS")
+	}
+
 	dir, err := os.MkdirTemp("", "reinframe_readonly_*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)

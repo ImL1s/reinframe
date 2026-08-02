@@ -1,10 +1,10 @@
-package e2e_test
+package integration_test
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -396,13 +396,7 @@ func TestTier3_Pairwise_ConcurrentNegotiationAndAppends(t *testing.T) {
 
 // 7. Store Replay Repopulates Capability Manifest & Re-evaluates Level
 func TestTier3_Pairwise_StoreReplayRepopulatesManifest(t *testing.T) {
-	dir, err := os.MkdirTemp("", "reinframe_replay_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	dbPath := fmt.Sprintf("%s/events.db", dir)
+	dbPath := filepath.Join(t.TempDir(), "events.db")
 	opts := state.StoreOptions{DatabasePath: dbPath, BusyTimeout: 5000 * time.Millisecond}
 
 	s1, err := state.NewStore(opts)
@@ -608,13 +602,7 @@ func TestTier3_Pairwise_DegradationEventSequenceContiguity(t *testing.T) {
 
 // 10. Store Persistence & WAL Recovery After Degraded Handshake Session
 func TestTier3_Pairwise_StoreRecoveryAfterDegradedHandshake(t *testing.T) {
-	dir, err := os.MkdirTemp("", "reinframe_recovery_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	dbPath := fmt.Sprintf("%s/events.db", dir)
+	dbPath := filepath.Join(t.TempDir(), "events.db")
 	opts := state.StoreOptions{DatabasePath: dbPath, BusyTimeout: 5000 * time.Millisecond}
 
 	s1, err := state.NewStore(opts)

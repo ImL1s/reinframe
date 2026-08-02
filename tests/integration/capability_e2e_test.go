@@ -1,4 +1,4 @@
-package e2e_test
+package integration_test
 
 import (
 	"encoding/json"
@@ -139,17 +139,9 @@ func TestTier1_CapFlags_StringFormatting(t *testing.T) {
 // --- Feature 2: CapabilityManifest Helpers ---
 
 func TestTier1_Manifest_ToBitmask_FullStruct(t *testing.T) {
-	manifest := protocol.CapabilityManifest{
-		AgentID:            "agent-full",
-		Version:            "1.0.0",
-		IntegrationLevel:   3,
-		SupportsPause:      true,
-		SupportsCancel:     true,
-		SupportsResume:     true,
-		SupportsCheckpoint: true,
-		SupportsRollback:   true,
-		SupportsMCP:        true,
-	}
+	manifest := protocol.FromBitmask(protocol.Level3RequiredMask)
+	manifest.AgentID = "agent-full"
+	manifest.Version = "1.0.0"
 
 	bitmask := manifest.ToBitmask()
 	if (bitmask & protocol.Level3RequiredMask) != protocol.Level3RequiredMask {
@@ -159,10 +151,10 @@ func TestTier1_Manifest_ToBitmask_FullStruct(t *testing.T) {
 
 func TestTier1_Manifest_ToBitmask_PartialStruct(t *testing.T) {
 	manifest := protocol.CapabilityManifest{
-		AgentID:          "agent-partial",
-		Version:          "1.0.0",
-		IntegrationLevel: 0,
-		SupportsPause:    true,
+		AgentID:             "agent-partial",
+		Version:             "1.0.0",
+		SupportsEventStream: true,
+		SupportsPause:       true,
 	}
 
 	bitmask := manifest.ToBitmask()
@@ -185,8 +177,8 @@ func TestTier1_Manifest_FromBitmask_Roundtrip(t *testing.T) {
 
 func TestTier1_Manifest_HasCapability_Present(t *testing.T) {
 	manifest := protocol.CapabilityManifest{
-		IntegrationLevel: 0,
-		SupportsPause:    true,
+		SupportsEventStream: true,
+		SupportsPause:       true,
 	}
 
 	if !manifest.HasCapability(protocol.CapPause) {
@@ -253,8 +245,8 @@ func TestTier1_LevelEval_SubZero_Unsupported(t *testing.T) {
 	var manifest protocol.CapabilityManifest // Zero manifest
 
 	level := protocol.EvaluateAchievableLevel(&manifest)
-	if level != 0 {
-		t.Errorf("Expected Level 0 for zero manifest, got Level %d", level)
+	if level != -1 {
+		t.Errorf("Expected Level -1 for zero manifest, got Level %d", level)
 	}
 }
 
@@ -458,11 +450,11 @@ func TestTier2_CapFlags_ToggleFlag(t *testing.T) {
 func TestTier2_Manifest_EmptyStruct(t *testing.T) {
 	var m protocol.CapabilityManifest
 	bitmask := m.ToBitmask()
-	if uint64(bitmask) != protocol.Level0RequiredMask {
-		t.Errorf("Empty struct ToBitmask should return Level0RequiredMask, got 0x%X", uint64(bitmask))
+	if uint64(bitmask) != 0 {
+		t.Errorf("Empty struct ToBitmask should return 0, got 0x%X", uint64(bitmask))
 	}
-	if !m.HasCapability(protocol.CapEventStream) {
-		t.Errorf("Empty struct with IntegrationLevel 0 should have CapEventStream")
+	if m.HasCapability(protocol.CapEventStream) {
+		t.Errorf("Empty struct without explicit boolean should not have CapEventStream")
 	}
 }
 
@@ -553,15 +545,16 @@ func TestTier2_LevelEval_Level0WithoutEventStream(t *testing.T) {
 	manifest := protocol.CapabilityManifest{}
 
 	level := protocol.EvaluateAchievableLevel(&manifest)
-	if level != 0 {
-		t.Errorf("Expected Level 0 for zero manifest, got Level %d", level)
+	if level != -1 {
+		t.Errorf("Expected Level -1 for zero manifest without event stream, got Level %d", level)
 	}
 }
 
 func TestTier2_LevelEval_SuperfluousLevel3FlagsAtLevel1(t *testing.T) {
 	manifest := protocol.CapabilityManifest{
-		IntegrationLevel: 1,
-		SupportsMCP:      true,
+		SupportsEventStream:    true,
+		SupportsToolInspection: true,
+		SupportsMCP:            true,
 	}
 
 	level := protocol.EvaluateAchievableLevel(&manifest)

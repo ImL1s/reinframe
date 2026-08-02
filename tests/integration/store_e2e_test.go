@@ -1,4 +1,4 @@
-package e2e_test
+package integration_test
 
 import (
 	"context"
@@ -23,12 +23,7 @@ import (
 // helper to create a temporary store with standard options
 func setupTestStore(t *testing.T) (*state.Store, string) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "reinframe_store_test_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-
-	dbPath := filepath.Join(dir, "events.db")
+	dbPath := filepath.Join(t.TempDir(), "events.db")
 	opts := state.StoreOptions{
 		DatabasePath: dbPath,
 		BusyTimeout:  5000 * time.Millisecond,
@@ -38,13 +33,11 @@ func setupTestStore(t *testing.T) (*state.Store, string) {
 
 	store, err := state.NewStore(opts)
 	if err != nil {
-		os.RemoveAll(dir)
 		t.Fatalf("Failed to initialize store: %v", err)
 	}
 
 	t.Cleanup(func() {
 		store.Close()
-		os.RemoveAll(dir)
 	})
 
 	return store, dbPath
@@ -97,13 +90,7 @@ func TestTier1_Migration_FreshDB(t *testing.T) {
 }
 
 func TestTier1_Migration_Idempotency(t *testing.T) {
-	dir, err := os.MkdirTemp("", "reinframe_idempotency_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	dbPath := filepath.Join(dir, "events.db")
+	dbPath := filepath.Join(t.TempDir(), "events.db")
 	opts := state.StoreOptions{
 		DatabasePath: dbPath,
 		BusyTimeout:  5000 * time.Millisecond,
@@ -332,14 +319,8 @@ func TestTier1_Store_AppendEvents_Batch(t *testing.T) {
 }
 
 func TestTier1_Store_Close(t *testing.T) {
-	dir, err := os.MkdirTemp("", "reinframe_close_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
 	opts := state.StoreOptions{
-		DatabasePath: filepath.Join(dir, "events.db"),
+		DatabasePath: filepath.Join(t.TempDir(), "events.db"),
 		BusyTimeout:  5000 * time.Millisecond,
 	}
 
@@ -697,13 +678,7 @@ func TestTier2_Migration_ReadOnlyDirectory(t *testing.T) {
 		t.Skip("POSIX directory permission bit 0444 is not enforced on Windows NTFS")
 	}
 
-	dir, err := os.MkdirTemp("", "reinframe_readonly_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	readOnlySubdir := filepath.Join(dir, "readonly_dir")
+	readOnlySubdir := filepath.Join(t.TempDir(), "readonly_dir")
 	if err := os.Mkdir(readOnlySubdir, 0444); err != nil {
 		t.Fatalf("Failed to create readonly subdir: %v", err)
 	}
@@ -722,13 +697,7 @@ func TestTier2_Migration_ReadOnlyDirectory(t *testing.T) {
 }
 
 func TestTier2_Migration_CorruptedMigrationTable(t *testing.T) {
-	dir, err := os.MkdirTemp("", "reinframe_corrupt_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	dbPath := filepath.Join(dir, "events.db")
+	dbPath := filepath.Join(t.TempDir(), "events.db")
 
 	// Pre-create table schema_migrations with invalid schema (missing version column)
 	rawDB, err := sql.Open("sqlite", dbPath)
@@ -754,13 +723,7 @@ func TestTier2_Migration_CorruptedMigrationTable(t *testing.T) {
 }
 
 func TestTier2_Migration_PreexistingOtherTables(t *testing.T) {
-	dir, err := os.MkdirTemp("", "reinframe_other_tables_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	dbPath := filepath.Join(dir, "events.db")
+	dbPath := filepath.Join(t.TempDir(), "events.db")
 
 	rawDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -1123,14 +1086,8 @@ func TestTier2_Concurrency_CancelledContextQuery(t *testing.T) {
 }
 
 func TestTier2_Concurrency_StoreClosedDuringAppend(t *testing.T) {
-	dir, err := os.MkdirTemp("", "reinframe_closed_append_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
 	opts := state.StoreOptions{
-		DatabasePath: filepath.Join(dir, "events.db"),
+		DatabasePath: filepath.Join(t.TempDir(), "events.db"),
 		BusyTimeout:  5000 * time.Millisecond,
 	}
 
@@ -1164,7 +1121,7 @@ func TestTier2_Concurrency_BusyTimeoutExceeded(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "busy_timeout_test.db")
 	store, err := state.NewStore(state.StoreOptions{
 		DatabasePath: dbPath,
-		BusyTimeout:  50 * time.Millisecond,
+		BusyTimeout:  500 * time.Millisecond,
 		MaxOpenConns: 5,
 		MaxIdleConns: 2,
 	})

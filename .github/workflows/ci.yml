@@ -14,7 +14,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go-version: ['1.22.x']
 
     steps:
       - name: Checkout Code
@@ -23,7 +22,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Download Go Dependencies
@@ -32,8 +31,15 @@ jobs:
       - name: Verify Code Formatting & Vet
         run: go vet ./...
 
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.60.1
+          args: --timeout=5m
+
       - name: Run Unit & Integration Tests (with Race Detector)
         run: go test -v -race ./...
 
       - name: Compile Package Binaries
         run: go build -v ./...
+

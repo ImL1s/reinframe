@@ -10,7 +10,6 @@ linters:
         - (*database/sql.Conn).Close
         - (*database/sql.Rows).Close
         - (*os).Chmod
-
-run:
-  exclude-dirs:
-    - .agents
+  exclusions:
+    paths:
+      - .agents

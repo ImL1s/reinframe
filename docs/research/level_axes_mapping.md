@@ -20,11 +20,11 @@ They **share numeric labels 0–3 by historical coincidence**. They are **not** 
 
 Negotiated at session start from `CapabilityManifest` flags.
 
-| Level | Intent | Code mask today | Delivery note (#65) |
+| Level | Intent | Code mask today | Delivery note (#65 / #72) |
 |---|---|---|---|
 | **0 Observe** | Passive observation | `CapEventStream` | No advice required |
-| **1 Advisory** | Can advise the agent | + `CapToolInspection` | **Must add `CapAdviceDelivery`** or degrade (cannot call mode “Advisory”) |
-| **2 Guarded** | Can pause/cancel/gate tools | + Diff + Pause + Cancel + Resume | Needs real pause **or** explicit CapPause semantics (#72) |
+| **1 Advisory** | Can advise the agent | + `CapToolInspection` + **`CapAdviceDelivery`** | L1 request without `CapAdviceDelivery` degrades to level &lt; 1 |
+| **2 Guarded** | Can pause/cancel/gate tools | + Diff + **native** Pause + Cancel + Resume | **`CapPause` = harness-native pause only; OS SIGSTOP is NOT CapPause** (#72 option 1) |
 | **3 Full-control** | Checkpoint/rollback/headless/… | L2 + Checkpoint/Rollback/Headless/CLI/MCP/Subagents/SwitchModel | Full actuator surface |
 
 **Research tension (documented, not silently fixed in code):**  
@@ -41,7 +41,7 @@ Applied **after** detectors/reviewers (or fast-path safety rules). May be **capp
 | **B0 Observe** | Append events to Store / audit | A0 | Always available if events exist |
 | **B1 Advisory** | `ZOOM_OUT_PROMPT` / replan advice + ACK path | A1 + CapAdviceDelivery | If A0 only → **human alert** degradation (#68) |
 | **B2 Guarded** | Pause / tool defer-deny / require experiment | A2 (CapPause or tool gate) | Fast path may `defer` without full pause (#67) |
-| **B3 Full-control** | Git rollback, terminate, switch model, escalate human | A3 for model-switch; A2+workspace for rollback | Schema gaps: switch-model / escalate-human not fully in `action_type` yet (#57) |
+| **B3 Full-control** | Git rollback, terminate, switch model, escalate human | A3 for model-switch; A2+workspace for rollback | `action_type` includes `SWITCH_MODEL` / `ESCALATE_TO_HUMAN` (#57) |
 
 ---
 
@@ -53,9 +53,8 @@ Applied **after** detectors/reviewers (or fast-path safety rules). May be **capp
    Emit `unsupported_capability` + audit + human path.
 3. **Matrix “Target Level” columns are planning hints**, not `NegotiateLevel()` outputs.  
    Handshake uses **flags**, not the marketing row for a harness name.
-4. **Claude Code (hooks, no native pause):** plan as **A1** (advisory + hook gate defer) until #72 decides SIGSTOP ≡ CapPause.  
-   Do **not** hard-gate “Claude Code sessions are L2”.
-5. **OpenHands (native pause):** may plan **A2** for that adapter when pause API is wired.
+4. **Claude Code (hooks, no native pause):** plan as **A1** (advisory + `CapToolGate` defer). **#72 decision (option 1 strict native):** OS SIGSTOP is **not** `CapPause`; do **not** hard-gate “Claude Code sessions are L2”.
+5. **OpenHands (native pause):** may plan **A2** for that adapter when the harness-native pause API is wired (true `CapPause`).
 
 ---
 

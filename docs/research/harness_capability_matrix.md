@@ -62,7 +62,7 @@ From `pkg/protocol/capability.go` (handshake gates):
 
 \* **Footnotes (2026-08-02 revalidation)**  
 1. **Goose Native Subagents:** previously marked No; first-party docs describe first-class internal/external subagents → **Yes**.  
-2. **Claude Code Pause:** still **No** as harness-native pause; OS `SIGSTOP` is **not** automatically `CapPause` until product decides (#72).  
+2. **Claude Code Pause:** still **No** as harness-native pause. **#72 decision (option 1 strict native):** OS `SIGSTOP` is **not** `CapPause` and must not be advertised as `SupportsPause`.  
 3. **Claude Code / Codex as “L2 targets”:** under current protocol masks they **cannot hard-gate L2** while Pause=No. Recommended mapping: **Integration L1 (hooks + advisory)** with *aspirational* L2 if pause contract is solved.  
 4. **OpenHands Pause=Yes** matches current SDK pause/resume docs — valid L2 *capability* candidate for that harness only.  
 5. **Codex Native Subagents=No** not deeply revalidated; ecosystem plugins ≠ native CLI subagents.  

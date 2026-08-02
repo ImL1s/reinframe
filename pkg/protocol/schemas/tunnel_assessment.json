@@ -48,7 +48,9 @@
         "NONE",
         "ADVISORY_ZOOM_OUT",
         "PAUSE_EXECUTION",
-        "GIT_ROLLBACK"
+        "GIT_ROLLBACK",
+        "SWITCH_MODEL",
+        "ESCALATE_TO_HUMAN"
       ]
     },
     "signals": {

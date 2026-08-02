@@ -88,7 +88,7 @@ func TestChallengerR2_All64BitsBitmaskMatrix(t *testing.T) {
 			reconstructed := manifest.ToBitmask()
 
 			expected := mask
-			if bit >= 20 {
+			if bit >= CapabilityFlagCount {
 				expected = 0
 			}
 			if reconstructed != expected {
@@ -96,7 +96,7 @@ func TestChallengerR2_All64BitsBitmaskMatrix(t *testing.T) {
 			}
 
 			flag := CapabilityFlag(mask)
-			if bit < 20 {
+			if bit < CapabilityFlagCount {
 				if !manifest.HasCapability(flag) {
 					t.Errorf("Bit %d: HasCapability(flag) returned false, expected true", bit)
 				}
@@ -183,6 +183,7 @@ func TestChallengerR2_DegradationAndMissingFlagsExactness(t *testing.T) {
 			wantNegotiated:   0,
 			wantMissing: []string{
 				"CapToolInspection",
+				"CapAdviceDelivery",
 			},
 		},
 	}
@@ -216,9 +217,9 @@ func TestChallengerR2_DegradationAndMissingFlagsExactness(t *testing.T) {
 	}
 }
 
-// TestChallengerR2_HighBitsInterferenceCheck verifies high bits (20-63) do not alter supervision level logic.
+// TestChallengerR2_HighBitsInterferenceCheck verifies unassigned high bits (25-63) do not alter supervision level logic.
 func TestChallengerR2_HighBitsInterferenceCheck(t *testing.T) {
-	highBits := uint64(0xFFFFFFFFFFF00000) // bits 20..63 set to 1
+	highBits := uint64(0xFFFFFFFFFE000000) // bits 25..63 set to 1 (bits 0-24 are defined flags)
 
 	baseCases := []struct {
 		name      string

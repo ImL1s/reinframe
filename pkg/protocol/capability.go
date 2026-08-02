@@ -10,6 +10,12 @@ var ErrUnsupportedAgent = errors.New("unsupported agent capability manifest")
 // CapabilityFlag represents a uint64 bitmask for individual agent supervision capabilities.
 type CapabilityFlag uint64
 
+// CapabilityFlagCount is the number of defined capability bits (0 .. CapabilityFlagCount-1).
+const CapabilityFlagCount = 25
+
+// CapabilityKnownMask is the bitmask of all defined capability flags (bits 0-24).
+const CapabilityKnownMask uint64 = (1 << CapabilityFlagCount) - 1
+
 const (
 	// Category 1: Observation & Telemetry Capabilities (Bits 0-4)
 	CapEventStream    CapabilityFlag = 1 << iota // 1<<0 (0x1): Real-time NDJSON event streaming
@@ -21,9 +27,15 @@ const (
 	// Category 2: Control & Intervention Capabilities (Bits 5-9)
 	CapHeadless   // 1<<5 (0x20): Headless execution control
 	CapCLIControl // 1<<6 (0x40): Standard I/O control & signals
-	CapPause      // 1<<7 (0x80): Session pause support
-	CapCancel     // 1<<8 (0x100): Session cancel support
-	CapResume     // 1<<9 (0x200): Session resume support
+	// CapPause is harness-native pause only (issue #72, option 1 strict native).
+	// It means the target agent/harness exposes an intentional pause API that
+	// cooperatively suspends the agent turn (e.g. OpenHands pause). OS-level
+	// process stop signals such as SIGSTOP/SIGTSTP are NOT CapPause and MUST
+	// NOT be advertised as SupportsPause / CapPause. Level 2 still requires
+	// CapPause (native). Hook-only defer/deny is CapToolGate, not CapPause.
+	CapPause  // 1<<7 (0x80): Harness-native session pause support (not OS SIGSTOP)
+	CapCancel // 1<<8 (0x100): Session cancel support
+	CapResume // 1<<9 (0x200): Session resume support
 
 	// Category 3: Workspace & State Management Capabilities (Bits 10-14)
 	CapCheckpoint // 1<<10 (0x400): Worktree snapshot creation
@@ -38,36 +50,50 @@ const (
 	CapOpenAICompat   // 1<<17 (0x20000): OpenAI API protocol compliance
 	CapLocalModels    // 1<<18 (0x40000): Local LLM integration (Ollama/llama.cpp)
 	CapSDK            // 1<<19 (0x80000): Native language SDK binding support
+
+	// Category 5: Advice Delivery & Intervention Pipeline Capabilities (Bits 20-24; issue #65)
+	CapAdviceDelivery   // 1<<20 (0x100000): Deliver advisory prompts/advice into the agent turn
+	CapContextInjection // 1<<21 (0x200000): Inject supervisor context into agent input
+	CapToolGate         // 1<<22 (0x400000): Gate/defer/deny tool calls (hooks/pre-tool)
+	CapTurnBoundary     // 1<<23 (0x800000): Observe or enforce turn/message boundaries
+	CapInterventionAck  // 1<<24 (0x1000000): Acknowledge intervention delivery/ACK lifecycle
 )
 
 const (
 	Level0RequiredMask uint64 = uint64(CapEventStream)
-	Level1RequiredMask uint64 = Level0RequiredMask | uint64(CapToolInspection)
+	// Level1 (Advisory) requires CapAdviceDelivery so "advisory" is not claimable without a delivery path (#65).
+	Level1RequiredMask uint64 = Level0RequiredMask | uint64(CapToolInspection) | uint64(CapAdviceDelivery)
+	// Level2 requires CapPause as harness-native pause only (#72); OS SIGSTOP is not CapPause.
 	Level2RequiredMask uint64 = Level1RequiredMask | uint64(CapDiffInspection) | uint64(CapPause) | uint64(CapCancel) | uint64(CapResume)
 	Level3RequiredMask uint64 = Level2RequiredMask | uint64(CapCheckpoint) | uint64(CapRollback) | uint64(CapHeadless) | uint64(CapCLIControl) | uint64(CapMCP) | uint64(CapSubagents) | uint64(CapSwitchModel)
 )
 
 var flagToStringMap = map[CapabilityFlag]string{
-	CapEventStream:    "CapEventStream",
-	CapToolInspection: "CapToolInspection",
-	CapDiffInspection: "CapDiffInspection",
-	CapCostTracking:   "CapCostTracking",
-	CapHooks:          "CapHooks",
-	CapHeadless:       "CapHeadless",
-	CapCLIControl:     "CapCLIControl",
-	CapPause:          "CapPause",
-	CapCancel:         "CapCancel",
-	CapResume:         "CapResume",
-	CapCheckpoint:     "CapCheckpoint",
-	CapRollback:       "CapRollback",
-	CapMCP:            "CapMCP",
-	CapSubagents:      "CapSubagents",
-	CapExtensions:     "CapExtensions",
-	CapSwitchModel:    "CapSwitchModel",
-	CapCustomProvider: "CapCustomProvider",
-	CapOpenAICompat:   "CapOpenAICompat",
-	CapLocalModels:    "CapLocalModels",
-	CapSDK:            "CapSDK",
+	CapEventStream:      "CapEventStream",
+	CapToolInspection:   "CapToolInspection",
+	CapDiffInspection:   "CapDiffInspection",
+	CapCostTracking:     "CapCostTracking",
+	CapHooks:            "CapHooks",
+	CapHeadless:         "CapHeadless",
+	CapCLIControl:       "CapCLIControl",
+	CapPause:            "CapPause",
+	CapCancel:           "CapCancel",
+	CapResume:           "CapResume",
+	CapCheckpoint:       "CapCheckpoint",
+	CapRollback:         "CapRollback",
+	CapMCP:              "CapMCP",
+	CapSubagents:        "CapSubagents",
+	CapExtensions:       "CapExtensions",
+	CapSwitchModel:      "CapSwitchModel",
+	CapCustomProvider:   "CapCustomProvider",
+	CapOpenAICompat:     "CapOpenAICompat",
+	CapLocalModels:      "CapLocalModels",
+	CapSDK:              "CapSDK",
+	CapAdviceDelivery:   "CapAdviceDelivery",
+	CapContextInjection: "CapContextInjection",
+	CapToolGate:         "CapToolGate",
+	CapTurnBoundary:     "CapTurnBoundary",
+	CapInterventionAck:  "CapInterventionAck",
 }
 
 // String returns the string representation of a CapabilityFlag.
@@ -163,6 +189,21 @@ func (m CapabilityManifest) ToBitmask() uint64 {
 	if m.SupportsSDK {
 		mask |= uint64(CapSDK)
 	}
+	if m.SupportsAdviceDelivery {
+		mask |= uint64(CapAdviceDelivery)
+	}
+	if m.SupportsContextInjection {
+		mask |= uint64(CapContextInjection)
+	}
+	if m.SupportsToolGate {
+		mask |= uint64(CapToolGate)
+	}
+	if m.SupportsTurnBoundary {
+		mask |= uint64(CapTurnBoundary)
+	}
+	if m.SupportsInterventionAck {
+		mask |= uint64(CapInterventionAck)
+	}
 
 	return mask
 }
@@ -170,26 +211,31 @@ func (m CapabilityManifest) ToBitmask() uint64 {
 // FromBitmask populates a CapabilityManifest struct from a bitmask.
 func FromBitmask(mask uint64) CapabilityManifest {
 	manifest := CapabilityManifest{
-		SupportsEventStream:    (mask & uint64(CapEventStream)) != 0,
-		SupportsToolInspection: (mask & uint64(CapToolInspection)) != 0,
-		SupportsDiffInspection: (mask & uint64(CapDiffInspection)) != 0,
-		SupportsCostTracking:   (mask & uint64(CapCostTracking)) != 0,
-		SupportsHooks:          (mask & uint64(CapHooks)) != 0,
-		SupportsHeadless:       (mask & uint64(CapHeadless)) != 0,
-		SupportsCLIControl:     (mask & uint64(CapCLIControl)) != 0,
-		SupportsPause:          (mask & uint64(CapPause)) != 0,
-		SupportsCancel:         (mask & uint64(CapCancel)) != 0,
-		SupportsResume:         (mask & uint64(CapResume)) != 0,
-		SupportsCheckpoint:     (mask & uint64(CapCheckpoint)) != 0,
-		SupportsRollback:       (mask & uint64(CapRollback)) != 0,
-		SupportsMCP:            (mask & uint64(CapMCP)) != 0,
-		SupportsSubagents:      (mask & uint64(CapSubagents)) != 0,
-		SupportsExtensions:     (mask & uint64(CapExtensions)) != 0,
-		SupportsSwitchModel:    (mask & uint64(CapSwitchModel)) != 0,
-		SupportsCustomProvider: (mask & uint64(CapCustomProvider)) != 0,
-		SupportsOpenAICompat:   (mask & uint64(CapOpenAICompat)) != 0,
-		SupportsLocalModels:    (mask & uint64(CapLocalModels)) != 0,
-		SupportsSDK:            (mask & uint64(CapSDK)) != 0,
+		SupportsEventStream:      (mask & uint64(CapEventStream)) != 0,
+		SupportsToolInspection:   (mask & uint64(CapToolInspection)) != 0,
+		SupportsDiffInspection:   (mask & uint64(CapDiffInspection)) != 0,
+		SupportsCostTracking:     (mask & uint64(CapCostTracking)) != 0,
+		SupportsHooks:            (mask & uint64(CapHooks)) != 0,
+		SupportsHeadless:         (mask & uint64(CapHeadless)) != 0,
+		SupportsCLIControl:       (mask & uint64(CapCLIControl)) != 0,
+		SupportsPause:            (mask & uint64(CapPause)) != 0,
+		SupportsCancel:           (mask & uint64(CapCancel)) != 0,
+		SupportsResume:           (mask & uint64(CapResume)) != 0,
+		SupportsCheckpoint:       (mask & uint64(CapCheckpoint)) != 0,
+		SupportsRollback:         (mask & uint64(CapRollback)) != 0,
+		SupportsMCP:              (mask & uint64(CapMCP)) != 0,
+		SupportsSubagents:        (mask & uint64(CapSubagents)) != 0,
+		SupportsExtensions:       (mask & uint64(CapExtensions)) != 0,
+		SupportsSwitchModel:      (mask & uint64(CapSwitchModel)) != 0,
+		SupportsCustomProvider:   (mask & uint64(CapCustomProvider)) != 0,
+		SupportsOpenAICompat:     (mask & uint64(CapOpenAICompat)) != 0,
+		SupportsLocalModels:      (mask & uint64(CapLocalModels)) != 0,
+		SupportsSDK:              (mask & uint64(CapSDK)) != 0,
+		SupportsAdviceDelivery:   (mask & uint64(CapAdviceDelivery)) != 0,
+		SupportsContextInjection: (mask & uint64(CapContextInjection)) != 0,
+		SupportsToolGate:         (mask & uint64(CapToolGate)) != 0,
+		SupportsTurnBoundary:     (mask & uint64(CapTurnBoundary)) != 0,
+		SupportsInterventionAck:  (mask & uint64(CapInterventionAck)) != 0,
 	}
 	manifest.IntegrationLevel = EvaluateAchievableLevelFromMask(mask)
 	return manifest
@@ -255,7 +301,7 @@ func NegotiateLevel(req *HandshakeRequest) (*HandshakeResponse, error) {
 	manifestMask := req.Manifest.ToBitmask()
 	missingFlags := make([]string, 0)
 
-	for i := 0; i < 20; i++ {
+	for i := 0; i < CapabilityFlagCount; i++ {
 		flag := CapabilityFlag(1 << uint(i))
 		if isRequiredForLevel(flag, req.RequestedLevel) && (manifestMask&uint64(flag)) == 0 {
 			missingFlags = append(missingFlags, flag.String())

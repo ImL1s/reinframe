@@ -12,7 +12,7 @@ import (
 func TestChallenger2_BitFlips(t *testing.T) {
 	t.Run("Level3_SingleBitFlips", func(t *testing.T) {
 		level3Flags := []CapabilityFlag{
-			CapEventStream, CapToolInspection, CapDiffInspection, CapHeadless,
+			CapEventStream, CapToolInspection, CapAdviceDelivery, CapDiffInspection, CapHeadless,
 			CapCLIControl, CapPause, CapCancel, CapResume, CapCheckpoint,
 			CapRollback, CapMCP, CapSubagents, CapSwitchModel,
 		}
@@ -29,7 +29,7 @@ func TestChallenger2_BitFlips(t *testing.T) {
 
 	t.Run("Level2_SingleBitFlips", func(t *testing.T) {
 		level2Flags := []CapabilityFlag{
-			CapEventStream, CapToolInspection, CapDiffInspection,
+			CapEventStream, CapToolInspection, CapAdviceDelivery, CapDiffInspection,
 			CapPause, CapCancel, CapResume,
 		}
 
@@ -45,7 +45,7 @@ func TestChallenger2_BitFlips(t *testing.T) {
 
 	t.Run("Level1_SingleBitFlips", func(t *testing.T) {
 		level1Flags := []CapabilityFlag{
-			CapEventStream, CapToolInspection,
+			CapEventStream, CapToolInspection, CapAdviceDelivery,
 		}
 
 		for _, flag := range level1Flags {
@@ -212,7 +212,8 @@ func TestChallenger2_WeirdRequestedLevels(t *testing.T) {
 		if resp.NegotiatedLevel != 0 || !resp.IsDegraded || resp.DegradedFrom != 3 {
 			t.Errorf("unexpected response: %+v", resp)
 		}
-		expectedMissingCount := 12 // Level 3 required mask has 13 flags; Level 0 provides 1 flag (CapEventStream) -> 12 missing
+		// Level 3 required mask has 14 flags (incl CapAdviceDelivery); Level 0 provides 1 → 13 missing
+		expectedMissingCount := 13
 		if len(resp.MissingFlags) != expectedMissingCount {
 			t.Errorf("expected %d missing flags, got %d (%v)", expectedMissingCount, len(resp.MissingFlags), resp.MissingFlags)
 		}

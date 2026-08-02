@@ -268,6 +268,58 @@ func TestValidateEvent_ValidPayloads(t *testing.T) {
 			},
 		},
 		{
+			name:       "Intervention_DeliveryACK_Full",
+			schemaType: "intervention",
+			payload: func() Intervention {
+				exp := time.Now().UTC().Add(time.Hour)
+				acked := time.Now().UTC()
+				return Intervention{
+					InterventionID:     "itv-ack-1",
+					SessionID:          "sess-123",
+					Level:              1,
+					ActionType:         "ZOOM_OUT_PROMPT",
+					Status:             "ACKED",
+					ExecutedAt:         time.Now().UTC(),
+					ExpiresAt:          &exp,
+					Priority:           10,
+					DeliveryModeHint:   "inject",
+					RequiresAck:        true,
+					AckStatus:          "ACKED",
+					AckedAt:            &acked,
+					SafeBoundary:       "after_tool_result",
+					Fingerprint:        "fp-zoom-1",
+					ParentAssessmentID: "asm-99",
+				}
+			}(),
+		},
+		{
+			name:       "Intervention_SwitchModel",
+			schemaType: "intervention",
+			payload: Intervention{
+				InterventionID: "itv-switch",
+				SessionID:      "sess-123",
+				Level:          3,
+				ActionType:     "SWITCH_MODEL",
+				Status:         "PENDING",
+				ExecutedAt:     time.Now().UTC(),
+				Priority:       5,
+			},
+		},
+		{
+			name:       "Intervention_EscalateToHuman",
+			schemaType: "intervention",
+			payload: Intervention{
+				InterventionID: "itv-human",
+				SessionID:      "sess-123",
+				Level:          3,
+				ActionType:     "ESCALATE_TO_HUMAN",
+				Status:         "DELIVERED",
+				ExecutedAt:     time.Now().UTC(),
+				RequiresAck:    true,
+				AckStatus:      "PENDING",
+			},
+		},
+		{
 			name:       "BudgetState",
 			schemaType: "BudgetState",
 			payload: BudgetState{
@@ -451,6 +503,24 @@ func TestValidateEvent_InvalidPayloads(t *testing.T) {
 			name:       "OutOfBoundScore_TunnelAssessment",
 			schemaType: "tunnel_assessment",
 			payload:    `{"assessment_id": "asm-1", "session_id": "sess-1", "aggregate_score": -0.5, "primary_failure_mode": "FM-1", "is_tunnel_detected": true, "recommended_action": "NO_ACTION", "signals": [], "evaluated_at": "2026-08-02T13:00:00Z"}`,
+			wantErrSub: "validation error",
+		},
+		{
+			name:       "InvalidActionType_Intervention",
+			schemaType: "intervention",
+			payload:    `{"intervention_id":"i1","session_id":"s1","level":1,"action_type":"NOT_A_REAL_ACTION","status":"PENDING","executed_at":"2026-08-02T13:00:00Z"}`,
+			wantErrSub: "validation error",
+		},
+		{
+			name:       "InvalidAckStatus_Intervention",
+			schemaType: "intervention",
+			payload:    `{"intervention_id":"i1","session_id":"s1","level":1,"action_type":"ZOOM_OUT_PROMPT","status":"PENDING","executed_at":"2026-08-02T13:00:00Z","ack_status":"BOGUS"}`,
+			wantErrSub: "validation error",
+		},
+		{
+			name:       "InvalidStatus_Intervention",
+			schemaType: "intervention",
+			payload:    `{"intervention_id":"i1","session_id":"s1","level":1,"action_type":"SWITCH_MODEL","status":"QUEUED","executed_at":"2026-08-02T13:00:00Z"}`,
 			wantErrSub: "validation error",
 		},
 		{
@@ -923,29 +993,34 @@ func BenchmarkValidateEvent(b *testing.B) {
 
 func TestCapability_JSONRoundTrip_Lossless(t *testing.T) {
 	manifest := CapabilityManifest{
-		AgentID:                "test-agent",
-		Version:                "1.0.0",
-		IntegrationLevel:       2,
-		SupportsEventStream:    true,
-		SupportsToolInspection: true,
-		SupportsDiffInspection: true,
-		SupportsCostTracking:   true,
-		SupportsHooks:          true,
-		SupportsHeadless:       true,
-		SupportsCLIControl:     true,
-		SupportsPause:          true,
-		SupportsCancel:         true,
-		SupportsResume:         true,
-		SupportsCheckpoint:     true,
-		SupportsRollback:       true,
-		SupportsMCP:            true,
-		SupportsSubagents:      true,
-		SupportsExtensions:     true,
-		SupportsSwitchModel:    true,
-		SupportsCustomProvider: true,
-		SupportsOpenAICompat:   true,
-		SupportsLocalModels:    true,
-		SupportsSDK:            true,
+		AgentID:                  "test-agent",
+		Version:                  "1.0.0",
+		IntegrationLevel:         2,
+		SupportsEventStream:      true,
+		SupportsToolInspection:   true,
+		SupportsDiffInspection:   true,
+		SupportsCostTracking:     true,
+		SupportsHooks:            true,
+		SupportsHeadless:         true,
+		SupportsCLIControl:       true,
+		SupportsPause:            true,
+		SupportsCancel:           true,
+		SupportsResume:           true,
+		SupportsCheckpoint:       true,
+		SupportsRollback:         true,
+		SupportsMCP:              true,
+		SupportsSubagents:        true,
+		SupportsExtensions:       true,
+		SupportsSwitchModel:      true,
+		SupportsCustomProvider:   true,
+		SupportsOpenAICompat:     true,
+		SupportsLocalModels:      true,
+		SupportsSDK:              true,
+		SupportsAdviceDelivery:   true,
+		SupportsContextInjection: true,
+		SupportsToolGate:         true,
+		SupportsTurnBoundary:     true,
+		SupportsInterventionAck:  true,
 	}
 
 	data, err := json.Marshal(manifest)
@@ -981,11 +1056,16 @@ func TestCapability_JSONRoundTrip_Lossless(t *testing.T) {
 		restored.SupportsCustomProvider != manifest.SupportsCustomProvider ||
 		restored.SupportsOpenAICompat != manifest.SupportsOpenAICompat ||
 		restored.SupportsLocalModels != manifest.SupportsLocalModels ||
-		restored.SupportsSDK != manifest.SupportsSDK {
+		restored.SupportsSDK != manifest.SupportsSDK ||
+		restored.SupportsAdviceDelivery != manifest.SupportsAdviceDelivery ||
+		restored.SupportsContextInjection != manifest.SupportsContextInjection ||
+		restored.SupportsToolGate != manifest.SupportsToolGate ||
+		restored.SupportsTurnBoundary != manifest.SupportsTurnBoundary ||
+		restored.SupportsInterventionAck != manifest.SupportsInterventionAck {
 		t.Fatalf("JSON roundtrip lost capability boolean flags: got %+v, want %+v", restored, manifest)
 	}
 
-	expectedMask := uint64((1 << 20) - 1)
+	expectedMask := CapabilityKnownMask
 	if mask := restored.ToBitmask(); mask != expectedMask {
 		t.Errorf("ToBitmask mismatch after JSON roundtrip: got 0x%x, want 0x%x", mask, expectedMask)
 	}

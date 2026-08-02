@@ -32,9 +32,9 @@ jobs:
         run: go vet ./...
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: v1.60.1
+          version: latest
           args: --timeout=5m
 
       - name: Run Unit & Integration Tests (with Race Detector)

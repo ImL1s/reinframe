@@ -4,35 +4,44 @@
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go. **Today** the repository ships library foundations only: canonical protocol schemas, capability negotiation, JSON validation, and an append-only SQLite WAL event store — not a live end-to-end supervisor.
+Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go.
+
+**Today (M1 foundation + partial M2 control-plane contracts):** library packages for protocol, store, adapter contracts (HookGate, advisory queue, LogObserver), config schema, and reviewer provider interfaces — **not** a live end-to-end supervisor that auto-interrupts agents.
 
 ## Project Status
 
-> **Phase: Protocol & Store Foundation (partial)** — Canonical protocol, SQLite event store, and CI are implemented library packages.
-> This is **not** a production-ready end-to-end Anti-Tunnel harness yet: Detector, Reviewer, Policy, Intervention, Git rollback, and Orchestrator remain planned.
+> **Phase: M1 Foundation + early M2 control-plane interfaces**  
+> Protocol, SQLite store, capability negotiation (25 flags), adapter control-plane contracts, and observe-only LogObserver are available.  
+> **Not yet:** real Detector, Fast/Slow Policy engine, Supervisor Orchestrator, Claude Code / Codex actuators, or hook→agent vertical slice.  
+> See [M2 epic](https://github.com/ImL1s/reinframe/issues) (Detection-to-Intervention Control Plane) for the executable backlog.
 
 | Component | Status |
 |-----------|--------|
 | Canonical Schema (22 types) | ✅ Complete |
-| Capability Negotiation (20 flags, Level 0–3) | ✅ Complete |
+| Capability Negotiation (**25 flags**, Level 0–3) | ✅ Complete (L1 requires **CapAdviceDelivery**) |
 | SQLite WAL Event Store (persistence invariants) | ✅ Complete |
 | JSON Schema Validation (1MB limit, UseNumber) | ✅ Complete |
 | Cross-platform CI (Linux/macOS/Windows + golangci-lint) | ✅ Complete |
-| Tunnel Detector | 🔲 Planned |
-| Evidence Reviewer | 🔲 Planned |
-| Intervention Policy Engine | 🔲 Planned |
-| Git Checkpoint/Rollback | 🔲 Planned |
-| Supervisor Orchestrator | 🔲 Planned |
+| Adapter contracts (`EventSource`, `InterventionActuator`, HookGate, PendingQueue) | ✅ Complete (interfaces + fakes) |
+| LogObserverAdapter (L0 inbound) | ✅ Complete |
+| Config schema + ReviewerProvider interface | ✅ Complete (stubs/fakes) |
+| Minimal RepeatedFailure Detector | 🔲 M2 |
+| Fast/Slow Policy Engine | 🔲 M2 (#69) |
+| Supervisor Orchestrator wiring | 🔲 M2 (#70) |
+| Real hook→agent advisory vertical slice | 🔲 M2 (#71) |
+| Concrete Claude Code / Codex adapters | 🔲 Planned |
+| Git Checkpoint/Rollback runtime | 🔲 Planned |
 | CLI / `cmd/` binary | 🔲 Not present yet |
 
 ## Project Objective
 
-AI coding agents running in high-autonomy environments risk "tunneling" — executing unauthorized filesystem operations, excessive API calls, or unmonitored code modifications without structured supervision checkpoints. Reinframe is being built toward:
+AI coding agents risk "tunneling" (cognitive lock-in, error loops, patch churn, scope drift). Reinframe is being built toward:
 
-1. **Supervision Levels (0–3)** *(planned runtime)*: Graceful degradation from passive observation (Level 0) to full headless control (Level 3).
-2. **Canonical Agent Event Schema** *(available)*: 22 standardized Go struct models validated against JSON Schemas.
-3. **SQLite WAL Persistence Engine** *(available)*: Append-only event store with WAL, busy-aware writers, and persistence invariants (schema validation stays at the protocol/ingestion layer).
-4. **Integration Test Suite** *(available)*: Multi-tier integration and scenario-persistence tests for protocol + store packages (not full Detector→Git E2E).
+1. **Supervision Levels (0–3)** — dual axes: *Integration* (handshake) vs *Intervention* (escalation). See `docs/research/level_axes_mapping.md`.
+2. **Canonical Agent Event Schema** *(available)* — 22 Go types + JSON Schemas.
+3. **SQLite WAL Persistence** *(available)* — append-only event store.
+4. **Control plane contracts** *(available, not fully wired)* — HookGate, advisory delivery + ACK, fakes.
+5. **Automatic detect → defer → deliver → ACK loop** *(not yet)* — requires M2 epic.
 
 ---
 
@@ -41,31 +50,50 @@ AI coding agents running in high-autonomy environments risk "tunneling" — exec
 ```
 reinframe/
 ├── docs/
-│   ├── dev/                   # Specification, design, and dev tracking documents
-│   └── adr/                   # Architecture Decision Records
+│   ├── adr/                   # Architecture Decision Records
+│   ├── research/              # Threat model, capability matrix, level axes
+│   ├── specs/                 # MVP / milestone boundaries
+│   └── architecture/          # Execution DAG
 ├── pkg/
-│   ├── protocol/              # Canonical schemas, validation engine, capability negotiation
-│   │   ├── schemas/           # 22 JSON schema definitions
-│   │   ├── capability.go      # CapabilityManifest & Handshake negotiation engine
-│   │   └── schema.go          # Canonical Go types & validation engine
-│   └── state/                 # SQLite WAL-backed event store engine
-│       ├── store.go           # High-concurrency store implementation
-│       ├── migration.go       # DSN pragma & database schema migration engine
-│       └── migrations/        # SQL schema migration scripts (001_initial_events.sql)
+│   ├── protocol/              # Schemas, ValidateEvent, capability negotiation (25 flags)
+│   ├── state/                 # SQLite WAL event store
+│   ├── adapter/               # EventSource, Actuator, HookGate, PendingQueue, LogObserver
+│   ├── config/                # Versioned configuration schema
+│   └── reviewer/              # ReviewerProvider interface + FakeProvider
 ├── tests/
-│   └── integration/           # Multi-tier integration and workload tests
-├── .github/
-│   └── workflows/
-│       └── ci.yml             # Automated CI build, lint, and test pipeline
-├── .gitignore
-├── go.mod
+│   └── integration/           # Protocol/store/scenario-persistence tests
+├── .github/workflows/ci.yml
+├── go.mod                     # module github.com/ImL1s/reinframe
 └── README.md
 ```
 
 ### Module Responsibilities
-- **`pkg/protocol`**: Defines all 22 canonical event schemas, payload size checks (1MB limit), bitmask-based capability negotiation across 20 distinct boolean flags, and fail-fast schema compilation.
-- **`pkg/state`**: Manages event persistence via SQLite WAL (Write-Ahead Logging). Configures per-connection DSN pragmas (`busy_timeout=5000`, `journal_mode=WAL`, `foreign_keys=1`) and immediate transaction locks (`_txlock=immediate`). Append paths enforce persistence invariants only; they do **not** call `protocol.ValidateEvent`.
-- **`tests/integration`**: Integration and scenario-persistence tests (Tier-style suites) for capability negotiation and store behavior with `-race`.
+- **`pkg/protocol`**: 22 event schemas, 25 capability flags (including CapAdviceDelivery, CapToolGate, CapInterventionAck, …), Level masks, negotiation.
+- **`pkg/state`**: SQLite WAL append-only store; persistence invariants only (not full schema validation on append).
+- **`pkg/adapter`**: Bidirectional control-plane contracts; LogObserver (observe-only); fakes for tests. **Does not auto-wire a full supervisor loop.**
+- **`pkg/config`**: Versioned config schema (loader/CLI still planned).
+- **`pkg/reviewer`**: Provider interface + FakeProvider (no live cloud/local HTTP yet).
+- **`tests/integration`**: Foundation integration tests (not full Anti-Tunnel E2E).
+
+### Control-plane reality check
+```text
+Available:   interfaces, HookGate, queue, ACK lifecycle, LogObserver, fakes
+Not wired:   Detector → Policy → Orchestrator → real harness hooks
+```
+Manual steps (enqueue → set pending ID on HookPolicy → DeliverPending → Acknowledge) still required until M2 orchestration lands.
+
+---
+
+## Supervision Levels (Integration handshake)
+
+| Level | Name | Required capabilities (summary) | Use case |
+|-------|------|----------------------------------|----------|
+| 0 | **Observe** | CapEventStream | Passive monitoring (e.g. LogObserver) |
+| 1 | **Advisory** | + CapToolInspection + **CapAdviceDelivery** | Zoom-out / replan advice |
+| 2 | **Guarded** | + Diff + **native CapPause** + Cancel + Resume | Pause/tool gate (SIGSTOP ≠ CapPause) |
+| 3 | **Full Control** | + Checkpoint/Rollback, Headless, CLI, MCP, Subagents, SwitchModel | Full autonomy supervision |
+
+Intervention escalation after detection is a **separate axis** (B0–B3). See `docs/research/level_axes_mapping.md`.
 
 ---
 
@@ -98,21 +126,10 @@ reinframe/
    go test -v -race ./...
    ```
 
-5. **Compile all packages** (library packages only — there is no `package main` / CLI binary yet):
+5. **Compile all packages** (library packages only — no `package main` yet):
    ```bash
    go build -v ./...
    ```
-
----
-
-## Supervision Levels
-
-| Level | Name | Capabilities | Use Case |
-|-------|------|-------------|----------|
-| 0 | **Observe** | Event stream | Passive monitoring |
-| 1 | **Advisory** | + Tool inspection | Suggestions, no control |
-| 2 | **Guarded** | + Diff inspection, Pause/Cancel/Resume | Active intervention |
-| 3 | **Full Control** | + Checkpoint/Rollback, MCP, Subagents, Model Switch | Full autonomy supervision |
 
 ---
 
@@ -120,8 +137,8 @@ reinframe/
 
 Contributions welcome! Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) for available work
-2. Follow the existing code style and test patterns
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) for the open **M2 epic** and ready work
+2. Follow existing code style and test patterns
 3. Run `go test -race ./...` before submitting PRs
 4. All PRs require CI green on all three platforms
 
@@ -129,4 +146,4 @@ Contributions welcome! Please:
 
 ## License
 
-Reinframe is released under the [MIT License](LICENSE).
+MIT — see [LICENSE](LICENSE).

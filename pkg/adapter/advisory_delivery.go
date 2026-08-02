@@ -16,13 +16,19 @@ type HumanAlerter interface {
 	Alert(ctx context.Context, sessionID string, intervention protocol.Intervention, reason string) error
 }
 
-// NopHumanAlerter is a no-op HumanAlerter.
+// NopHumanAlerter is a no-op HumanAlerter for unit tests of non-escalation paths.
+// Production / observe-only escalation must not use Nop: DeliverPending will refuse
+// to treat a Nop alert as a successful human escalation.
 type NopHumanAlerter struct{}
 
-// Alert implements HumanAlerter.
+// Alert implements HumanAlerter (no side effects).
 func (NopHumanAlerter) Alert(context.Context, string, protocol.Intervention, string) error {
 	return nil
 }
+
+// ErrNopHumanAlerter is returned when escalation requires a real HumanAlerter
+// but configuration still uses NopHumanAlerter (or equivalent silent sink).
+var ErrNopHumanAlerter = errors.New("human alerter is NopHumanAlerter; cannot claim escalation succeeded")
 
 // RecordingAlerter records Alert calls for tests.
 type RecordingAlerter struct {
@@ -69,10 +75,13 @@ func (r *RecordingAlerter) Snapshot() []AlertCall {
 type AdvisoryDeliveryConfig struct {
 	// Actuator delivers interventions to the target agent. Required for delivery.
 	Actuator InterventionActuator
-	// Alerter receives human-escalation alerts. Optional (defaults to NopHumanAlerter).
+	// Alerter receives human-escalation alerts.
+	// When SupportsAdviceDelivery is false, a non-Nop Alerter is required (production).
+	// When SupportsAdviceDelivery is true, Alerter may be nil/Nop (only used on escalate).
 	Alerter HumanAlerter
 	// SupportsAdviceDelivery simulates CapAdviceDelivery. When false, DeliverPending
 	// returns unsupported_capability and invokes Alerter instead of Actuator.
+	// Alert failures (and Nop alerter) return errors — never silent "escalated" success.
 	SupportsAdviceDelivery bool
 	// DefaultTTL is applied when Enqueue is called with ttl <= 0.
 	DefaultTTL time.Duration
@@ -154,13 +163,32 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 			DeliveredAt:    now,
 			AckStatus:      AckStatusUnsupported,
 			ErrorClass:     ErrorClassUnsupportedCapability,
-			Message:        fmt.Sprintf("missing capability %s; escalated to human", CapAdviceDelivery),
+			Message:        fmt.Sprintf("missing capability %s; escalate to human required", CapAdviceDelivery),
 		}
-		_ = d.alerter.Alert(ctx, sessionID, item.Intervention, res.Message)
+		// Refuse silent success: Nop alerter must not count as human notification.
+		if _, isNop := d.alerter.(NopHumanAlerter); isNop {
+			res.Message = fmt.Sprintf("%s: %v", res.Message, ErrNopHumanAlerter)
+			res.ErrorClass = ErrorClassTransport
+			d.queue.UpdateState(item.Intervention.InterventionID, StateFailed, &res)
+			out := *item
+			out.State = StateFailed
+			out.Result = &res
+			return &out, res, ErrNopHumanAlerter
+		}
+		if err := d.alerter.Alert(ctx, sessionID, item.Intervention, res.Message); err != nil {
+			res.Message = fmt.Sprintf("%s: alerter error: %v", res.Message, err)
+			res.ErrorClass = ErrorClassTransport
+			d.queue.UpdateState(item.Intervention.InterventionID, StateFailed, &res)
+			out := *item
+			out.State = StateFailed
+			out.Result = &res
+			return &out, res, err
+		}
 		d.queue.UpdateState(item.Intervention.InterventionID, StateFailed, &res)
 		out := *item
 		out.State = StateFailed
 		out.Result = &res
+		// Escalation path: delivery to agent unsupported; human alert succeeded.
 		return &out, res, nil
 	}
 
@@ -174,14 +202,15 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 }
 
 // Acknowledge records an external ACK / reject / timeout for a DELIVERING item.
+// Only StateDelivering is accepted — ACK before Deliver is rejected (no pre-ack).
 // status must be one of acked | rejected | timed_out.
 func (d *AdvisoryDelivery) Acknowledge(interventionID, status string) error {
 	item, ok := d.queue.Get(interventionID)
 	if !ok {
 		return fmt.Errorf("unknown intervention %q", interventionID)
 	}
-	if item.State != StateDelivering && item.State != StatePending {
-		return fmt.Errorf("intervention %q not awaiting ack (state=%s)", interventionID, item.State)
+	if item.State != StateDelivering {
+		return fmt.Errorf("intervention %q not awaiting ack (state=%s; only DELIVERING accepted)", interventionID, item.State)
 	}
 
 	now := time.Now().UTC()

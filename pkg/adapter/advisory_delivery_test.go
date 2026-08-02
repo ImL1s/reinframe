@@ -2,6 +2,7 @@ package adapter_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -222,6 +223,11 @@ func TestAdvisory_AcknowledgePaths(t *testing.T) {
 	iv := sampleIntervention("iv-ack", "sess-e")
 	del.Enqueue(iv, time.Minute)
 
+	// ACK before deliver must fail (PENDING is not DELIVERING).
+	if err := del.Acknowledge("iv-ack", adapter.AckStatusAcked); err == nil {
+		t.Fatal("expected Acknowledge to reject PENDING pre-delivery")
+	}
+
 	item, res, err := del.DeliverPending(context.Background(), "sess-e")
 	if err != nil {
 		t.Fatalf("DeliverPending: %v", err)
@@ -242,6 +248,33 @@ func TestAdvisory_AcknowledgePaths(t *testing.T) {
 	}
 	if got.Result == nil || got.Result.AckStatus != adapter.AckStatusAcked {
 		t.Fatalf("result=%+v", got.Result)
+	}
+}
+
+func TestAdvisory_ObserveOnlyNopAlerterDoesNotSilentSucceed(t *testing.T) {
+	act := adapter.NewFakeActuator()
+	del, err := adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{
+		Actuator:               act,
+		Alerter:                adapter.NopHumanAlerter{},
+		SupportsAdviceDelivery: false,
+		DefaultTTL:             time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("NewAdvisoryDelivery: %v", err)
+	}
+	del.Enqueue(sampleIntervention("iv-nop", "sess-nop"), 0)
+	_, res, err := del.DeliverPending(context.Background(), "sess-nop")
+	if err == nil {
+		t.Fatal("expected error when escalating with NopHumanAlerter")
+	}
+	if !errors.Is(err, adapter.ErrNopHumanAlerter) {
+		t.Fatalf("err=%v want ErrNopHumanAlerter", err)
+	}
+	if res.ErrorClass != adapter.ErrorClassTransport {
+		t.Fatalf("ErrorClass=%s want transport", res.ErrorClass)
+	}
+	if act.CallCount() != 0 {
+		t.Fatalf("actuator must not be called")
 	}
 }
 

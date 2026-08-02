@@ -54,8 +54,9 @@ var memDBSeq uint64
 
 // Store represents an append-only event store backed by SQLite with WAL mode.
 type Store struct {
-	db     *sql.DB
-	closed atomic.Bool
+	db       *sql.DB
+	closed   atomic.Bool
+	inFlight atomic.Int64
 }
 
 // NewStore initializes a new SQLite WAL event store with embedded schema migrations applied.
@@ -130,9 +131,10 @@ func (s *Store) AppendEvent(ctx context.Context, event *protocol.AgentEvent) err
 
 // AppendEvents inserts multiple agent events into the store atomically in a single BEGIN IMMEDIATE transaction.
 func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent) error {
-	if s.closed.Load() {
-		return ErrStoreClosed
+	if err := s.enter(); err != nil {
+		return err
 	}
+	defer s.leave()
 
 	if len(events) == 0 {
 		return nil
@@ -146,14 +148,14 @@ func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return mapSQLiteError(err)
+		return s.wrapDBErr(mapSQLiteError(err))
 	}
 	defer tx.Rollback()
 
 	stmtSQL := `INSERT INTO events (event_id, session_id, sequence_num, event_type, timestamp, payload) VALUES (?, ?, ?, ?, ?, ?)`
 	stmt, err := tx.PrepareContext(ctx, stmtSQL)
 	if err != nil {
-		return mapSQLiteError(err)
+		return s.wrapDBErr(mapSQLiteError(err))
 	}
 	defer stmt.Close()
 
@@ -165,12 +167,12 @@ func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent)
 		}
 
 		if _, err := stmt.ExecContext(ctx, e.EventID, e.SessionID, e.SequenceNum, e.EventType, tsStr, payloadStr); err != nil {
-			return mapSQLiteError(err)
+			return s.wrapDBErr(mapSQLiteError(err))
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return mapSQLiteError(err)
+		return s.wrapDBErr(mapSQLiteError(err))
 	}
 
 	return nil
@@ -178,9 +180,10 @@ func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent)
 
 // QueryEvents retrieves events from the store matching the provided EventFilter criteria.
 func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protocol.AgentEvent, error) {
-	if s.closed.Load() {
-		return nil, ErrStoreClosed
+	if err := s.enter(); err != nil {
+		return nil, err
 	}
+	defer s.leave()
 
 	var queryBuilder strings.Builder
 	queryBuilder.WriteString("SELECT event_id, session_id, sequence_num, event_type, timestamp, payload FROM events WHERE 1=1")
@@ -241,7 +244,7 @@ func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protoco
 
 	rows, err := s.db.QueryContext(ctx, queryBuilder.String(), args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query events: %w", err)
+		return nil, s.wrapDBErr(fmt.Errorf("failed to query events: %w", err))
 	}
 	defer rows.Close()
 
@@ -252,7 +255,7 @@ func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protoco
 		var payloadStr string
 
 		if err := rows.Scan(&e.EventID, &e.SessionID, &e.SequenceNum, &e.EventType, &tsStr, &payloadStr); err != nil {
-			return nil, fmt.Errorf("failed to scan event row: %w", err)
+			return nil, s.wrapDBErr(fmt.Errorf("failed to scan event row: %w", err))
 		}
 
 		t, err := parseTimestamp(tsStr)
@@ -266,7 +269,7 @@ func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protoco
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating event rows: %w", err)
+		return nil, s.wrapDBErr(fmt.Errorf("error iterating event rows: %w", err))
 	}
 
 	return events, nil
@@ -274,14 +277,15 @@ func (s *Store) QueryEvents(ctx context.Context, filter EventFilter) ([]*protoco
 
 // GetLatestSequenceNum returns the highest sequence_num for the given session ID, or 0 if no events exist.
 func (s *Store) GetLatestSequenceNum(ctx context.Context, sessionID string) (int64, error) {
-	if s.closed.Load() {
-		return 0, ErrStoreClosed
+	if err := s.enter(); err != nil {
+		return 0, err
 	}
+	defer s.leave()
 
 	var maxSeq sql.NullInt64
 	query := "SELECT MAX(sequence_num) FROM events WHERE session_id = ?"
 	if err := s.db.QueryRowContext(ctx, query, sessionID).Scan(&maxSeq); err != nil {
-		return 0, fmt.Errorf("failed to query max sequence number: %w", err)
+		return 0, s.wrapDBErr(fmt.Errorf("failed to query max sequence number: %w", err))
 	}
 
 	if !maxSeq.Valid {
@@ -291,12 +295,44 @@ func (s *Store) GetLatestSequenceNum(ctx context.Context, sessionID string) (int
 	return maxSeq.Int64, nil
 }
 
-// Close closes the database connection pool.
+// Close closes the database connection pool after draining in-flight operations.
 func (s *Store) Close() error {
 	if s.closed.Swap(true) {
 		return nil
 	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for s.inFlight.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(1 * time.Millisecond)
+	}
+
 	return s.db.Close()
+}
+
+func (s *Store) enter() error {
+	if s.closed.Load() {
+		return ErrStoreClosed
+	}
+	s.inFlight.Add(1)
+	if s.closed.Load() {
+		s.inFlight.Add(-1)
+		return ErrStoreClosed
+	}
+	return nil
+}
+
+func (s *Store) leave() {
+	s.inFlight.Add(-1)
+}
+
+func (s *Store) wrapDBErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrStoreClosed) || s.closed.Load() || errors.Is(err, sql.ErrConnDone) || strings.Contains(err.Error(), "database is closed") {
+		return ErrStoreClosed
+	}
+	return err
 }
 
 func parseTimestamp(tsStr string) (time.Time, error) {

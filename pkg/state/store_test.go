@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -606,4 +607,199 @@ func TestStore_ConcurrentMigrations_Race(t *testing.T) {
 		t.Errorf("concurrent RunMigrations error: %v", err)
 	}
 }
+
+func TestStore_CloseRacesWithAppend(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "close_races_append.db")
+	store, err := state.NewStore(state.StoreOptions{
+		DatabasePath: dbPath,
+		BusyTimeout:  5000 * time.Millisecond,
+		MaxOpenConns: 10,
+		MaxIdleConns: 5,
+	})
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+
+	const numGoroutines = 50
+	const appendsPerGoroutine = 200
+
+	var wg sync.WaitGroup
+	startSignal := make(chan struct{})
+	errChan := make(chan error, numGoroutines*appendsPerGoroutine)
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(routineID int) {
+			defer wg.Done()
+			<-startSignal
+			sessionID := fmt.Sprintf("race-session-%d", routineID)
+			for seq := int64(1); seq <= appendsPerGoroutine; seq++ {
+				evt := &protocol.AgentEvent{
+					EventID:     fmt.Sprintf("race-evt-r%d-seq%d", routineID, seq),
+					SessionID:   sessionID,
+					SequenceNum: seq,
+					EventType:   "race_append",
+					Timestamp:   time.Now().UTC(),
+					Payload:     json.RawMessage(`{"data":"test"}`),
+				}
+				err := store.AppendEvent(ctx, evt)
+				if err != nil {
+					errChan <- err
+				}
+			}
+		}(i)
+	}
+
+	close(startSignal)
+	time.Sleep(2 * time.Millisecond)
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		if !errors.Is(err, state.ErrStoreClosed) {
+			t.Errorf("expected error to match state.ErrStoreClosed, got raw error: %v (type %T)", err, err)
+		}
+	}
+}
+
+func TestStore_CloseRacesWithAllOperations(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "close_races_all_ops.db")
+	store, err := state.NewStore(state.StoreOptions{
+		DatabasePath: dbPath,
+		BusyTimeout:  5000 * time.Millisecond,
+		MaxOpenConns: 10,
+		MaxIdleConns: 5,
+	})
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+
+	// Seed initial data so Query and GetLatestSequenceNum have rows to inspect
+	initialEvents := []*protocol.AgentEvent{
+		{
+			EventID:     "init-1",
+			SessionID:   "shared-session",
+			SequenceNum: 1,
+			EventType:   "init",
+			Timestamp:   time.Now().UTC(),
+			Payload:     json.RawMessage(`{"init": true}`),
+		},
+		{
+			EventID:     "init-2",
+			SessionID:   "shared-session",
+			SequenceNum: 2,
+			EventType:   "init",
+			Timestamp:   time.Now().UTC(),
+			Payload:     json.RawMessage(`{"init": true}`),
+		},
+	}
+	if err := store.AppendEvents(ctx, initialEvents); err != nil {
+		t.Fatalf("AppendEvents initial seed failed: %v", err)
+	}
+
+	const appenders = 20
+	const queryers = 20
+	const sequencers = 20
+	const opsPerRoutine = 100
+
+	var wg sync.WaitGroup
+	startSignal := make(chan struct{})
+	errChan := make(chan error, (appenders+queryers+sequencers)*opsPerRoutine)
+
+	// Appender goroutines
+	for i := 0; i < appenders; i++ {
+		wg.Add(1)
+		go func(routineID int) {
+			defer wg.Done()
+			<-startSignal
+			sessionID := fmt.Sprintf("appender-session-%d", routineID)
+			for seq := int64(1); seq <= opsPerRoutine; seq++ {
+				evt := &protocol.AgentEvent{
+					EventID:     fmt.Sprintf("allops-evt-r%d-seq%d", routineID, seq),
+					SessionID:   sessionID,
+					SequenceNum: seq,
+					EventType:   "all_ops_append",
+					Timestamp:   time.Now().UTC(),
+					Payload:     json.RawMessage(`{"data":"stress"}`),
+				}
+				if err := store.AppendEvents(ctx, []*protocol.AgentEvent{evt}); err != nil {
+					errChan <- err
+				}
+			}
+		}(i)
+	}
+
+	// Queryer goroutines
+	for i := 0; i < queryers; i++ {
+		wg.Add(1)
+		go func(routineID int) {
+			defer wg.Done()
+			<-startSignal
+			for op := 0; op < opsPerRoutine; op++ {
+				_, err := store.QueryEvents(ctx, state.EventFilter{
+					SessionID: "shared-session",
+					Limit:     10,
+				})
+				if err != nil {
+					errChan <- err
+				}
+			}
+		}(i)
+	}
+
+	// Sequencer goroutines
+	for i := 0; i < sequencers; i++ {
+		wg.Add(1)
+		go func(routineID int) {
+			defer wg.Done()
+			<-startSignal
+			for op := 0; op < opsPerRoutine; op++ {
+				_, err := store.GetLatestSequenceNum(ctx, "shared-session")
+				if err != nil {
+					errChan <- err
+				}
+			}
+		}(i)
+	}
+
+	close(startSignal)
+	time.Sleep(3 * time.Millisecond)
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	var rawClosedErrors int
+	var otherUnwrappedErrors []error
+
+	for err := range errChan {
+		if !errors.Is(err, state.ErrStoreClosed) {
+			if strings.Contains(err.Error(), "database is closed") || errors.Is(err, sql.ErrConnDone) {
+				rawClosedErrors++
+			} else {
+				otherUnwrappedErrors = append(otherUnwrappedErrors, err)
+			}
+			t.Errorf("unwrapped or non-ErrStoreClosed error received: %v (type %T)", err, err)
+		}
+	}
+
+	if rawClosedErrors > 0 {
+		t.Fatalf("CRITICAL: %d raw 'sql: database is closed' errors escaped to callers!", rawClosedErrors)
+	}
+	if len(otherUnwrappedErrors) > 0 {
+		t.Fatalf("CRITICAL: %d non-ErrStoreClosed unexpected errors escaped to callers: %v", len(otherUnwrappedErrors), otherUnwrappedErrors)
+	}
+}
+
+
 

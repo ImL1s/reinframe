@@ -39,8 +39,6 @@ AI coding agents running in high-autonomy environments risk "tunneling" — exec
 
 ```
 reinframe/
-├── cmd/
-│   └── reinframe/             # Entry points & CLI executable
 ├── docs/
 │   ├── dev/                   # Specification, design, and dev tracking documents
 │   └── adr/                   # Architecture Decision Records

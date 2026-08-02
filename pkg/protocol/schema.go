@@ -203,6 +203,9 @@ type CapabilityManifest struct {
 	SupportsCheckpoint bool   `json:"supports_checkpoint" redact:"none"`
 	SupportsRollback   bool   `json:"supports_rollback" redact:"none"`
 	SupportsMCP        bool   `json:"supports_mcp" redact:"none"`
+
+	rawBitmask    uint64
+	hasRawBitmask bool
 }
 
 // Checkpoint represents a workspace Git commit hash and test status snapshot.

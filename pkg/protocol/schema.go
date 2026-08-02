@@ -18,7 +18,9 @@ type AgentSession struct {
 	Metadata         map[string]string `json:"metadata,omitempty" redact:"sanitize"`
 }
 
-// TaskEnvelope specifies task prompt, scope rules, and timeout constraints.
+// TaskEnvelope is the immutable user request surface (original prompt + hard scope/timeout).
+// Do not revise in place when the user appends constraints — open a new envelope or
+// revise TaskContract instead. See docs/specs/adaptive_task_supervisor.md.
 type TaskEnvelope struct {
 	TaskID         string    `json:"task_id" redact:"none"`
 	SessionID      string    `json:"session_id" redact:"none"`
@@ -28,6 +30,122 @@ type TaskEnvelope struct {
 	TimeoutSeconds int       `json:"timeout_seconds" redact:"none"`
 	CreatedAt      time.Time `json:"created_at" redact:"none"`
 }
+
+// TaskSubmitted is the harness-agnostic task intake event (core model).
+// Adapters map host-specific surfaces onto this type, e.g.:
+//
+//	Claude Code UserPromptSubmit → TaskSubmitted
+//	Codex user input / API task payload / CLI initial prompt → TaskSubmitted
+//
+// Core packages must not depend on host hook names.
+type TaskSubmitted struct {
+	TaskID         string    `json:"task_id" redact:"none"`
+	SessionID      string    `json:"session_id" redact:"none"`
+	Prompt         string    `json:"prompt" redact:"sensitive"`
+	ParentRevision int       `json:"parent_revision" redact:"none"`
+	SubmittedAt    time.Time `json:"submitted_at" redact:"none"`
+	SourceHint     string    `json:"source_hint,omitempty" redact:"none"` // adapter label only, not a core enum of host hooks
+}
+
+// Criterion is one success criterion on a TaskContract.
+type Criterion struct {
+	ID          string `json:"id" redact:"none"`
+	Description string `json:"description" redact:"sensitive"`
+}
+
+// EvidenceRequirement names required proof for a criterion or risk class.
+type EvidenceRequirement struct {
+	ID       string `json:"id" redact:"none"`
+	Kind     string `json:"kind" redact:"none"` // test, diff, lint, manual, checkpoint, ...
+	Required bool   `json:"required" redact:"none"`
+}
+
+// ValidationBudget bounds redundant validation work.
+type ValidationBudget struct {
+	MaxFullSuiteRuns int `json:"max_full_suite_runs" redact:"none"`
+	MaxTargetedRuns  int `json:"max_targeted_runs" redact:"none"`
+}
+
+// ToolBudget bounds tool invocations for a contract revision.
+type ToolBudget struct {
+	MaxToolCalls int `json:"max_tool_calls" redact:"none"`
+}
+
+// TaskContract is a revisioned workload/evidence budget derived at intake (and revisable).
+// First M2 repeated-failure slice may pass nil/default contracts into policy APIs.
+type TaskContract struct {
+	TaskID   string `json:"task_id" redact:"none"`
+	Revision int    `json:"revision" redact:"none"`
+
+	Complexity string  `json:"complexity" redact:"none"` // trivial, simple, normal, complex
+	Risk       string  `json:"risk" redact:"none"`       // low, medium, high, irreversible
+	Confidence float64 `json:"confidence" redact:"none"`
+
+	SuccessCriteria  []Criterion           `json:"success_criteria,omitempty" redact:"sanitize"`
+	RequiredEvidence []EvidenceRequirement `json:"required_evidence,omitempty" redact:"sanitize"`
+	AllowedScope     []string              `json:"allowed_scope,omitempty" redact:"path"`
+	ValidationBudget ValidationBudget      `json:"validation_budget" redact:"none"`
+	ToolBudget       ToolBudget            `json:"tool_budget" redact:"none"`
+	SubagentBudget   int                   `json:"subagent_budget" redact:"none"`
+	ReviewerBudget   int                   `json:"reviewer_budget" redact:"none"`
+
+	CreatedFrom string    `json:"created_from" redact:"none"` // user_explicit, repository_policy, heuristic, model
+	CreatedAt   time.Time `json:"created_at" redact:"none"`
+}
+
+// CriterionStatus tracks whether a success criterion has been proven.
+type CriterionStatus struct {
+	CriterionID string `json:"criterion_id" redact:"none"`
+	Status      string `json:"status" redact:"none"` // unmet, met, waived
+}
+
+// ValidationRecord is one validation attempt with a multi-part fingerprint.
+// Fingerprint inputs (normative): command + target scope + workspace revision
+// + task contract revision + validation purpose — not command alone.
+type ValidationRecord struct {
+	RecordID         string    `json:"record_id" redact:"none"`
+	Command          string    `json:"command" redact:"sensitive"`
+	TargetScope      []string  `json:"target_scope,omitempty" redact:"path"`
+	WorkspaceRev     string    `json:"workspace_revision" redact:"none"`
+	ContractRevision int       `json:"contract_revision" redact:"none"`
+	Purpose          string    `json:"purpose" redact:"none"`
+	Succeeded        bool      `json:"succeeded" redact:"none"`
+	Fingerprint      string    `json:"fingerprint" redact:"none"`
+	RecordedAt       time.Time `json:"recorded_at" redact:"none"`
+}
+
+// EvidenceLedger records what was actually proven for a task/contract revision.
+// First M2 slice may pass nil/default ledgers into policy APIs.
+type EvidenceLedger struct {
+	TaskID            string                     `json:"task_id" redact:"none"`
+	ContractRevision  int                        `json:"contract_revision" redact:"none"`
+	WorkspaceRevision string                     `json:"workspace_revision,omitempty" redact:"none"`
+	CriteriaStatus    map[string]CriterionStatus `json:"criteria_status,omitempty" redact:"sanitize"`
+	ValidationRecords []ValidationRecord         `json:"validation_records,omitempty" redact:"sanitize"`
+	ToolCallCounts    map[string]int             `json:"tool_call_counts,omitempty" redact:"none"`
+	LastProgressAt    *time.Time                 `json:"last_progress_at,omitempty" redact:"none"`
+	LastWorkspaceHash string                     `json:"last_workspace_hash,omitempty" redact:"none"`
+}
+
+// SafeBoundary is an adapter-declared delivery boundary (core names, not host hooks).
+type SafeBoundary string
+
+const (
+	BoundaryBeforeTool SafeBoundary = "before_tool"
+	BoundaryAfterTool  SafeBoundary = "after_tool"
+	BoundaryTurnEnd    SafeBoundary = "turn_end"
+	BoundaryNextInput  SafeBoundary = "next_input"
+)
+
+// AckPolicy selects how strongly an intervention requires acknowledgement.
+type AckPolicy string
+
+const (
+	AckExplicit    AckPolicy = "explicit"          // agent_ack required (#71 fake slice)
+	AckTransport   AckPolicy = "transport_receipt" // harness accepted message
+	AckBehavioral  AckPolicy = "behavioral"        // next actions match intent
+	AckNone        AckPolicy = "none"              // no ack; human escalate if critical
+)
 
 // AgentEvent is the canonical NDJSON event wrapper containing sequence numbers and dynamic payload object.
 type AgentEvent struct {

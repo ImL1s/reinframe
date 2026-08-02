@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/task_submitted.json",
+  "title": "TaskSubmitted",
+  "type": "object",
+  "required": [
+    "task_id",
+    "session_id",
+    "prompt",
+    "parent_revision",
+    "submitted_at"
+  ],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "prompt": { "type": "string", "minLength": 1 },
+    "parent_revision": { "type": "integer", "minimum": 0 },
+    "submitted_at": { "type": "string", "format": "date-time" },
+    "source_hint": { "type": "string" }
+  },
+  "additionalProperties": false
+}

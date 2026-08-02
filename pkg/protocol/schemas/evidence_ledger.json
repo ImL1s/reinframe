@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://reinframe.dev/schemas/evidence_ledger.json",
+  "title": "EvidenceLedger",
+  "type": "object",
+  "required": [
+    "task_id",
+    "contract_revision"
+  ],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "contract_revision": { "type": "integer", "minimum": 0 },
+    "workspace_revision": { "type": "string" },
+    "criteria_status": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["criterion_id", "status"],
+        "properties": {
+          "criterion_id": { "type": "string", "minLength": 1 },
+          "status": {
+            "type": "string",
+            "enum": ["unmet", "met", "waived"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "validation_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "record_id",
+          "command",
+          "workspace_revision",
+          "contract_revision",
+          "purpose",
+          "succeeded",
+          "fingerprint",
+          "recorded_at"
+        ],
+        "properties": {
+          "record_id": { "type": "string", "minLength": 1 },
+          "command": { "type": "string", "minLength": 1 },
+          "target_scope": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "workspace_revision": { "type": "string" },
+          "contract_revision": { "type": "integer", "minimum": 0 },
+          "purpose": { "type": "string", "minLength": 1 },
+          "succeeded": { "type": "boolean" },
+          "fingerprint": { "type": "string", "minLength": 1 },
+          "recorded_at": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "tool_call_counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "last_progress_at": { "type": "string", "format": "date-time" },
+    "last_workspace_hash": { "type": "string" }
+  },
+  "additionalProperties": false
+}

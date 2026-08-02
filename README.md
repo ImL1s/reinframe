@@ -17,7 +17,7 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 
 | Component | Status |
 |-----------|--------|
-| Canonical Schema (22 types) | ✅ Complete |
+| Canonical Schema (25+ types incl. TaskSubmitted/Contract/Ledger) | ✅ Complete |
 | Capability Negotiation (**25 flags**, Level 0–3) | ✅ Complete (L1 requires **CapAdviceDelivery**) |
 | SQLite WAL Event Store (persistence invariants) | ✅ Complete |
 | JSON Schema Validation (1MB limit, UseNumber) | ✅ Complete |
@@ -68,7 +68,7 @@ reinframe/
 ```
 
 ### Module Responsibilities
-- **`pkg/protocol`**: 22 event schemas, 25 capability flags (including CapAdviceDelivery, CapToolGate, CapInterventionAck, …), Level masks, negotiation.
+- **`pkg/protocol`**: Canonical schemas (TaskEnvelope + TaskSubmitted/TaskContract/EvidenceLedger, interventions, …), 25 capability flags (including CapAdviceDelivery, CapToolGate, CapInterventionAck, …), Level masks, negotiation. See `docs/specs/adaptive_task_supervisor.md`.
 - **`pkg/state`**: SQLite WAL append-only store; persistence invariants only (not full schema validation on append).
 - **`pkg/adapter`**: Bidirectional control-plane contracts; LogObserver (observe-only); fakes for tests. **Does not auto-wire a full supervisor loop.**
 - **`pkg/config`**: Versioned config schema (loader/CLI still planned).

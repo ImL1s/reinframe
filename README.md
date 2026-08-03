@@ -6,14 +6,14 @@
 
 Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go.
 
-**Today (M1 + M2.0 control-loop + M2.1 effort-calibration library slices):** protocol/store/adapters, repeated-failure + **verification_churn** detectors, fast/slow + **before_tool** policy, supervisor orchestrator, TaskSubmitted **intake mappers** (fixtures), fake-agent vertical slices — **not** live production Claude Code / Codex actuators, and **not** multi-deviation calibrated Anti-Tunnel E2E.
+**Today (M1 → M2.2 library + experimental host bridges):** control plane (detect→defer→deliver→ACK), effort-calibration library slices, offline/near-live Codex observation, Claude PreTool **fixture/CLI bridge**, FileActuator JSONL advice channel, tool-budget / hypothesis-loop detectors — **not** dual-host production install, **not** calibrated hard-gates (M3), **not** git checkpoint product runtime.
 
 ## Project Status
 
-> **Phase: M1 Foundation + M2.0 (direction_fixation) + M2.1 library effort-calibration**  
-> M2.0 detect→defer→deliver→ACK and M2.1 intake/churn/over-SOP **library tests** are available.  
-> **Not yet:** live Claude Code / Codex product actuators (only fixture mappers for #84), Git rollback runtime, multi-role live Reviewers, or calibrated threshold hard-gates (M3).  
-> Epic #80 tracks residual governance; research order: `docs/research/2026-08-03-m21-open-issues-order.md`.
+> **Phase: M1 + M2.0 + M2.1 library + M2.2 residual adapters (library / experimental)**  
+> Landed through PR [#101](https://github.com/ImL1s/reinframe/pull/101) / [#102](https://github.com/ImL1s/reinframe/pull/102): street-wire demo, Codex offline+tail EventSource, Claude bridge, FileActuator, #98 detectors + thin policy wiring.  
+> **Still open:** epic [#80](https://github.com/ImL1s/reinframe/issues/80) residual tracker; [#99](https://github.com/ImL1s/reinframe/issues/99) git checkpoint/rollback; [#100](https://github.com/ImL1s/reinframe/issues/100) M3 benchmarks before hard-gates.  
+> Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md). Research history: `docs/research/2026-08-03-m21-open-issues-order.md`.
 
 | Component | Status |
 |-----------|--------|
@@ -22,19 +22,22 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 | SQLite WAL Event Store (persistence invariants) | ✅ Complete |
 | JSON Schema Validation (1MB limit, UseNumber) | ✅ Complete |
 | Cross-platform CI (Linux/macOS/Windows + golangci-lint) | ✅ Complete |
-| Adapter contracts (`EventSource`, `InterventionActuator`, HookGate, PendingQueue) | ✅ Complete (interfaces + fakes) |
+| Adapter contracts (`EventSource`, `InterventionActuator`, HookGate, PendingQueue) | ✅ Complete (interfaces + fakes + FileActuator) |
 | LogObserverAdapter (L0 inbound) | ✅ Complete |
 | Config schema + ReviewerProvider interface | ✅ Complete (stubs/fakes) |
-| Minimal RepeatedFailure Detector (`pkg/detector`, #82) | ✅ Complete (provisional N=3 knobs) |
-| Fast/Slow Policy Engine (`pkg/policy`, #69) | ✅ Complete (deterministic ZOOM_OUT; optional Reviewer) |
-| Supervisor Orchestrator wiring (`pkg/supervisor`, #70) | ✅ Complete (composition root + fakes) |
-| Hook→agent advisory vertical slice (`pkg/supervisor` tests, #71) | ✅ Control-loop integration test (fake agent; **not** full multi-deviation E2E) |
-| TaskSubmitted intake mappers (#84) | ✅ Fixture mapping only (not live actuators) |
+| RepeatedFailure Detector (#82) | ✅ Complete (provisional N=3) |
 | VerificationChurn detector (#85) | ✅ Complete (provisional multi-part fingerprint) |
-| Effort-calibration over-SOP slice (#86) | ✅ Library vertical-slice tests |
-| Concrete Claude Code / Codex **product** adapters | 🔲 Planned (beyond #84 fixtures) |
-| Git Checkpoint/Rollback runtime | 🔲 Planned |
-| CLI / `cmd/` binary | 🔲 Not present yet |
+| Tool-budget + hypothesis-loop detectors (#98) | ✅ Library complete (provisional; not live host auto-intervention) |
+| Fast/Slow + before_tool Policy (#69 / #86) | ✅ Complete; #98 modes → ZOOM_OUT on slow path |
+| Supervisor Orchestrator (#70/#71) | ✅ Complete (composition root + vertical-slice tests) |
+| TaskSubmitted intake mappers (#84) | ✅ Fixture/host mappers (no protocol host type names) |
+| Codex EventSource offline + near-live tail (#95) | ✅ `CodexRolloutSource` / `CodexTailSource` (not process attach) |
+| Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` (no global settings install) |
+| FileActuator advice channel (#97) | ✅ JSONL `reinframe.advice.v1`; pending ACK (host must consume file) |
+| Street-wire demo (`cmd/streetwire`) | ✅ Offline Codex + M2 loops + bridge + FileActuator demos |
+| Git Checkpoint/Rollback runtime (#99) | 🔲 Open |
+| M3 synthetic + FP benchmarks / hard-gates (#100) | 🔲 Open |
+| Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Project Objective
 
@@ -43,9 +46,10 @@ AI coding agents risk "tunneling" (cognitive lock-in, error loops, patch churn, 
 1. **Supervision Levels (0–3)** — dual axes: *Integration* (handshake) vs *Intervention* (escalation). See `docs/research/level_axes_mapping.md`.
 2. **Canonical Agent Event Schema** *(available)* — 22 Go types + JSON Schemas.
 3. **SQLite WAL Persistence** *(available)* — append-only event store.
-4. **Control plane contracts** *(available)* — HookGate, advisory delivery + ACK, fakes.
-5. **M2.0 detect → defer → deliver → ACK loop** *(library + fake-agent tests)* — `pkg/supervisor` orchestrates detector + policy + delivery; **not** production harness adapters.
-6. **M2.1 effort calibration** *(library)* — TaskSubmitted intake fixtures, verification_churn detector, before_tool over-SOP deny tests; **not** live host product adapters.
+4. **Control plane contracts** *(available)* — HookGate, advisory delivery + ACK, FileActuator + fakes.
+5. **M2.0 detect → defer → deliver → ACK loop** *(library + tests)* — `pkg/supervisor`.
+6. **M2.1 effort calibration** *(library)* — intake, verification_churn, before_tool over-SOP deny.
+7. **M2.2 host bridges** *(experimental / observation)* — Codex JSONL offline+tail, Claude PreTool bridge CLI, FileActuator channel; **not** auto-installed dual-host product.
 
 ---
 
@@ -53,18 +57,24 @@ AI coding agents risk "tunneling" (cognitive lock-in, error loops, patch churn, 
 
 ```
 reinframe/
+├── cmd/
+│   ├── streetwire/            # A–F street demo (offline Codex, loops, bridge, FileActuator)
+│   └── claudebridge/          # Claude PreTool / prompt stdin→JSON (#96 experimental)
 ├── docs/
+│   ├── adapter/               # Host bridge + intake + FileActuator docs
+│   ├── detector/              # #98 fingerprint rules
+│   ├── dev/                   # STREET_WIRE.md street map
 │   ├── adr/                   # Architecture Decision Records
 │   ├── research/              # Threat model, capability matrix, level axes
-│   ├── specs/                 # MVP / milestone boundaries + Adaptive Task Supervisor
+│   ├── specs/                 # Adaptive Task Supervisor model
 │   └── architecture/          # Execution DAG
 ├── pkg/
 │   ├── protocol/              # Schemas, ValidateEvent, capability negotiation (25 flags)
 │   ├── state/                 # SQLite WAL event store
-│   ├── adapter/               # EventSource, Actuator, HookGate, PendingQueue, LogObserver
-│   ├── detector/              # Minimal RepeatedFailureDetector (#82)
-│   ├── policy/                # Fast/slow intervention policy (#69)
-│   ├── supervisor/            # Orchestrator composition + vertical-slice tests (#70/#71)
+│   ├── adapter/               # EventSource, Actuators, HookGate, Claude/Codex bridges
+│   ├── detector/              # RepeatedFailure, VerificationChurn, ToolBudget, HypothesisLoop
+│   ├── policy/                # Fast/slow + before_tool
+│   ├── supervisor/            # Orchestrator composition + vertical-slice tests
 │   ├── config/                # Versioned configuration schema
 │   └── reviewer/              # ReviewerProvider interface + FakeProvider
 ├── tests/
@@ -77,20 +87,24 @@ reinframe/
 ### Module Responsibilities
 - **`pkg/protocol`**: Canonical schemas (TaskEnvelope + TaskSubmitted/TaskContract/EvidenceLedger, interventions, …), `BuildContractFromSubmitted` + store emit helpers (`AgentEventFromTask*`), 25 capability flags (including CapAdviceDelivery, CapToolGate, CapInterventionAck, …), Level masks, negotiation. See `docs/specs/adaptive_task_supervisor.md`.
 - **`pkg/state`**: SQLite WAL append-only store; persistence invariants only (not full schema validation on append).
-- **`pkg/adapter`**: Bidirectional control-plane contracts; LogObserver (observe-only); fakes for tests.
-- **`pkg/detector`**: Deterministic repeated-failure fingerprint detector (no LLM); provisional N=3.
-- **`pkg/policy`**: Fast path = HookGate only; slow path = ZOOM_OUT from high-confidence signals (optional Reviewer on uncertain branch).
-- **`pkg/supervisor`**: Thin composition root wiring detect → policy → queue → deliver → ACK; vertical-slice tests use fakes (not Claude/Codex).
-- **`pkg/config`**: Versioned config schema (loader/CLI still planned).
+- **`pkg/adapter`**: Control-plane contracts; LogObserver; Codex offline/tail EventSource; Claude PreTool bridge; FileActuator + FakeActuator; HookGate / PendingQueue. Docs under `docs/adapter/`.
+- **`pkg/detector`**: Deterministic detectors (no LLM): repeated-failure, verification_churn, tool-budget, hypothesis-loop (provisional thresholds).
+- **`pkg/policy`**: Fast path = HookGate; before_tool over-SOP; slow path ZOOM_OUT for high-confidence signals (including #98 modes; optional Reviewer on uncertain branch).
+- **`pkg/supervisor`**: Composition root: detect → policy → queue → deliver → ACK.
+- **`cmd/streetwire`**: End-to-end **library** demo of residual paths (see `docs/dev/STREET_WIRE.md`).
+- **`cmd/claudebridge`**: Stdin PreTool/prompt bridge for optional Claude Code hooks (experimental).
+- **`pkg/config`**: Versioned config schema (loader still thin).
 - **`pkg/reviewer`**: Provider interface + FakeProvider (no live cloud/local HTTP yet).
 - **`tests/integration`**: Foundation integration tests (not full Anti-Tunnel E2E).
 
 ### Control-plane reality check
 ```text
-Available:   Detector → Policy → Orchestrator → HookGate/queue/delivery (fakes + LogObserver)
-Not yet:     concrete Claude Code / Codex PreTool adapters, live Reviewer HTTP, calibrated thresholds
+Available:  Detectors → Policy → Orchestrator → HookGate / queue / FileActuator|Fake
+            Codex JSONL offline + tail EventSource; Claude PreTool fixture/CLI bridge
+Not claimed: global ~/.claude or Codex product install, process-attach daemon,
+             live dual-host supervision, calibrated hard-gates (#100), git rollback (#99)
 ```
-Vertical-slice tests prove the library loop with a **fake** target agent. Production harness wiring remains Planned.
+Vertical-slice and street-wire tests prove the **library and channel** paths. Host consumers of FileActuator / optional hook install remain operator-owned.
 
 ---
 
@@ -136,10 +150,22 @@ Intervention escalation after detection is a **separate axis** (B0–B3). See `d
    go test -v -race ./...
    ```
 
-5. **Compile all packages** (library packages only — no `package main` yet):
+5. **Build packages and demos**:
    ```bash
    go build -v ./...
+   go run ./cmd/streetwire -no-codex
+   # optional: offline Codex rollout if present
+   go run ./cmd/streetwire -codex "$HOME/.codex/sessions/.../rollout-….jsonl"
+   # experimental Claude PreTool bridge
+   echo '{"session_id":"s","tool_name":"Bash"}' | go run ./cmd/claudebridge pretool -deny-tool Bash
    ```
+
+### Further reading
+- [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md) — how pieces connect + honesty boundaries  
+- [`docs/adapter/claude_bridge.md`](docs/adapter/claude_bridge.md) — #96  
+- [`docs/adapter/file_actuator.md`](docs/adapter/file_actuator.md) — #97  
+- [`docs/adapter/codex_eventsource.md`](docs/adapter/codex_eventsource.md) — #95 offline/tail  
+- [`docs/detector/tool_budget_hypothesis.md`](docs/detector/tool_budget_hypothesis.md) — #98  
 
 ---
 
@@ -147,10 +173,10 @@ Intervention escalation after detection is a **separate axis** (B0–B3). See `d
 
 Contributions welcome! Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) for the open **M2 epic** and ready work
-2. Follow existing code style and test patterns
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) for open work (epic **#80**, **#99**, **#100**)
+2. Follow existing code style and test patterns; keep honesty boundaries (no false product claims)
 3. Run `go test -race ./...` before submitting PRs
-4. All PRs require CI green on all three platforms
+4. All PRs require CI green on all three platforms + AI review comment before merge (project standard)
 
 ---
 

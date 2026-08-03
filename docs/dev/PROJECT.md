@@ -1,7 +1,9 @@
 # Reinframe P0/P1 Issue Resolution — PROJECT.md
 
+> **Historical inventory** from early M1 foundation fixes. For current product status see root [`README.md`](../../README.md) and [`STREET_WIRE.md`](STREET_WIRE.md) (M2.0–M2.2). Do not treat the tables below as the live roadmap.
+
 ## Architecture
-Reinframe is a cross-platform (Windows, macOS, Linux) Go project **building toward** an Anti-Tunnel Supervision Harness. Current shipped surface is protocol + SQLite WAL store libraries (not a complete live supervisor).
+Reinframe is a cross-platform (Windows, macOS, Linux) Go project **building toward** an Anti-Tunnel Supervision Harness. Shipped surface now includes protocol, store, control plane, experimental host bridges, and demos — still **not** dual-host production supervision (see README honesty).
 
 ### Core Modules
 - `pkg/state/`: SQLite WAL-backed append-only event store and migration engine.

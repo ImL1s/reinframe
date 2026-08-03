@@ -82,17 +82,19 @@ Close #80 only if maintainers redefine epic scope to M2.0-only (out of this pass
 
 ## M2.2 / residual atomic issues (opened 2026-08-03)
 
-After library slices closed, open product backlog (do not reuse #84–#86 DoD):
+After library slices closed, product backlog (do not reuse #84–#86 DoD):
 
-| Issue | Priority | Topic |
-|-------|----------|--------|
-| **#95** | P0 | Codex live EventSource |
-| **#96** | P0 | Claude Code live PreTool/event bridge |
-| **#97** | P0 | Real InterventionActuator |
-| **#98** | P1 | Tool-budget + hypothesis-loop detectors (long review sessions) |
-| **#99** | P1 | Git checkpoint/rollback runtime |
-| **#100** | P2 | M3 synthetic + FP benchmarks |
+| Issue | Priority | Topic | Disposition (2026-08-03) |
+|-------|----------|--------|--------------------------|
+| **#95** | P0 | Codex EventSource | **CLOSED** — offline `CodexRolloutSource` + near-live `CodexTailSource` (PR #101/#102); not process attach |
+| **#96** | P0 | Claude PreTool/event bridge | **CLOSED** — experimental API + `cmd/claudebridge` (PR #102); no global settings install claim |
+| **#97** | P0 | Real InterventionActuator | **CLOSED** — `FileActuator` JSONL channel + pending ACK (PR #102) |
+| **#98** | P1 | Tool-budget + hypothesis-loop | **CLOSED** library DoD — detectors + thin `EvaluateSlow` (PR #101/#102) |
+| **#99** | P1 | Git checkpoint/rollback runtime | **OPEN** |
+| **#100** | P2 | M3 synthetic + FP benchmarks | **OPEN** |
 
-**Order:** `#95 ∥ #96 → #97 → #98` (adapters before new review-session detectors help end-to-end); `#99` per DAG Phase 3; `#100` before any hard-gate calibration.
+**Historical order (execution):** `#95 scaffold → #98 library → #96 ∥ #97 + Codex tail` via PR #101 then #102.
 
-**Experience note:** long Codex *review* sessions often lack identical compile-error fingerprints (#82); product improvement needs #95+#98, not only repeated-failure N=3.
+**Still open under epic #80:** #99, #100; dual-host production install and calibrated hard-gates remain non-claims. See README Project Status and `docs/dev/STREET_WIRE.md`.
+
+**Experience note:** long Codex *review* sessions often lack identical compile-error fingerprints (#82); #95+#98 library paths address observation/detection — not automatic live intervention without host consumers.

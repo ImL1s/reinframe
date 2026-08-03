@@ -77,3 +77,22 @@ Process per PR (project standard): branch → tests `-race` → open PR → Lint
 
 Leave **OPEN** with comment: M2.0 implemented; M2.1 #84–#86 status as merged; concrete harness adapters still non-goal for epic DoD.  
 Close #80 only if maintainers redefine epic scope to M2.0-only (out of this pass).
+
+---
+
+## M2.2 / residual atomic issues (opened 2026-08-03)
+
+After library slices closed, open product backlog (do not reuse #84–#86 DoD):
+
+| Issue | Priority | Topic |
+|-------|----------|--------|
+| **#95** | P0 | Codex live EventSource |
+| **#96** | P0 | Claude Code live PreTool/event bridge |
+| **#97** | P0 | Real InterventionActuator |
+| **#98** | P1 | Tool-budget + hypothesis-loop detectors (long review sessions) |
+| **#99** | P1 | Git checkpoint/rollback runtime |
+| **#100** | P2 | M3 synthetic + FP benchmarks |
+
+**Order:** `#95 ∥ #96 → #97 → #98` (adapters before new review-session detectors help end-to-end); `#99` per DAG Phase 3; `#100` before any hard-gate calibration.
+
+**Experience note:** long Codex *review* sessions often lack identical compile-error fingerprints (#82); product improvement needs #95+#98, not only repeated-failure N=3.

@@ -15,4 +15,7 @@
 // Capability flags such as CapAdviceDelivery may land in pkg/protocol (#65).
 // Until then, advisory delivery accepts an explicit SupportsAdviceDelivery option
 // so observe-only degradation can be tested without protocol edits.
+//
+// #84 — TaskSubmitted intake mappers (host → core). Claude UserPromptSubmit is a
+// fixture/host mapping only; see docs/adapter/task_intake_mapping.md.
 package adapter

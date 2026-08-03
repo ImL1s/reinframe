@@ -96,7 +96,7 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 				gen++
 			}
 		}
-		n, err := c.readNew(ctx, ch, parser, &offset)
+		n, err := c.readNew(ctx, ch, parser, &offset, gen)
 		if err != nil && !os.IsNotExist(err) {
 			// Transient: wait and retry unless canceled.
 			select {
@@ -139,7 +139,7 @@ func (c *CodexTailSource) persistCursor(offset int64, gen int, sessionID string)
 	})
 }
 
-func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentEvent, parser *rolloutParser, offset *int64) (int, error) {
+func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentEvent, parser *rolloutParser, offset *int64, gen int) (int, error) {
 	f, err := os.Open(c.Path)
 	if err != nil {
 		return 0, err
@@ -198,13 +198,16 @@ func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentE
 			*offset += lineBytes
 			continue
 		}
-		// Stable IDs across restarts: include file byte end-offset of this line.
+		// Stable IDs across restarts + rotations: generation + byte end-offset.
 		lineEnd := *offset + lineBytes
-		if ev.EventType == "tool_call" {
-			ev.EventID = fmt.Sprintf("codex-tool-off-%d", lineEnd)
-		} else if ev.EventType == "error" {
-			ev.EventID = fmt.Sprintf("codex-err-off-%d", lineEnd)
+		switch ev.EventType {
+		case "tool_call":
+			ev.EventID = fmt.Sprintf("codex-tool-g%d-off-%d", gen, lineEnd)
+		case "error":
+			ev.EventID = fmt.Sprintf("codex-err-g%d-off-%d", gen, lineEnd)
 		}
+		// SequenceNum mirrors file position so resumes don't re-use 1..N.
+		ev.SequenceNum = lineEnd
 		select {
 		case <-ctx.Done():
 			// Do not advance offset for this unsent event.

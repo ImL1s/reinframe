@@ -35,6 +35,7 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` (no global settings install) |
 | FileActuator advice channel (#97) | ✅ JSONL `reinframe.advice.v1`; pending ACK (host must consume file) |
 | Street-wire demo (`cmd/streetwire`) | ✅ Offline Codex + M2 loops + bridge + FileActuator demos |
+| Optional LLM Reviewer (OpenAI-compatible, ADR 003 local-only default) | ✅ Uncertain path only; high-confidence never calls LLM (`cmd/reviewerdemo`) |
 | Git Checkpoint/Rollback runtime (#99) | 🔲 Open |
 | M3 synthetic + FP benchmarks / hard-gates (#100) | 🔲 Open |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
@@ -50,6 +51,7 @@ AI coding agents risk "tunneling" (cognitive lock-in, error loops, patch churn, 
 5. **M2.0 detect → defer → deliver → ACK loop** *(library + tests)* — `pkg/supervisor`.
 6. **M2.1 effort calibration** *(library)* — intake, verification_churn, before_tool over-SOP deny.
 7. **M2.2 host bridges** *(experimental / observation)* — Codex JSONL offline+tail, Claude PreTool bridge CLI, FileActuator channel; **not** auto-installed dual-host product.
+8. **Optional LLM Reviewer** *(uncertain slow path only)* — OpenAI-compatible provider from config; high-confidence ZOOM_OUT stays deterministic (no LLM). See `docs/reviewer/optional_llm_advice.md` and `go run ./cmd/reviewerdemo`.
 
 ---
 
@@ -59,9 +61,11 @@ AI coding agents risk "tunneling" (cognitive lock-in, error loops, patch churn, 
 reinframe/
 ├── cmd/
 │   ├── streetwire/            # A–F street demo (offline Codex, loops, bridge, FileActuator)
-│   └── claudebridge/          # Claude PreTool / prompt stdin→JSON (#96 experimental)
+│   ├── claudebridge/          # Claude PreTool / prompt stdin→JSON (#96 experimental)
+│   └── reviewerdemo/          # Optional LLM: fixed ZOOM_OUT vs SuggestedAdvice
 ├── docs/
 │   ├── adapter/               # Host bridge + intake + FileActuator docs
+│   ├── reviewer/              # Optional LLM advice honesty
 │   ├── detector/              # #98 fingerprint rules
 │   ├── dev/                   # STREET_WIRE.md street map
 │   ├── adr/                   # Architecture Decision Records
@@ -158,10 +162,13 @@ Intervention escalation after detection is a **separate axis** (B0–B3). See `d
    go run ./cmd/streetwire -codex "$HOME/.codex/sessions/.../rollout-….jsonl"
    # experimental Claude PreTool bridge
    echo '{"session_id":"s","tool_name":"Bash"}' | go run ./cmd/claudebridge pretool -deny-tool Bash
+   # optional LLM reviewer demo (fixture HTTP; not always-on)
+   go run ./cmd/reviewerdemo
    ```
 
 ### Further reading
 - [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md) — how pieces connect + honesty boundaries  
+- [`docs/reviewer/optional_llm_advice.md`](docs/reviewer/optional_llm_advice.md) — when LLM advice runs vs fixed ZOOM_OUT  
 - [`docs/adapter/claude_bridge.md`](docs/adapter/claude_bridge.md) — #96  
 - [`docs/adapter/file_actuator.md`](docs/adapter/file_actuator.md) — #97  
 - [`docs/adapter/codex_eventsource.md`](docs/adapter/codex_eventsource.md) — #95 offline/tail  

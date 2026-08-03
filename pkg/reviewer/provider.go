@@ -1,9 +1,3 @@
-// Package reviewer defines the Reviewer Provider SDK surface used by the
-// supervisor to obtain structured ReviewDecision values from models.
-//
-// #17 — ReviewerProvider interface + FakeProvider for tests.
-// Concrete remote/local providers (#18–#19) implement this interface and must
-// honor ADR 003 egress classification when leaving the host.
 package reviewer
 
 import (

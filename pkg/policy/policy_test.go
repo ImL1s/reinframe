@@ -3,6 +3,7 @@ package policy_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -151,6 +152,63 @@ func TestEvaluateSlow_ConcurrentUniqueInterventionIDs(t *testing.T) {
 	}
 	if len(seen) != n {
 		t.Fatalf("unique ids=%d want %d", len(seen), n)
+	}
+}
+
+func TestEvaluateSlow_ContractEnrichesAdvice(t *testing.T) {
+	t.Parallel()
+	eng := policy.NewEngine(policy.EngineConfig{Reviewer: panicReviewer{}})
+	c := protocol.BuildContractFromSubmitted(protocol.TaskSubmitted{
+		TaskID: "t1", SessionID: "s1", Prompt: "fix typo",
+		SubmittedAt: time.Now().UTC(),
+	}, protocol.BuildContractOptions{})
+	led := protocol.NewEvidenceLedger(c.TaskID, c.Revision)
+	res, err := eng.EvaluateSlow(context.Background(), policy.SlowInput{
+		Signal:   sampleSignal(),
+		Contract: &c,
+		Ledger:   &led,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Intervention == nil {
+		t.Fatal("expected intervention")
+	}
+	if !strings.Contains(res.Intervention.AdvicePrompt, "contract rev=") {
+		t.Fatalf("advice should mention contract: %q", res.Intervention.AdvicePrompt)
+	}
+	if !strings.Contains(res.Intervention.AdvicePrompt, "ledger validations=") {
+		t.Fatalf("advice should mention ledger: %q", res.Intervention.AdvicePrompt)
+	}
+}
+
+func TestEvaluateSlow_HighRiskContractUsesReviewerWhenPresent(t *testing.T) {
+	t.Parallel()
+	fp := reviewer.NewFakeProvider()
+	fp.Decision = protocol.ReviewDecision{
+		Classification:   "TUNNEL_VISION",
+		TunnelConfidence: 0.9,
+		SuggestedAdvice:  "high-risk zoom",
+	}
+	eng := policy.NewEngine(policy.EngineConfig{Reviewer: fp})
+	c := protocol.BuildContractFromSubmitted(protocol.TaskSubmitted{
+		TaskID: "t-sec", SessionID: "s", Prompt: "fix production auth security bug",
+		SubmittedAt: time.Now().UTC(),
+	}, protocol.BuildContractOptions{})
+	// Force high risk if heuristic differed
+	c.Risk = protocol.RiskHigh
+	res, err := eng.EvaluateSlow(context.Background(), policy.SlowInput{
+		Signal:   sampleSignal(),
+		Contract: &c,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.UsedReviewer {
+		t.Fatal("high-risk contract with reviewer should use reviewer path")
+	}
+	if fp.CallCount() != 1 {
+		t.Fatalf("calls=%d", fp.CallCount())
 	}
 }
 

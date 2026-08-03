@@ -4,7 +4,7 @@
 This document is the **normative milestone boundary** for Reinframe.  
 It **supersedes** earlier drafts that placed full detectors/reviewers/adjudicator inside “M1 vertical slice” while the execution DAG placed them in Phase 3 (M2). Those two sources conflicted; **this file + `docs/architecture/dag_and_execution_plan.md` must stay aligned**.
 
-**Last aligned:** 2026-08-02 (deep-research validation).
+**Last aligned:** 2026-08-02 (deep-research validation); **status refresh:** 2026-08-04 — M2 library + experimental host bridges landed (see `docs/roadmap/CURRENT.md`); classifier hard-gates and dual-host product still **out**.
 
 ---
 
@@ -48,11 +48,16 @@ It **supersedes** earlier drafts that placed full detectors/reviewers/adjudicato
 3. **Policy** (#8/#32/#69/#33): session SM, adjudicator, fast vs slow path, cooldown.
 4. **Control plane** (#65–#70): delivery caps, EventSource/Actuator, hook gate, advisory ACK, orchestrator wiring.
 5. **Vertical slice test** (#71/#42): real hook→agent path, not Store-only fixtures.
-6. **Thresholds:** numeric weights/thresholds from threat model are **provisional knobs only** until evaluation issues produce evidence (#40/#41).
+6. **Thresholds:** numeric weights/thresholds from threat model are **provisional knobs only** until evaluation issues produce evidence (#40/#41 / #100).
+
+#### M2.2 experimental bridges (library — not dual-host product complete)
+Landed with honest boundaries (Epic #80): Codex offline/near-live JSONL (#95), Claude experimental bridge (#96), FileActuator transport (#97), review-session detectors (#98), optional uncertain-path LLM reviewer (PR #103).  
+**Still M2 productization:** #106/#107/#108, score classifier #104→#105, managed worktree #99.
 
 ### M3 — Evaluation, hardening, release packaging
-- Synthetic anti-tunnel + false-positive benchmarks (#40/#41).
+- Synthetic anti-tunnel + false-positive benchmarks (#40/#41 / #100).
 - Crash recovery, observability, redaction, release (#38–#47 class).
+- **No hard-gate promotion** without #100 disposition + separate promotion issue.
 - **Only after benchmarks** may thresholds become product hard-gates.
 
 ---

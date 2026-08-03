@@ -20,9 +20,6 @@ func TestOpenAICompatible_ParsesSuggestedAdvice(t *testing.T) {
 	var gotAuth string
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" && r.URL.Path != "/chat/completions" {
-			// accept either if base includes /v1
-		}
 		gotAuth = r.Header.Get("Authorization")
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &gotBody)

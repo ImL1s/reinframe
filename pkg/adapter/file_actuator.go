@@ -135,7 +135,7 @@ func (f *FileActuator) Deliver(ctx context.Context, intervention protocol.Interv
 			Message:        err.Error(),
 		}, err
 	}
-	defer fh.Close()
+	defer func() { _ = fh.Close() }()
 	if _, err := fh.Write(line); err != nil {
 		return InterventionResult{
 			InterventionID: intervention.InterventionID,

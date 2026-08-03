@@ -107,7 +107,7 @@ func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentE
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Seek(*offset, io.SeekStart); err != nil {
 		return 0, err
 	}

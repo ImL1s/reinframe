@@ -343,7 +343,7 @@ func runFileActuatorDemo() error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	path := filepath.Join(dir, "advice.jsonl")
 	act := &adapter.FileActuator{Path: path}
 	del, err := adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{

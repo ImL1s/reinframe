@@ -21,10 +21,12 @@ const (
 	ReasonDeniedPathScope      = "denied_path_scope"
 	ReasonDeniedBudget         = "denied_budget_exhausted"
 	ReasonDeniedHardLatch      = "denied_hard_latch"
-	ReasonDeferPendingAdvisory = "defer_pending_advisory"
-	ReasonTimeoutFailOpen      = "timeout_fail_open"
-	ReasonTimeoutFailClosed    = "timeout_fail_closed"
-	ReasonContextCanceled      = "context_canceled"
+	ReasonDeferPendingAdvisory   = "defer_pending_advisory"
+	ReasonTimeoutFailOpen        = "timeout_fail_open"
+	ReasonTimeoutFailClosed      = "timeout_fail_closed"
+	ReasonContextCanceled        = "context_canceled"
+	ReasonRedundantValidation    = "redundant_validation"
+	ReasonDisproportionateScope  = "disproportionate_scope"
 )
 
 // DefaultHookTimeout is the default wall-clock budget for pure-Go deterministic checks.
@@ -62,6 +64,10 @@ type HookPolicy struct {
 
 	// DeniedTools is a set of tool/command names that must be denied.
 	DeniedTools map[string]struct{}
+	// ToolDenyReasons maps tool/command name → reason code (e.g. redundant_validation).
+	// When the tool matches, deny with that reason (takes precedence over DeniedTools
+	// for the same tool when both set).
+	ToolDenyReasons map[string]string
 	// ScopeWhitelist, when non-empty, requires FilePath to match a prefix (or
 	// path.Match pattern). Empty FilePath with a non-empty whitelist is denied.
 	ScopeWhitelist []string
@@ -173,6 +179,14 @@ func evaluateHookRules(req HookRequest, policy HookPolicy) HookDecision {
 		return HookDecision{
 			Action:     HookActionDeny,
 			ReasonCode: ReasonDeniedBudget,
+		}
+	}
+	if req.ToolName != "" {
+		if reason, ok := policy.ToolDenyReasons[req.ToolName]; ok && reason != "" {
+			return HookDecision{
+				Action:     HookActionDeny,
+				ReasonCode: reason,
+			}
 		}
 	}
 	if len(policy.DeniedTools) > 0 && req.ToolName != "" {

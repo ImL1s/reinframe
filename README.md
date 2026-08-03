@@ -6,14 +6,14 @@
 
 Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go.
 
-**Today (M1 foundation + partial M2 control-plane contracts):** library packages for protocol, store, adapter contracts (HookGate, advisory queue, LogObserver), config schema, and reviewer provider interfaces — **not** a live end-to-end supervisor that auto-interrupts agents.
+**Today (M1 foundation + M2.0 control-loop slice):** library packages for protocol, store, adapter contracts, **minimal repeated-failure detector**, **fast/slow policy**, **supervisor orchestrator**, and a **fake-agent vertical-slice test** — **not** production Claude Code / Codex adapters, and **not** multi-deviation calibrated Anti-Tunnel E2E.
 
 ## Project Status
 
-> **Phase: M1 Foundation + early M2 control-plane interfaces**  
-> Protocol, SQLite store, capability negotiation (25 flags), adapter control-plane contracts, and observe-only LogObserver are available.  
-> **Not yet:** real Detector, Fast/Slow Policy engine, Supervisor Orchestrator, Claude Code / Codex actuators, or hook→agent vertical slice.  
-> See [M2 epic](https://github.com/ImL1s/reinframe/issues) (Detection-to-Intervention Control Plane) for the executable backlog.
+> **Phase: M1 Foundation + M2.0 control-loop integration (direction_fixation slice)**  
+> Protocol, store, adapter contracts, LogObserver, minimal `RepeatedFailureDetector`, fast/slow policy, orchestrator wiring, and fake-agent vertical-slice tests are available.  
+> **Not yet:** concrete Claude Code / Codex actuators, Git rollback runtime, multi-role live Reviewers, verification_churn / effort-calibration (M2.1), or calibrated threshold hard-gates (M3).  
+> See open issues for M2.1+ backlog; M2.0 slice issues #82/#69/#70/#71 ship on this track.
 
 | Component | Status |
 |-----------|--------|
@@ -25,10 +25,10 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 | Adapter contracts (`EventSource`, `InterventionActuator`, HookGate, PendingQueue) | ✅ Complete (interfaces + fakes) |
 | LogObserverAdapter (L0 inbound) | ✅ Complete |
 | Config schema + ReviewerProvider interface | ✅ Complete (stubs/fakes) |
-| Minimal RepeatedFailure Detector | 🔲 M2 |
-| Fast/Slow Policy Engine | 🔲 M2 (#69) |
-| Supervisor Orchestrator wiring | 🔲 M2 (#70) |
-| Real hook→agent advisory vertical slice | 🔲 M2 (#71) |
+| Minimal RepeatedFailure Detector (`pkg/detector`, #82) | ✅ Complete (provisional N=3 knobs) |
+| Fast/Slow Policy Engine (`pkg/policy`, #69) | ✅ Complete (deterministic ZOOM_OUT; optional Reviewer) |
+| Supervisor Orchestrator wiring (`pkg/supervisor`, #70) | ✅ Complete (composition root + fakes) |
+| Hook→agent advisory vertical slice (`pkg/supervisor` tests, #71) | ✅ Control-loop integration test (fake agent; **not** full multi-deviation E2E) |
 | Concrete Claude Code / Codex adapters | 🔲 Planned |
 | Git Checkpoint/Rollback runtime | 🔲 Planned |
 | CLI / `cmd/` binary | 🔲 Not present yet |
@@ -40,8 +40,8 @@ AI coding agents risk "tunneling" (cognitive lock-in, error loops, patch churn, 
 1. **Supervision Levels (0–3)** — dual axes: *Integration* (handshake) vs *Intervention* (escalation). See `docs/research/level_axes_mapping.md`.
 2. **Canonical Agent Event Schema** *(available)* — 22 Go types + JSON Schemas.
 3. **SQLite WAL Persistence** *(available)* — append-only event store.
-4. **Control plane contracts** *(available, not fully wired)* — HookGate, advisory delivery + ACK, fakes.
-5. **Automatic detect → defer → deliver → ACK loop** *(not yet)* — requires M2 epic.
+4. **Control plane contracts** *(available)* — HookGate, advisory delivery + ACK, fakes.
+5. **M2.0 detect → defer → deliver → ACK loop** *(library + fake-agent tests)* — `pkg/supervisor` orchestrates detector + policy + delivery; **not** production harness adapters.
 
 ---
 
@@ -52,12 +52,15 @@ reinframe/
 ├── docs/
 │   ├── adr/                   # Architecture Decision Records
 │   ├── research/              # Threat model, capability matrix, level axes
-│   ├── specs/                 # MVP / milestone boundaries
+│   ├── specs/                 # MVP / milestone boundaries + Adaptive Task Supervisor
 │   └── architecture/          # Execution DAG
 ├── pkg/
 │   ├── protocol/              # Schemas, ValidateEvent, capability negotiation (25 flags)
 │   ├── state/                 # SQLite WAL event store
 │   ├── adapter/               # EventSource, Actuator, HookGate, PendingQueue, LogObserver
+│   ├── detector/              # Minimal RepeatedFailureDetector (#82)
+│   ├── policy/                # Fast/slow intervention policy (#69)
+│   ├── supervisor/            # Orchestrator composition + vertical-slice tests (#70/#71)
 │   ├── config/                # Versioned configuration schema
 │   └── reviewer/              # ReviewerProvider interface + FakeProvider
 ├── tests/
@@ -70,17 +73,20 @@ reinframe/
 ### Module Responsibilities
 - **`pkg/protocol`**: Canonical schemas (TaskEnvelope + TaskSubmitted/TaskContract/EvidenceLedger, interventions, …), 25 capability flags (including CapAdviceDelivery, CapToolGate, CapInterventionAck, …), Level masks, negotiation. See `docs/specs/adaptive_task_supervisor.md`.
 - **`pkg/state`**: SQLite WAL append-only store; persistence invariants only (not full schema validation on append).
-- **`pkg/adapter`**: Bidirectional control-plane contracts; LogObserver (observe-only); fakes for tests. **Does not auto-wire a full supervisor loop.**
+- **`pkg/adapter`**: Bidirectional control-plane contracts; LogObserver (observe-only); fakes for tests.
+- **`pkg/detector`**: Deterministic repeated-failure fingerprint detector (no LLM); provisional N=3.
+- **`pkg/policy`**: Fast path = HookGate only; slow path = ZOOM_OUT from high-confidence signals (optional Reviewer on uncertain branch).
+- **`pkg/supervisor`**: Thin composition root wiring detect → policy → queue → deliver → ACK; vertical-slice tests use fakes (not Claude/Codex).
 - **`pkg/config`**: Versioned config schema (loader/CLI still planned).
 - **`pkg/reviewer`**: Provider interface + FakeProvider (no live cloud/local HTTP yet).
 - **`tests/integration`**: Foundation integration tests (not full Anti-Tunnel E2E).
 
 ### Control-plane reality check
 ```text
-Available:   interfaces, HookGate, queue, ACK lifecycle, LogObserver, fakes
-Not wired:   Detector → Policy → Orchestrator → real harness hooks
+Available:   Detector → Policy → Orchestrator → HookGate/queue/delivery (fakes + LogObserver)
+Not yet:     concrete Claude Code / Codex PreTool adapters, live Reviewer HTTP, calibrated thresholds
 ```
-Manual steps (enqueue → set pending ID on HookPolicy → DeliverPending → Acknowledge) still required until M2 orchestration lands.
+Vertical-slice tests prove the library loop with a **fake** target agent. Production harness wiring remains Planned.
 
 ---
 

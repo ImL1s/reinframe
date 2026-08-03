@@ -1,0 +1,197 @@
+package adapter
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"time"
+
+	"github.com/ImL1s/reinframe/pkg/protocol"
+)
+
+// CodexTailSource is a near-live EventSource that follows a Codex rollout JSONL
+// file as it grows (poll-based tail). It reuses the offline line parser from
+// CodexRolloutSource.
+//
+// #95 follow-up / near-live path: not a process attach, not a product daemon.
+// Suitable for local observation while `codex exec` is writing the same file.
+type CodexTailSource struct {
+	// Path to rollout JSONL (required).
+	Path string
+	// SessionIDOverride when non-empty replaces payload session_id.
+	SessionIDOverride string
+	// PollInterval between file size checks (default 50ms).
+	PollInterval time.Duration
+	// StartAtEnd when true begins tailing from current EOF (skip historical lines).
+	// When false (default), reads existing content then follows.
+	StartAtEnd bool
+	// MaxEvents when >0 stops after emitting this many events (tests).
+	MaxEvents int
+
+	// Stats (best-effort after/while running).
+	ToolCalls  int
+	ExecCalls  int
+	SpawnCalls int
+	LinesRead  int
+}
+
+// Events implements EventSource: tails Path until ctx cancel, MaxEvents, or
+// unrecoverable read error. Channel closes on exit.
+func (c *CodexTailSource) Events(ctx context.Context) (<-chan protocol.AgentEvent, error) {
+	if c.Path == "" {
+		return nil, fmt.Errorf("codex tail: Path required")
+	}
+	poll := c.PollInterval
+	if poll <= 0 {
+		poll = 50 * time.Millisecond
+	}
+	ch := make(chan protocol.AgentEvent, 128)
+	go c.follow(ctx, ch, poll)
+	return ch, nil
+}
+
+func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEvent, poll time.Duration) {
+	defer close(ch)
+
+	// Shared parser state via a one-shot CodexRolloutSource-style scanner state.
+	parser := &rolloutParser{
+		sessionID: c.SessionIDOverride,
+		meta:      map[string]string{},
+	}
+
+	var offset int64
+	if c.StartAtEnd {
+		if fi, err := os.Stat(c.Path); err == nil {
+			offset = fi.Size()
+		}
+	}
+
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		n, err := c.readNew(ctx, ch, parser, &offset)
+		if err != nil && !os.IsNotExist(err) {
+			// Transient: wait and retry unless canceled.
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				continue
+			}
+		}
+		_ = n
+		if c.MaxEvents > 0 && parser.emitted >= c.MaxEvents {
+			return
+		}
+		// Publish stats snapshot
+		c.ToolCalls = parser.toolCalls
+		c.ExecCalls = parser.execCalls
+		c.SpawnCalls = parser.spawnCalls
+		c.LinesRead = parser.linesRead
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentEvent, parser *rolloutParser, offset *int64) (int, error) {
+	f, err := os.Open(c.Path)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.Seek(*offset, io.SeekStart); err != nil {
+		return 0, err
+	}
+	// Read all available new bytes as lines.
+	buf, err := io.ReadAll(f)
+	if err != nil {
+		return 0, err
+	}
+	if len(buf) == 0 {
+		return 0, nil
+	}
+	// Only consume complete lines; keep partial trailing data for next read.
+	complete := buf
+	partial := 0
+	if buf[len(buf)-1] != '\n' {
+		// find last newline
+		last := -1
+		for i := len(buf) - 1; i >= 0; i-- {
+			if buf[i] == '\n' {
+				last = i
+				break
+			}
+		}
+		if last < 0 {
+			// no complete line yet
+			return 0, nil
+		}
+		complete = buf[:last+1]
+		partial = len(buf) - (last + 1)
+	}
+	*offset += int64(len(complete))
+	_ = partial
+
+	start := 0
+	emitted := 0
+	for i := 0; i < len(complete); i++ {
+		if complete[i] != '\n' {
+			continue
+		}
+		line := complete[start:i]
+		start = i + 1
+		if len(line) == 0 {
+			continue
+		}
+		parser.linesRead++
+		ev, ok := parser.parseLine(line)
+		if !ok {
+			continue
+		}
+		emitted++
+		select {
+		case <-ctx.Done():
+			return emitted, ctx.Err()
+		case ch <- ev:
+			parser.emitted++
+			if c.MaxEvents > 0 && parser.emitted >= c.MaxEvents {
+				c.ToolCalls = parser.toolCalls
+				c.ExecCalls = parser.execCalls
+				c.SpawnCalls = parser.spawnCalls
+				c.LinesRead = parser.linesRead
+				return emitted, nil
+			}
+		}
+	}
+	c.ToolCalls = parser.toolCalls
+	c.ExecCalls = parser.execCalls
+	c.SpawnCalls = parser.spawnCalls
+	c.LinesRead = parser.linesRead
+	return emitted, nil
+}
+
+// rolloutParser is the shared JSONL line decoder for offline + tail sources.
+type rolloutParser struct {
+	sessionID  string
+	meta       map[string]string
+	seq        int64
+	toolCalls  int
+	execCalls  int
+	spawnCalls int
+	linesRead  int
+	emitted    int
+}
+
+func (p *rolloutParser) parseLine(line []byte) (protocol.AgentEvent, bool) {
+	// Delegate to the same logic as CodexRolloutSource by reusing package helpers.
+	return parseCodexRolloutLine(p, line)
+}

@@ -10,31 +10,36 @@
 | M2.0 control loop | #69 #82 #70 #71 / #88–#89 | Fake-agent detect→defer→deliver→ACK |
 | Task model + intake | #83–#84 / #90–#91 | Fixtures; not live host install |
 | Verification churn + effort slice | #85–#86 / #92–#93 | Library only |
-| Codex observation | #95 / #101–#102 | Offline + near-live JSONL tail; not process attach |
-| Claude bridge | #96 / #102 | Experimental API/CLI; no installer |
+| Codex observation scaffold | #95 / #101–#102 | Offline + near-live JSONL tail; not process attach |
+| Claude bridge API | #96 / #102 | Experimental API/CLI; no installer in that DoD |
 | FileActuator | #97 / #102 | Write ≠ agent receipt |
 | Review-session detectors | #98 / #101–#102 | Library + thin policy; uncalibrated |
 | Optional LLM reviewer | PR #103 | Uncertain path only; high-confidence no LLM |
+| Governance / source of truth | **#109 / PR #110** | CURRENT roadmap + archive markers only |
+| Action Alignment design | **#104 / PR #111** | Normative Stage 0/1/2 design ([`docs/specs/action_alignment_classifier.md`](../specs/action_alignment_classifier.md)); **not** shadow runtime |
+| Claude project-local install | **#106 / PR #112** | Installer + unit tests; **no pinned live Claude smoke** |
+| Codex product observe surface | **#107 / PR #113** | Discovery/cursor/caps/codexctl; **observe-only** Level 0 |
 
-## Active backlog
+## Active backlog (open only)
 
 | Issue | Pri | Depends | Notes |
 |-------|-----|---------|-------|
-| #109 | P1 | — | Governance / source-of-truth (this file) |
-| #104 | P0 | — | Two-stage Action Alignment classifier design |
-| #105 | P1 | **#104** | Shadow-mode implementation (blocked) |
-| #106 | P0 | #96 | Claude project-local hook install + smoke |
-| #107 | P0 | #95 | Codex discovery, durable tail, capability honesty |
-| #108 | P0 | **#106** | Real advice consume / SafeBoundary / ACK (blocked) |
+| #105 | P1 | #104 design **done** | Shadow-mode classifier **implementation** (ready) |
+| #108 | P0 | **#106 live injection evidence** | Real advice consume / SafeBoundary / ACK — still blocked without pinned live smoke |
 | #99 | P1 | — | Managed-worktree checkpoint/rollback runtime |
 | #100 | P2 | #105 preferred | M3 synthetic/FP before hard-gate promotion |
+| #80 | epic | — | Keep OPEN residual tracker |
 
-## Execution order
+## Execution order (remaining)
 
 ```text
-#109 → #104 → (#106 ∥ #107) → #108 (after #106)
-         ↘ #105 → #100 → future promotion issue
-#99 parallel after ownership review
+#105 classifier shadow mode
+  → #100 benchmarks / threshold recommendation
+       → future explicit hard-gate promotion issue
+
+#108 advice consumer / SafeBoundary (after live Claude inject evidence or alternate surface)
+
+#99 managed-worktree rollback (parallel after ownership review)
 ```
 
 ## Explicit non-claims
@@ -43,7 +48,8 @@
 - No silent global Claude/Codex install  
 - No dual-host production supervision claim  
 - FileActuator write ≠ agent receipt  
-- Codex JSONL tail ≠ bidirectional control  
+- Codex JSONL tail / codexctl ≠ bidirectional control  
+- #106 installer ≠ proven live control-loop without pinned smoke  
 - OS SIGSTOP ≠ CapPause  
 - Git rollback runtime not shipped until #99  
 
@@ -51,4 +57,4 @@
 
 - `docs/research/2026-08-03-m21-open-issues-order.md` — completed M2.1 pass record  
 - Closed Epic #1 — foundation archive  
-- Old DAG snapshots — update under #109 or mark historical  
+- Old DAG snapshots — historical phase map; prefer this file for queue  

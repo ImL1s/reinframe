@@ -25,9 +25,13 @@ type CodexTailSource struct {
 	PollInterval time.Duration
 	// StartAtEnd when true begins tailing from current EOF (skip historical lines).
 	// When false (default), reads existing content then follows.
+	// Ignored when CursorPath loads a non-zero offset (resume wins).
 	StartAtEnd bool
 	// MaxEvents when >0 stops after emitting this many events (tests).
 	MaxEvents int
+	// CursorPath when non-empty loads/saves durable byte offset (#107).
+	// Truncation (file size < offset) resets offset and bumps generation.
+	CursorPath string
 
 	// Stats (best-effort after/while running).
 	ToolCalls  int
@@ -61,7 +65,17 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 	}
 
 	var offset int64
-	if c.StartAtEnd {
+	var gen int
+	if c.CursorPath != "" {
+		if cur, err := LoadCodexTailCursor(c.CursorPath); err == nil && cur.Path == c.Path {
+			offset = cur.Offset
+			gen = cur.Generation
+			if cur.SessionID != "" && c.SessionIDOverride == "" {
+				parser.sessionID = cur.SessionID
+			}
+		}
+	}
+	if offset == 0 && c.StartAtEnd {
 		if fi, err := os.Stat(c.Path); err == nil {
 			offset = fi.Size()
 		}
@@ -72,20 +86,33 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 
 	for {
 		if ctx.Err() != nil {
+			_ = c.persistCursor(offset, gen, parser.sessionID)
 			return
 		}
-		n, err := c.readNew(ctx, ch, parser, &offset)
+		// Detect truncation before seek.
+		if fi, err := os.Stat(c.Path); err == nil {
+			if fi.Size() < offset {
+				offset = 0
+				gen++
+			}
+		}
+		n, err := c.readNew(ctx, ch, parser, &offset, gen)
 		if err != nil && !os.IsNotExist(err) {
 			// Transient: wait and retry unless canceled.
 			select {
 			case <-ctx.Done():
+				_ = c.persistCursor(offset, gen, parser.sessionID)
 				return
 			case <-ticker.C:
 				continue
 			}
 		}
 		_ = n
+		if c.CursorPath != "" && n > 0 {
+			_ = c.persistCursor(offset, gen, parser.sessionID)
+		}
 		if c.MaxEvents > 0 && parser.emitted >= c.MaxEvents {
+			_ = c.persistCursor(offset, gen, parser.sessionID)
 			return
 		}
 		// Publish stats snapshot
@@ -96,13 +123,23 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 
 		select {
 		case <-ctx.Done():
+			_ = c.persistCursor(offset, gen, parser.sessionID)
 			return
 		case <-ticker.C:
 		}
 	}
 }
 
-func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentEvent, parser *rolloutParser, offset *int64) (int, error) {
+func (c *CodexTailSource) persistCursor(offset int64, gen int, sessionID string) error {
+	if c.CursorPath == "" {
+		return nil
+	}
+	return SaveCodexTailCursor(c.CursorPath, CodexTailCursor{
+		Path: c.Path, Offset: offset, Generation: gen, SessionID: sessionID,
+	})
+}
+
+func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentEvent, parser *rolloutParser, offset *int64, gen int) (int, error) {
 	f, err := os.Open(c.Path)
 	if err != nil {
 		return 0, err
@@ -138,9 +175,10 @@ func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentE
 		complete = buf[:last+1]
 		partial = len(buf) - (last + 1)
 	}
-	*offset += int64(len(complete))
 	_ = partial
 
+	// Advance offset only after each line is fully handled so MaxEvents/cancel
+	// cannot persist a cursor past unemitted events (Opus #114 C1).
 	start := 0
 	emitted := 0
 	for i := 0; i < len(complete); i++ {
@@ -148,20 +186,35 @@ func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentE
 			continue
 		}
 		line := complete[start:i]
+		lineBytes := int64(i + 1 - start) // include trailing newline
 		start = i + 1
 		if len(line) == 0 {
+			*offset += lineBytes
 			continue
 		}
 		parser.linesRead++
 		ev, ok := parser.parseLine(line)
 		if !ok {
+			*offset += lineBytes
 			continue
 		}
-		emitted++
+		// Stable IDs across restarts + rotations: generation + byte end-offset.
+		lineEnd := *offset + lineBytes
+		switch ev.EventType {
+		case "tool_call":
+			ev.EventID = fmt.Sprintf("codex-tool-g%d-off-%d", gen, lineEnd)
+		case "error":
+			ev.EventID = fmt.Sprintf("codex-err-g%d-off-%d", gen, lineEnd)
+		}
+		// SequenceNum mirrors file position so resumes don't re-use 1..N.
+		ev.SequenceNum = lineEnd
 		select {
 		case <-ctx.Done():
+			// Do not advance offset for this unsent event.
 			return emitted, ctx.Err()
 		case ch <- ev:
+			*offset += lineBytes
+			emitted++
 			parser.emitted++
 			if c.MaxEvents > 0 && parser.emitted >= c.MaxEvents {
 				c.ToolCalls = parser.toolCalls

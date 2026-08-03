@@ -41,6 +41,20 @@ func TestDiscoverAndSelectCodexRollouts(t *testing.T) {
 	if err != nil || sel.Path != p1 {
 		t.Fatalf("sel=%+v err=%v", sel, err)
 	}
+	// Full UUID, not trailing fragment after last hyphen.
+	wantID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	var found bool
+	for _, c := range cands {
+		if c.Path == p1 {
+			if c.SessionID != wantID {
+				t.Fatalf("SessionID=%q want %q", c.SessionID, wantID)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("p1 missing")
+	}
 	// single candidate auto-ok
 	one, err := adapter.SelectCodexRollout(cands[:1], "")
 	if err != nil || one.Path != cands[0].Path {

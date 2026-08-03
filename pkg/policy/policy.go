@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
@@ -23,10 +24,11 @@ const (
 const DefaultZoomOutAdvice = "ZOOM_OUT: you are repeating the same failure. Pause, re-diagnose the root cause, and replan before retrying the same edit/test loop."
 
 // Engine is the fast/slow policy engine for the M2.0 slice.
+// Safe for concurrent EvaluateFast / EvaluateSlow across sessions.
 type Engine struct {
 	reviewer reviewer.ReviewerProvider // optional; only for uncertain slow path
 	now      func() time.Time
-	idSeq    uint64
+	idSeq    atomic.Uint64 // monotonic IDs for interventions / review requests
 }
 
 // EngineConfig configures Engine.
@@ -177,8 +179,8 @@ func (e *Engine) buildZoomOut(sig *protocol.TunnelSignal, advice string) *protoc
 	if advice == "" {
 		advice = DefaultZoomOutAdvice
 	}
-	e.idSeq++
-	id := fmt.Sprintf("iv-zoom-%s-%d", sig.SignalID, e.idSeq)
+	n := e.idSeq.Add(1)
+	id := fmt.Sprintf("iv-zoom-%s-%d", sig.SignalID, n)
 	fp := ""
 	if sig.Details != nil {
 		fp = sig.Details["fingerprint"]
@@ -200,6 +202,5 @@ func (e *Engine) buildZoomOut(sig *protocol.TunnelSignal, advice string) *protoc
 }
 
 func (e *Engine) nextID() uint64 {
-	e.idSeq++
-	return e.idSeq
+	return e.idSeq.Add(1)
 }

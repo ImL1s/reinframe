@@ -70,6 +70,9 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 		if cur, err := LoadCodexTailCursor(c.CursorPath); err == nil && cur.Path == c.Path {
 			offset = cur.Offset
 			gen = cur.Generation
+			if cur.SessionID != "" && c.SessionIDOverride == "" {
+				parser.sessionID = cur.SessionID
+			}
 		}
 	}
 	if offset == 0 && c.StartAtEnd {
@@ -83,7 +86,7 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 
 	for {
 		if ctx.Err() != nil {
-			_ = c.persistCursor(offset, gen)
+			_ = c.persistCursor(offset, gen, parser.sessionID)
 			return
 		}
 		// Detect truncation before seek.
@@ -98,7 +101,7 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 			// Transient: wait and retry unless canceled.
 			select {
 			case <-ctx.Done():
-				_ = c.persistCursor(offset, gen)
+				_ = c.persistCursor(offset, gen, parser.sessionID)
 				return
 			case <-ticker.C:
 				continue
@@ -106,10 +109,10 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 		}
 		_ = n
 		if c.CursorPath != "" && n > 0 {
-			_ = c.persistCursor(offset, gen)
+			_ = c.persistCursor(offset, gen, parser.sessionID)
 		}
 		if c.MaxEvents > 0 && parser.emitted >= c.MaxEvents {
-			_ = c.persistCursor(offset, gen)
+			_ = c.persistCursor(offset, gen, parser.sessionID)
 			return
 		}
 		// Publish stats snapshot
@@ -120,19 +123,19 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 
 		select {
 		case <-ctx.Done():
-			_ = c.persistCursor(offset, gen)
+			_ = c.persistCursor(offset, gen, parser.sessionID)
 			return
 		case <-ticker.C:
 		}
 	}
 }
 
-func (c *CodexTailSource) persistCursor(offset int64, gen int) error {
+func (c *CodexTailSource) persistCursor(offset int64, gen int, sessionID string) error {
 	if c.CursorPath == "" {
 		return nil
 	}
 	return SaveCodexTailCursor(c.CursorPath, CodexTailCursor{
-		Path: c.Path, Offset: offset, Generation: gen,
+		Path: c.Path, Offset: offset, Generation: gen, SessionID: sessionID,
 	})
 }
 
@@ -194,6 +197,13 @@ func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentE
 		if !ok {
 			*offset += lineBytes
 			continue
+		}
+		// Stable IDs across restarts: include file byte end-offset of this line.
+		lineEnd := *offset + lineBytes
+		if ev.EventType == "tool_call" {
+			ev.EventID = fmt.Sprintf("codex-tool-off-%d", lineEnd)
+		} else if ev.EventType == "error" {
+			ev.EventID = fmt.Sprintf("codex-err-off-%d", lineEnd)
 		}
 		select {
 		case <-ctx.Done():

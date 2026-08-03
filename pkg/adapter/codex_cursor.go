@@ -13,6 +13,8 @@ type CodexTailCursor struct {
 	Offset int64  `json:"offset"`
 	// Generation bumps when truncation/rotation is detected.
 	Generation int `json:"generation"`
+	// SessionID preserves session_meta across restarts after the meta line is past.
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // LoadCodexTailCursor reads cursor JSON from path; missing file → zero cursor.

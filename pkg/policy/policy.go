@@ -94,13 +94,21 @@ func (e *Engine) EvaluateSlow(ctx context.Context, in SlowInput) (SlowResult, er
 	}
 	sig := in.Signal
 
-	// Optional fields reserved for later effort-calibration; first slice ignores nil.
-	_ = in.Contract
-	_ = in.Ledger
+	// Optional TaskContract / EvidenceLedger enrich deterministic advice and
+	// force uncertain+reviewer for high-risk contracts (M2.1 wiring). Nil OK.
+	advice := in.AdvicePrompt
+	if advice == "" {
+		advice = adviceFromContract(in.Contract, in.Ledger)
+	}
+	// High-risk / irreversible contracts with incomplete evidence push uncertain
+	// path when a Reviewer is configured; still deterministic if no reviewer.
+	if !in.Uncertain && contractSuggestsReviewer(in.Contract, in.Ledger) && e.reviewer != nil {
+		in.Uncertain = true
+	}
 
 	// Deterministic high-confidence path (no Reviewer).
 	if !in.Uncertain && isHighConfidenceRepeatedFailure(sig) {
-		iv := e.buildZoomOut(sig, in.AdvicePrompt)
+		iv := e.buildZoomOut(sig, advice)
 		return SlowResult{
 			Action:       ActionZoomOutPrompt,
 			Intervention: iv,
@@ -113,7 +121,7 @@ func (e *Engine) EvaluateSlow(ctx context.Context, in SlowInput) (SlowResult, er
 	if e.reviewer == nil {
 		// Without reviewer, still act on known repeated_error_loop deterministically.
 		if isHighConfidenceRepeatedFailure(sig) {
-			iv := e.buildZoomOut(sig, in.AdvicePrompt)
+			iv := e.buildZoomOut(sig, advice)
 			return SlowResult{
 				Action:       ActionZoomOutPrompt,
 				Intervention: iv,
@@ -138,14 +146,17 @@ func (e *Engine) EvaluateSlow(ctx context.Context, in SlowInput) (SlowResult, er
 	used := true
 	if dec.Classification == "TUNNEL_VISION" || dec.TunnelConfidence >= 0.85 ||
 		isHighConfidenceRepeatedFailure(sig) {
-		advice := in.AdvicePrompt
-		if advice == "" {
-			advice = dec.SuggestedAdvice
+		revAdvice := in.AdvicePrompt
+		if revAdvice == "" {
+			revAdvice = dec.SuggestedAdvice
 		}
-		if advice == "" {
-			advice = DefaultZoomOutAdvice
+		if revAdvice == "" {
+			revAdvice = adviceFromContract(in.Contract, in.Ledger)
 		}
-		iv := e.buildZoomOut(sig, advice)
+		if revAdvice == "" {
+			revAdvice = DefaultZoomOutAdvice
+		}
+		iv := e.buildZoomOut(sig, revAdvice)
 		return SlowResult{
 			Action:         ActionZoomOutPrompt,
 			Intervention:   iv,
@@ -160,6 +171,47 @@ func (e *Engine) EvaluateSlow(ctx context.Context, in SlowInput) (SlowResult, er
 		ReviewDecision: &dec,
 		Reason:         "reviewer_normal_progress",
 	}, nil
+}
+
+// adviceFromContract builds optional advice enrichment from contract/ledger.
+// Returns empty when both are nil so callers fall back to DefaultZoomOutAdvice.
+func adviceFromContract(c *protocol.TaskContract, led *protocol.EvidenceLedger) string {
+	if c == nil && led == nil {
+		return ""
+	}
+	base := DefaultZoomOutAdvice
+	if c == nil {
+		return base
+	}
+	extra := fmt.Sprintf(
+		" [contract rev=%d complexity=%s risk=%s confidence=%.2f]",
+		c.Revision, c.Complexity, c.Risk, c.Confidence,
+	)
+	if led != nil {
+		extra += fmt.Sprintf(" [ledger validations=%d tools=%d]",
+			len(led.ValidationRecords), len(led.ToolCallCounts))
+	}
+	return base + extra
+}
+
+// contractSuggestsReviewer is true for elevated risk with little proven evidence.
+func contractSuggestsReviewer(c *protocol.TaskContract, led *protocol.EvidenceLedger) bool {
+	if c == nil {
+		return false
+	}
+	if c.Risk != protocol.RiskHigh && c.Risk != protocol.RiskIrreversible {
+		return false
+	}
+	if led == nil {
+		return true
+	}
+	// Any met safety criterion reduces pressure.
+	for _, st := range led.CriteriaStatus {
+		if st.Status == "met" {
+			return false
+		}
+	}
+	return true
 }
 
 func isHighConfidenceRepeatedFailure(sig *protocol.TunnelSignal) bool {

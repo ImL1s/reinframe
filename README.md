@@ -71,7 +71,7 @@ reinframe/
 ```
 
 ### Module Responsibilities
-- **`pkg/protocol`**: Canonical schemas (TaskEnvelope + TaskSubmitted/TaskContract/EvidenceLedger, interventions, …), 25 capability flags (including CapAdviceDelivery, CapToolGate, CapInterventionAck, …), Level masks, negotiation. See `docs/specs/adaptive_task_supervisor.md`.
+- **`pkg/protocol`**: Canonical schemas (TaskEnvelope + TaskSubmitted/TaskContract/EvidenceLedger, interventions, …), `BuildContractFromSubmitted` + store emit helpers (`AgentEventFromTask*`), 25 capability flags (including CapAdviceDelivery, CapToolGate, CapInterventionAck, …), Level masks, negotiation. See `docs/specs/adaptive_task_supervisor.md`.
 - **`pkg/state`**: SQLite WAL append-only store; persistence invariants only (not full schema validation on append).
 - **`pkg/adapter`**: Bidirectional control-plane contracts; LogObserver (observe-only); fakes for tests.
 - **`pkg/detector`**: Deterministic repeated-failure fingerprint detector (no LLM); provisional N=3.

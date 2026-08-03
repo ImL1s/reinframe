@@ -18,4 +18,12 @@
 //
 // #84 — TaskSubmitted intake mappers (host → core). Claude UserPromptSubmit is a
 // fixture/host mapping only; see docs/adapter/task_intake_mapping.md.
+//
+// #95 scaffold — CodexRolloutSource (offline JSONL) and CodexTailSource (near-live
+// poll follow). Not a process-control daemon.
+//
+// #96 — Claude PreTool / prompt bridge (MapClaudePreToolUseJSON, EvaluateClaudePreTool,
+// cmd/claudebridge). Experimental; host settings install is documented only.
+//
+// #97 — FileActuator: non-fake JSONL advice channel with pending ACK (no AutoAck theater).
 package adapter

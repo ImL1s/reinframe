@@ -1,85 +1,49 @@
 # Street wire: how Reinframe connects (research → practice)
 
-## What research concluded
+## Status (M2.2 residual adapters)
 
-1. **Library control plane is ready** (M2.0 + M2.1 tests on `main`).
-2. **Live host adapters are not** (#95 Codex live EventSource, #96 Claude PreTool, #97 Actuator).
-3. Long **Codex review** sessions need tool-budget / hypothesis detectors (#98), not only compile-error N=3 (#82).
-4. Offline path: **read Codex rollout JSONL** → `AgentEvent` (scaffold toward #95).
-5. **#98 library detectors landed** (tool-budget + hypothesis-loop fire/no-fire tests). **Not** live host intervention.
+| Piece | Status |
+|-------|--------|
+| Offline Codex rollout → AgentEvent | **done** (`CodexRolloutSource`) |
+| Near-live Codex JSONL tail | **done** (`CodexTailSource` poll follow) |
+| Claude PreTool / prompt bridge | **done** (API + `cmd/claudebridge`; experimental) |
+| FileActuator advice channel | **done** (JSONL; pending ACK) |
+| #98 tool-budget / hypothesis-loop | **library done** + thin `EvaluateSlow` ZOOM_OUT |
+| Process-control daemon / global host install | **not claimed** |
+| Calibrated hard-gates (#100), git rollback runtime (#99) | **open / out of streetwire** |
 
 ## Connection map
 
 ```text
-┌─────────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ Claude Code hooks   │     │ Codex CLI        │     │ Log stdout      │
-│ PreTool / Prompt    │     │ live process     │     │ (any harness)   │
-└─────────┬───────────┘     └────────┬─────────┘     └────────┬────────┘
-          │ #96                      │ #95                     │ LogObserver
-          │                          │                         │
-          ▼                          ▼                         ▼
-                 protocol.AgentEvent / TaskSubmitted
-                                   │
-                    supervisor / detector / policy
-                    (#82 #85 #98 library detectors)
-                                   │
-          ┌────────────────────────┼────────────────────────┐
-          ▼                        ▼                        ▼
-   HookGate deny/defer      Pending ZOOM_OUT           HumanAlerter
-          │                        │
-          ▼                        ▼
-   host tool gate           Actuator.Deliver  (#97 real, Fake today)
+Claude PreToolUse JSON ──#96──► EvaluateClaudePreTool → HookDecision → host JSON
+Claude UserPrompt JSON ──#96──► TaskSubmitted (#84 mappers)
+Codex rollout JSONL ──offline/tail──► AgentEvent → detectors (#82 #85 #98)
+                              │
+                    supervisor / policy
+                              │
+              FileActuator JSONL (#97) ←── AdvisoryDelivery (pending ACK)
 ```
 
-## Run the street demo
+## Run
 
 ```bash
-cd /path/to/reinframe
+go run ./cmd/streetwire -no-codex   # A optional, B–F synthetic residual paths
+go run ./cmd/streetwire             # + offline Codex if ~/.codex/sessions has rollouts
 
-# Auto-pick newest ~/.codex/sessions/**/rollout-*.jsonl + synthetic loops + #98 demo
-go run ./cmd/streetwire
-
-# Explicit offline wire (read-only; does not control Codex)
-go run ./cmd/streetwire -codex "$HOME/.codex/sessions/2026/08/03/<rollout-….jsonl>"
-
-# Synthetic only (CI-friendly; no home Codex required)
-go run ./cmd/streetwire -no-codex
+# Claude bridge CLI
+echo '{"session_id":"s","tool_name":"Bash"}' | go run ./cmd/claudebridge pretool -deny-tool Bash
 ```
 
-What you should see:
-
-- **A)** exec/spawn counts from the rollout (when supplied/auto-found); optional #98 tool-budget signal count on offline scan
-- **B)** synthetic 3× failure → PreTool defer → Deliver → ACK → allow
-- **C)** typo contract + criteria met → full suite **deny** (`disproportionate_scope`)
-- **D)** #98 library: tool-budget fire + short no-fire; hypothesis-loop fire + new-evidence no-fire
-
-## Residual detectors (#98 library)
-
-| Detector | Fire | No-fire |
-|----------|------|---------|
-| `ToolBudgetChurnDetector` | tools since progress ≥ max (default 30, provisional) | short session; progress resets window |
-| `HypothesisLoopDetector` | same conclusion fingerprint ≥ N without new evidence IDs | new evidence IDs each probe; under threshold |
-
-Thresholds are **provisional** — not M3 calibrated hard-gates (#100).
-
-## What is NOT connected yet
-
-| Piece | Status |
-|-------|--------|
-| Live `codex exec` process attach | #95 open |
-| Claude PreTool blocking real tools | #96 open |
-| Real advice injection into agent | #97 open |
-| #98 auto intervention on live hosts | open (library only) |
-| Calibrated hard-gates | #100 open |
+Sections: **A** offline Codex · **B** M2.0 loop · **C** over-SOP · **D** #98 library · **E** Claude bridge · **F** FileActuator.
 
 ## Honesty
 
-Streetwire proves **in-process wiring**, **offline Codex observation**, and **#98 library signals**.
+Streetwire proves **in-process wiring**, offline/near-live **observation**, Claude **fixture/CLI bridge**, and a **file advice channel**.
 
 It does **not** prove:
 
-- production dual-host supervision
-- live Codex attach (#95 product claim)
-- Claude PreTool bridge (#96)
-- real harness Actuator inject (#97)
-- calibrated review-session hard-gates (#100)
+- automatic install into `~/.claude/settings.json` or Codex product config
+- live Claude session E2E block in CI
+- live Codex process attach / SIGSTOP pause
+- calibrated M3 hard-gates or git checkpoint product (#99/#100)
+- dual-host production supervision without residual host consumers of FileActuator

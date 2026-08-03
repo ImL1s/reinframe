@@ -13,8 +13,8 @@
 //	go run ./cmd/streetwire -codex /path/to/rollout.jsonl
 //	go run ./cmd/streetwire -no-codex
 //
-// This is NOT live product supervision of Claude/Codex (see issues #95–#97).
-// #98 detectors are library-only; they do not inject advice into a live host.
+// Not a claim of production dual-host install into global Claude/Codex settings.
+// #99/#100 are out of scope for this demo.
 package main
 
 import (
@@ -39,7 +39,7 @@ func main() {
 	flag.Parse()
 
 	fmt.Println("=== Reinframe street-wire demo ===")
-	fmt.Println("Research: library loop works; live host adapters = #95–#97 open")
+	fmt.Println("M2.2 residual adapters: offline/tail Codex, Claude bridge, FileActuator, #98")
 	fmt.Println()
 
 	path := *codexPath
@@ -80,11 +80,20 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println()
+	if err := runClaudeBridgeDemo(); err != nil {
+		fmt.Fprintf(os.Stderr, "claude bridge: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println()
+	if err := runFileActuatorDemo(); err != nil {
+		fmt.Fprintf(os.Stderr, "file actuator: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println()
 	fmt.Println("=== street-wire OK ===")
-	fmt.Println("Honesty / residual:")
-	fmt.Println("  done: offline Codex observe, M2.0/M2.1 library loops, #98 library detectors")
-	fmt.Println("  open: #95 live Codex attach, #96 Claude PreTool bridge, #97 real Actuator")
-	fmt.Println("  open: #98 is NOT live host intervention; thresholds uncalibrated (#100)")
+	fmt.Println("Honesty:")
+	fmt.Println("  done: offline+tail Codex EventSource, Claude PreTool bridge APIs, FileActuator, #98 library+policy")
+	fmt.Println("  not claimed: global host install, live Claude session E2E in CI, process attach daemon, #99/#100")
 }
 
 func runCodexOffline(path string) error {
@@ -281,7 +290,107 @@ func runResidualDetectors() error {
 		}
 	}
 	fmt.Println("  hypothesis_loop no-fire when new evidence IDs arrive")
-	fmt.Println("  (library signals only — no #97 Actuator, no live host)")
+	fmt.Println("  (library + EvaluateSlow wiring; live host auto-intervention not claimed)")
+	return nil
+}
+
+func runClaudeBridgeDemo() error {
+	fmt.Println("--- E) #96 Claude PreTool bridge (fixture → core gate) ---")
+	// allow
+	rawAllow := []byte(`{"session_id":"bridge","tool_name":"Read","tool_input":{"file_path":"x.go"}}`)
+	resp, dec, err := adapter.EvaluateClaudePreToolJSON(context.Background(), rawAllow, adapter.ClaudeBridgeConfig{})
+	if err != nil {
+		return err
+	}
+	if dec.Action != adapter.HookActionAllow || resp.Decision != "approve" {
+		return fmt.Errorf("allow path: dec=%+v resp=%+v", dec, resp)
+	}
+	fmt.Printf("  allow Read: decision=%s reinframe.action=%s\n", resp.Decision, resp.Reinframe.Action)
+
+	// deny
+	rawDeny := []byte(`{"session_id":"bridge","tool_name":"Bash","tool_input":{"command":"ls"}}`)
+	resp, dec, err = adapter.EvaluateClaudePreToolJSON(context.Background(), rawDeny, adapter.ClaudeBridgeConfig{
+		Policy: adapter.HookPolicy{DeniedTools: map[string]struct{}{"Bash": {}}},
+	})
+	if err != nil {
+		return err
+	}
+	if dec.Action != adapter.HookActionDeny || resp.Decision != "block" {
+		return fmt.Errorf("deny path: dec=%+v resp=%+v", dec, resp)
+	}
+	fmt.Printf("  deny Bash: decision=%s reason=%s\n", resp.Decision, resp.Reinframe.ReasonCode)
+
+	// defer
+	resp, dec, err = adapter.EvaluateClaudePreTool(context.Background(), adapter.ClaudePreToolInput{
+		SessionID: "bridge", ToolName: "Edit",
+	}, adapter.ClaudeBridgeConfig{
+		Policy: adapter.HookPolicy{PendingAdvisoryInterventionID: "iv-demo"},
+	})
+	if err != nil {
+		return err
+	}
+	if dec.Action != adapter.HookActionDefer || resp.Decision != "block" {
+		return fmt.Errorf("defer path: dec=%+v", dec)
+	}
+	fmt.Printf("  defer Edit: decision=%s intervention=%s\n", resp.Decision, resp.Reinframe.InterventionID)
+	fmt.Println("  (CLI: go run ./cmd/claudebridge pretool; host settings install optional)")
+	return nil
+}
+
+func runFileActuatorDemo() error {
+	fmt.Println("--- F) #97 FileActuator (non-fake advice channel + ACK) ---")
+	dir, err := os.MkdirTemp("", "reinframe-advice-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "advice.jsonl")
+	act := &adapter.FileActuator{Path: path}
+	del, err := adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{
+		Actuator:               act,
+		SupportsAdviceDelivery: true,
+		DefaultTTL:             time.Minute,
+	})
+	if err != nil {
+		return err
+	}
+	orch, err := supervisor.NewOrchestrator(supervisor.Config{
+		Detector: detector.NewRepeatedFailureDetector(detector.Config{Threshold: 3}),
+		Policy:   policy.NewEngine(policy.EngineConfig{}),
+		Delivery: del,
+	})
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	sess := "file-demo"
+	fail := `{"error":"exit status 1: undefined: Z"}`
+	for i := 1; i <= 3; i++ {
+		ev := protocol.AgentEvent{
+			EventID: fmt.Sprintf("fe%d", i), SessionID: sess, SequenceNum: int64(i),
+			EventType: "error", Timestamp: time.Now().UTC(), Payload: []byte(fail),
+		}
+		if _, _, err := orch.HandleEvent(ctx, ev); err != nil {
+			return err
+		}
+	}
+	item, res, err := orch.DeliverAtSafeBoundary(ctx, sess)
+	if err != nil {
+		return err
+	}
+	if item == nil || res.AckStatus != adapter.AckStatusPending {
+		return fmt.Errorf("item=%v res=%+v", item, res)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || len(raw) == 0 {
+		return fmt.Errorf("advice file missing: %v", err)
+	}
+	fmt.Printf("  delivered state=%s ack=%s bytes=%d\n", item.State, res.AckStatus, len(raw))
+	if err := orch.Acknowledge(item.Intervention.InterventionID, adapter.AckStatusAcked); err != nil {
+		return err
+	}
+	dec := orch.EvaluatePreTool(ctx, adapter.HookRequest{SessionID: sess, ToolName: "Edit"})
+	fmt.Printf("  after ACK PreTool=%s (channel: reinframe.advice.v1 JSONL)\n", dec.Action)
 	return nil
 }
 

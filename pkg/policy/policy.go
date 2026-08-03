@@ -224,6 +224,15 @@ func isHighConfidenceRepeatedFailure(sig *protocol.TunnelSignal) bool {
 	if sig.DetectorName == detector.DetectorNameRepeatedFailure && sig.Score >= 1.0 {
 		return true
 	}
+	// #98 library signals: provisional high-confidence ZOOM_OUT (uncalibrated #100).
+	if sig.FailureMode == detector.FailureModeToolBudgetChurn ||
+		sig.FailureMode == detector.FailureModeHypothesisLoop {
+		return true
+	}
+	if (sig.DetectorName == detector.DetectorNameToolBudgetChurn ||
+		sig.DetectorName == detector.DetectorNameHypothesisLoop) && sig.Score >= 1.0 {
+		return true
+	}
 	return false
 }
 

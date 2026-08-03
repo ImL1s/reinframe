@@ -63,92 +63,30 @@ func (c *CodexRolloutSource) eventsFromReader(ctx context.Context, r io.Reader, 
 		sc := bufio.NewScanner(r)
 		buf := make([]byte, 0, 256*1024)
 		sc.Buffer(buf, 4*1024*1024)
-		var seq int64
-		sessionID := c.SessionIDOverride
-		c.SessionMeta = map[string]string{}
+		parser := &rolloutParser{
+			sessionID: c.SessionIDOverride,
+			meta:      map[string]string{},
+		}
 		for sc.Scan() {
 			if ctx.Err() != nil {
 				return
 			}
-			c.LinesRead++
-			line := sc.Bytes()
-			var raw map[string]json.RawMessage
-			if err := json.Unmarshal(line, &raw); err != nil {
+			parser.linesRead++
+			ev, ok := parseCodexRolloutLine(parser, sc.Bytes())
+			if !ok {
 				continue
 			}
-			var typ string
-			_ = json.Unmarshal(raw["type"], &typ)
-			var payload map[string]any
-			if p, ok := raw["payload"]; ok {
-				_ = json.Unmarshal(p, &payload)
-			}
-			if payload == nil {
-				payload = map[string]any{}
-			}
-			ts := time.Now().UTC()
-			if traw, ok := raw["timestamp"]; ok {
-				var tsStr string
-				if json.Unmarshal(traw, &tsStr) == nil {
-					if t, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {
-						ts = t
-					} else if t, err := time.Parse(time.RFC3339, tsStr); err == nil {
-						ts = t
-					}
-				}
-			}
-
-			switch typ {
-			case "session_meta":
-				if sid, ok := payload["session_id"].(string); ok && sessionID == "" {
-					sessionID = sid
-				}
-				if sessionID == "" {
-					if sid, ok := payload["id"].(string); ok {
-						sessionID = sid
-					}
-				}
-				if cwd, ok := payload["cwd"].(string); ok {
-					c.SessionMeta["cwd"] = cwd
-				}
-				if o, ok := payload["originator"].(string); ok {
-					c.SessionMeta["originator"] = o
-				}
-				continue
-			case "response_item":
-				// tool activity — real Codex uses custom_tool_call + custom_tool_call_output
-				pt, _ := payload["type"].(string)
-				switch pt {
-				case "custom_tool_call", "function_call":
-					c.ToolCalls++
-					name, _ := payload["name"].(string)
-					if name == "exec" {
-						c.ExecCalls++
-					}
-					if name == "spawn_agent" {
-						c.SpawnCalls++
-					}
-					seq++
-					ev := makeToolEvent(sessionID, seq, ts, name, payload)
-					select {
-					case <-ctx.Done():
-						return
-					case ch <- ev:
-					}
-				case "function_call_output", "custom_tool_call_output":
-					// skip bulk outputs; optional error sniff (string or JSON-array text)
-					out := payloadOutputString(payload["output"])
-					if looksLikeFailure(out) {
-						seq++
-						ev := makeErrorEvent(sessionID, seq, ts, out)
-						select {
-						case <-ctx.Done():
-							return
-						case ch <- ev:
-						}
-					}
-				}
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- ev:
 			}
 		}
+		c.LinesRead = parser.linesRead
+		c.ToolCalls = parser.toolCalls
+		c.ExecCalls = parser.execCalls
+		c.SpawnCalls = parser.spawnCalls
+		c.SessionMeta = parser.meta
 	}()
 	return ch, nil
 }

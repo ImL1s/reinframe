@@ -12,8 +12,8 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 
 > **Phase: M1 + M2.0 + M2.1 library + M2.2 residual adapters (library / experimental)**  
 > Landed through PR [#101](https://github.com/ImL1s/reinframe/pull/101) / [#102](https://github.com/ImL1s/reinframe/pull/102): street-wire demo, Codex offline+tail EventSource, Claude bridge, FileActuator, #98 detectors + thin policy wiring.  
-> **Still open:** epic [#80](https://github.com/ImL1s/reinframe/issues/80) residual tracker; [#99](https://github.com/ImL1s/reinframe/issues/99) git checkpoint/rollback; [#100](https://github.com/ImL1s/reinframe/issues/100) M3 benchmarks before hard-gates.  
-> Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md). Research history: `docs/research/2026-08-03-m21-open-issues-order.md`.
+> **Still open:** epic [#80](https://github.com/ImL1s/reinframe/issues/80); productization [#104](https://github.com/ImL1s/reinframe/issues/104)–[#108](https://github.com/ImL1s/reinframe/issues/108); [#99](https://github.com/ImL1s/reinframe/issues/99); [#100](https://github.com/ImL1s/reinframe/issues/100).  
+> **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
 
 | Component | Status |
 |-----------|--------|

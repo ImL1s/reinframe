@@ -1,8 +1,12 @@
 # Reinframe Backlog Execution DAG & Implementation Sequence
 
+> **Partially historical.** Prefer [`docs/roadmap/CURRENT.md`](../roadmap/CURRENT.md) for the **current executable backlog**.  
+> This DAG remains useful for milestone↔phase mapping and completed-cluster history.  
+> Do not implement from unchecked historical lists when CURRENT.md or Epic #80 disagrees.
+
 ## Overview
 Directed Acyclic Graph of atomized issues across milestones **M0–M3**.  
-**Normative milestone boundaries:** `docs/specs/mvp_scope_and_non_goals.md` (aligned 2026-08-02).  
+**Normative milestone boundaries:** `docs/specs/mvp_scope_and_non_goals.md` (aligned 2026-08-02; M2.2 experimental bridges noted in CURRENT.md).  
 **Dual level axes:** `docs/research/level_axes_mapping.md` (Integration ≠ Intervention).
 
 Issue numbers in GitHub may drift slightly from historical lists; prefer **title + milestone** when conflicting.

@@ -1,8 +1,12 @@
 # M2.1 open issues — deep-research order & PR plan
 
+> **Historical execution record (not current backlog).**  
+> Executable queue: [`docs/roadmap/CURRENT.md`](../roadmap/CURRENT.md).  
+> Active tracker: GitHub Epic #80.
+
 **Date:** 2026-08-03  
-**Scope:** Remaining open product issues after M2.0 (#82/#69/#70/#71) and #83 on `main`.  
-**Status:** Normative for this execution pass.
+**Scope:** Remaining open product issues after M2.0 (#82/#69/#70/#71) and #83 on `main` (pass completed).  
+**Status:** Historical — M2.1 #84–#86 and later M2.2 #95–#98 closed with narrow DoD.
 
 ## Baseline on main
 

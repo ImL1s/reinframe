@@ -2,6 +2,8 @@ package policy_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -108,6 +110,47 @@ func TestEvaluateSlow_NilSignal(t *testing.T) {
 	}
 	if res.Action != policy.ActionNone {
 		t.Fatalf("action=%s", res.Action)
+	}
+}
+
+func TestEvaluateSlow_ConcurrentUniqueInterventionIDs(t *testing.T) {
+	t.Parallel()
+	eng := policy.NewEngine(policy.EngineConfig{})
+	const n = 64
+	ids := make(chan string, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sig := &protocol.TunnelSignal{
+				SignalID:     fmt.Sprintf("sig-%d", i),
+				SessionID:    fmt.Sprintf("s-%d", i),
+				DetectorName: detector.DetectorNameRepeatedFailure,
+				FailureMode:  detector.FailureModeRepeatedErrorLoop,
+				Score:        1.0,
+				Details:      map[string]string{"fingerprint": "x"},
+				TriggeredAt:  time.Now().UTC(),
+			}
+			res, err := eng.EvaluateSlow(context.Background(), policy.SlowInput{Signal: sig})
+			if err != nil || res.Intervention == nil {
+				t.Errorf("EvaluateSlow: err=%v res=%#v", err, res)
+				return
+			}
+			ids <- res.Intervention.InterventionID
+		}(i)
+	}
+	wg.Wait()
+	close(ids)
+	seen := make(map[string]struct{}, n)
+	for id := range ids {
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate InterventionID %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != n {
+		t.Fatalf("unique ids=%d want %d", len(seen), n)
 	}
 }
 

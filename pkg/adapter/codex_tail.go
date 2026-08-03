@@ -172,9 +172,10 @@ func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentE
 		complete = buf[:last+1]
 		partial = len(buf) - (last + 1)
 	}
-	*offset += int64(len(complete))
 	_ = partial
 
+	// Advance offset only after each line is fully handled so MaxEvents/cancel
+	// cannot persist a cursor past unemitted events (Opus #114 C1).
 	start := 0
 	emitted := 0
 	for i := 0; i < len(complete); i++ {
@@ -182,20 +183,25 @@ func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentE
 			continue
 		}
 		line := complete[start:i]
+		lineBytes := int64(i + 1 - start) // include trailing newline
 		start = i + 1
 		if len(line) == 0 {
+			*offset += lineBytes
 			continue
 		}
 		parser.linesRead++
 		ev, ok := parser.parseLine(line)
 		if !ok {
+			*offset += lineBytes
 			continue
 		}
-		emitted++
 		select {
 		case <-ctx.Done():
+			// Do not advance offset for this unsent event.
 			return emitted, ctx.Err()
 		case ch <- ev:
+			*offset += lineBytes
+			emitted++
 			parser.emitted++
 			if c.MaxEvents > 0 && parser.emitted >= c.MaxEvents {
 				c.ToolCalls = parser.toolCalls

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,5 +131,40 @@ func TestCodexTailSource_CursorResumeAndTruncate(t *testing.T) {
 	cur2, _ := adapter.LoadCodexTailCursor(cursor)
 	if cur2.Generation < 2 {
 		t.Fatalf("generation=%d want >=2 after truncate", cur2.Generation)
+	}
+}
+
+func TestCodexTailSource_MaxEventsDoesNotSkipUnreadLines(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout.jsonl")
+	cursor := filepath.Join(dir, "cursor.json")
+	// two tool calls
+	content := strings.Join([]string{
+		`{"timestamp":"2026-08-03T01:00:00Z","type":"session_meta","payload":{"session_id":"s"}}`,
+		`{"timestamp":"2026-08-03T01:00:01Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"one"}}`,
+		`{"timestamp":"2026-08-03T01:00:02Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"two"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Pass 1: only first tool event
+	src := &adapter.CodexTailSource{Path: path, CursorPath: cursor, MaxEvents: 1, PollInterval: 5 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ch, _ := src.Events(ctx)
+	for range ch {
+	}
+	cancel()
+	// Pass 2: must still get the second tool event
+	src2 := &adapter.CodexTailSource{Path: path, CursorPath: cursor, MaxEvents: 1, PollInterval: 5 * time.Millisecond}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	ch2, _ := src2.Events(ctx2)
+	n := 0
+	for range ch2 {
+		n++
+	}
+	if n != 1 {
+		t.Fatalf("second pass events=%d want 1 (second tool call)", n)
 	}
 }

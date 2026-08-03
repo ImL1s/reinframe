@@ -6,14 +6,14 @@
 
 Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go.
 
-**Today (M1 foundation + M2.0 control-loop slice):** library packages for protocol, store, adapter contracts, **minimal repeated-failure detector**, **fast/slow policy**, **supervisor orchestrator**, and a **fake-agent vertical-slice test** — **not** production Claude Code / Codex adapters, and **not** multi-deviation calibrated Anti-Tunnel E2E.
+**Today (M1 + M2.0 control-loop + M2.1 effort-calibration library slices):** protocol/store/adapters, repeated-failure + **verification_churn** detectors, fast/slow + **before_tool** policy, supervisor orchestrator, TaskSubmitted **intake mappers** (fixtures), fake-agent vertical slices — **not** live production Claude Code / Codex actuators, and **not** multi-deviation calibrated Anti-Tunnel E2E.
 
 ## Project Status
 
-> **Phase: M1 Foundation + M2.0 control-loop integration (direction_fixation slice)**  
-> Protocol, store, adapter contracts, LogObserver, minimal `RepeatedFailureDetector`, fast/slow policy, orchestrator wiring, and fake-agent vertical-slice tests are available.  
-> **Not yet:** concrete Claude Code / Codex actuators, Git rollback runtime, multi-role live Reviewers, verification_churn / effort-calibration (M2.1), or calibrated threshold hard-gates (M3).  
-> See open issues for M2.1+ backlog; M2.0 slice issues #82/#69/#70/#71 ship on this track.
+> **Phase: M1 Foundation + M2.0 (direction_fixation) + M2.1 library effort-calibration**  
+> M2.0 detect→defer→deliver→ACK and M2.1 intake/churn/over-SOP **library tests** are available.  
+> **Not yet:** live Claude Code / Codex product actuators (only fixture mappers for #84), Git rollback runtime, multi-role live Reviewers, or calibrated threshold hard-gates (M3).  
+> Epic #80 tracks residual governance; research order: `docs/research/2026-08-03-m21-open-issues-order.md`.
 
 | Component | Status |
 |-----------|--------|
@@ -29,7 +29,10 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 | Fast/Slow Policy Engine (`pkg/policy`, #69) | ✅ Complete (deterministic ZOOM_OUT; optional Reviewer) |
 | Supervisor Orchestrator wiring (`pkg/supervisor`, #70) | ✅ Complete (composition root + fakes) |
 | Hook→agent advisory vertical slice (`pkg/supervisor` tests, #71) | ✅ Control-loop integration test (fake agent; **not** full multi-deviation E2E) |
-| Concrete Claude Code / Codex adapters | 🔲 Planned |
+| TaskSubmitted intake mappers (#84) | ✅ Fixture mapping only (not live actuators) |
+| VerificationChurn detector (#85) | ✅ Complete (provisional multi-part fingerprint) |
+| Effort-calibration over-SOP slice (#86) | ✅ Library vertical-slice tests |
+| Concrete Claude Code / Codex **product** adapters | 🔲 Planned (beyond #84 fixtures) |
 | Git Checkpoint/Rollback runtime | 🔲 Planned |
 | CLI / `cmd/` binary | 🔲 Not present yet |
 
@@ -42,6 +45,7 @@ AI coding agents risk "tunneling" (cognitive lock-in, error loops, patch churn, 
 3. **SQLite WAL Persistence** *(available)* — append-only event store.
 4. **Control plane contracts** *(available)* — HookGate, advisory delivery + ACK, fakes.
 5. **M2.0 detect → defer → deliver → ACK loop** *(library + fake-agent tests)* — `pkg/supervisor` orchestrates detector + policy + delivery; **not** production harness adapters.
+6. **M2.1 effort calibration** *(library)* — TaskSubmitted intake fixtures, verification_churn detector, before_tool over-SOP deny tests; **not** live host product adapters.
 
 ---
 

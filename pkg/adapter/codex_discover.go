@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
+
+// uuidInName matches a standard UUID substring in rollout filenames.
+var uuidInName = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
 // CodexSessionCandidate is a discovered rollout file under a sessions root.
 type CodexSessionCandidate struct {
@@ -48,10 +52,9 @@ func DiscoverCodexRollouts(root string, maxAge time.Duration) ([]CodexSessionCan
 			ModTime: info.ModTime().UTC(),
 			Size:    info.Size(),
 		}
-		// rollout-...-<uuid>.jsonl → last hyphen segment without .jsonl
-		name := strings.TrimSuffix(base, ".jsonl")
-		if i := strings.LastIndex(name, "-"); i >= 0 && i+1 < len(name) {
-			c.SessionID = name[i+1:]
+		// Prefer full UUID from filename (not the last hyphen fragment of a UUID).
+		if m := uuidInName.FindString(base); m != "" {
+			c.SessionID = strings.ToLower(m)
 		}
 		out = append(out, c)
 		return nil
@@ -91,15 +94,15 @@ func SelectCodexRollout(cands []CodexSessionCandidate, explicitPath string) (Cod
 
 // CodexCapabilityManifest is capability-honest control surface for a pinned integration.
 type CodexCapabilityManifest struct {
-	ObserveEvents       bool   `json:"observe_events"`
-	InjectMessage       bool   `json:"inject_message"`
-	PreToolGate         bool   `json:"pre_tool_gate"`
-	PauseCancelResume   bool   `json:"pause_cancel_resume"`
-	CheckpointRollback  bool   `json:"checkpoint_rollback"`
-	ExplicitAck         bool   `json:"explicit_ack"`
-	NegotiatedLevel     int    `json:"negotiated_level"` // 0 observe
-	HonestyNote         string `json:"honesty_note"`
-	IntegrationVersion  string `json:"integration_version"`
+	ObserveEvents      bool   `json:"observe_events"`
+	InjectMessage      bool   `json:"inject_message"`
+	PreToolGate        bool   `json:"pre_tool_gate"`
+	PauseCancelResume  bool   `json:"pause_cancel_resume"`
+	CheckpointRollback bool   `json:"checkpoint_rollback"`
+	ExplicitAck        bool   `json:"explicit_ack"`
+	NegotiatedLevel    int    `json:"negotiated_level"` // 0 observe
+	HonestyNote        string `json:"honesty_note"`
+	IntegrationVersion string `json:"integration_version"`
 }
 
 // DefaultCodexCapabilityManifest reflects only proven surfaces on main (JSONL observe/tail).

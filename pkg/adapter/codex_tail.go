@@ -25,9 +25,13 @@ type CodexTailSource struct {
 	PollInterval time.Duration
 	// StartAtEnd when true begins tailing from current EOF (skip historical lines).
 	// When false (default), reads existing content then follows.
+	// Ignored when CursorPath loads a non-zero offset (resume wins).
 	StartAtEnd bool
 	// MaxEvents when >0 stops after emitting this many events (tests).
 	MaxEvents int
+	// CursorPath when non-empty loads/saves durable byte offset (#107).
+	// Truncation (file size < offset) resets offset and bumps generation.
+	CursorPath string
 
 	// Stats (best-effort after/while running).
 	ToolCalls  int
@@ -61,7 +65,14 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 	}
 
 	var offset int64
-	if c.StartAtEnd {
+	var gen int
+	if c.CursorPath != "" {
+		if cur, err := LoadCodexTailCursor(c.CursorPath); err == nil && cur.Path == c.Path {
+			offset = cur.Offset
+			gen = cur.Generation
+		}
+	}
+	if offset == 0 && c.StartAtEnd {
 		if fi, err := os.Stat(c.Path); err == nil {
 			offset = fi.Size()
 		}
@@ -72,20 +83,33 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 
 	for {
 		if ctx.Err() != nil {
+			_ = c.persistCursor(offset, gen)
 			return
+		}
+		// Detect truncation before seek.
+		if fi, err := os.Stat(c.Path); err == nil {
+			if fi.Size() < offset {
+				offset = 0
+				gen++
+			}
 		}
 		n, err := c.readNew(ctx, ch, parser, &offset)
 		if err != nil && !os.IsNotExist(err) {
 			// Transient: wait and retry unless canceled.
 			select {
 			case <-ctx.Done():
+				_ = c.persistCursor(offset, gen)
 				return
 			case <-ticker.C:
 				continue
 			}
 		}
 		_ = n
+		if c.CursorPath != "" && n > 0 {
+			_ = c.persistCursor(offset, gen)
+		}
 		if c.MaxEvents > 0 && parser.emitted >= c.MaxEvents {
+			_ = c.persistCursor(offset, gen)
 			return
 		}
 		// Publish stats snapshot
@@ -96,10 +120,20 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 
 		select {
 		case <-ctx.Done():
+			_ = c.persistCursor(offset, gen)
 			return
 		case <-ticker.C:
 		}
 	}
+}
+
+func (c *CodexTailSource) persistCursor(offset int64, gen int) error {
+	if c.CursorPath == "" {
+		return nil
+	}
+	return SaveCodexTailCursor(c.CursorPath, CodexTailCursor{
+		Path: c.Path, Offset: offset, Generation: gen,
+	})
 }
 
 func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentEvent, parser *rolloutParser, offset *int64) (int, error) {

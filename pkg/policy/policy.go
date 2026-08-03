@@ -26,16 +26,21 @@ const DefaultZoomOutAdvice = "ZOOM_OUT: you are repeating the same failure. Paus
 // Engine is the fast/slow policy engine for the M2.0 slice.
 // Safe for concurrent EvaluateFast / EvaluateSlow across sessions.
 type Engine struct {
-	reviewer reviewer.ReviewerProvider // optional; only for uncertain slow path
-	now      func() time.Time
-	idSeq    atomic.Uint64 // monotonic IDs for interventions / review requests
+	reviewer      reviewer.ReviewerProvider // optional; only for uncertain slow path
+	reviewerModel string                    // optional model id for ReviewRequest
+	now           func() time.Time
+	idSeq         atomic.Uint64 // monotonic IDs for interventions / review requests
 }
 
 // EngineConfig configures Engine.
 type EngineConfig struct {
 	// Reviewer is optional. Used only on uncertain slow-path branches.
+	// High-confidence deterministic signals never call Reviewer.
 	Reviewer reviewer.ReviewerProvider
-	Now      func() time.Time
+	// ReviewerModel is copied into ReviewRequest.Model when non-empty
+	// (from config.reviewer.model). Empty → "policy-optional" placeholder.
+	ReviewerModel string
+	Now           func() time.Time
 }
 
 // NewEngine builds a policy engine.
@@ -44,7 +49,7 @@ func NewEngine(cfg EngineConfig) *Engine {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Engine{reviewer: cfg.Reviewer, now: now}
+	return &Engine{reviewer: cfg.Reviewer, reviewerModel: cfg.ReviewerModel, now: now}
 }
 
 // FastInput is the pure deterministic PreTool/PreCommand evaluation input.
@@ -132,10 +137,14 @@ func (e *Engine) EvaluateSlow(ctx context.Context, in SlowInput) (SlowResult, er
 		return SlowResult{Action: ActionNoIntervention, Reason: "uncertain_no_reviewer"}, nil
 	}
 
+	model := e.reviewerModel
+	if model == "" {
+		model = "policy-optional"
+	}
 	req := protocol.ReviewRequest{
 		RequestID:    fmt.Sprintf("rev-%s-%d", sig.SignalID, e.nextID()),
 		ReviewerRole: "TunnelClassifier",
-		Model:        "policy-optional",
+		Model:        model,
 		Prompt:       fmt.Sprintf("session=%s failure_mode=%s score=%g details=%v", sig.SessionID, sig.FailureMode, sig.Score, sig.Details),
 		RequestedAt:  e.now(),
 	}
@@ -147,22 +156,32 @@ func (e *Engine) EvaluateSlow(ctx context.Context, in SlowInput) (SlowResult, er
 	if dec.Classification == "TUNNEL_VISION" || dec.TunnelConfidence >= 0.85 ||
 		isHighConfidenceRepeatedFailure(sig) {
 		revAdvice := in.AdvicePrompt
+		adviceSource := "caller"
 		if revAdvice == "" {
 			revAdvice = dec.SuggestedAdvice
+			adviceSource = "reviewer_suggested"
 		}
 		if revAdvice == "" {
 			revAdvice = adviceFromContract(in.Contract, in.Ledger)
+			if revAdvice != "" {
+				adviceSource = "contract"
+			}
 		}
 		if revAdvice == "" {
 			revAdvice = DefaultZoomOutAdvice
+			adviceSource = "default_template"
 		}
 		iv := e.buildZoomOut(sig, revAdvice)
+		reason := "reviewer_tunnel"
+		if adviceSource == "reviewer_suggested" {
+			reason = "reviewer_tunnel_suggested_advice"
+		}
 		return SlowResult{
 			Action:         ActionZoomOutPrompt,
 			Intervention:   iv,
 			UsedReviewer:   used,
 			ReviewDecision: &dec,
-			Reason:         "reviewer_tunnel",
+			Reason:         reason,
 		}, nil
 	}
 	return SlowResult{

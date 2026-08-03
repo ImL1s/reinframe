@@ -172,7 +172,7 @@ func (s *Store) AppendEvents(ctx context.Context, events []*protocol.AgentEvent)
 		return tx.Commit()
 	})
 	if err != nil {
-		return s.wrapDBErr(mapSQLiteError(err))
+		return s.mapWriteErr(ctx, err)
 	}
 
 	return nil
@@ -325,6 +325,33 @@ func (s *Store) leave() {
 	s.inFlight.Add(-1)
 }
 
+// mapWriteErr maps append/write failures after busy-retry.
+// Prefer context errors when the driver surfaces SQLITE_INTERRUPT under a dead ctx;
+// otherwise apply wrapDBErr (domain / closed-window mapping).
+func (s *Store) mapWriteErr(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	mapped := mapSQLiteError(err)
+	// Domain errors must surface unchanged even under cancel/close races.
+	if errors.Is(mapped, ErrDuplicateSequence) || errors.Is(mapped, ErrDuplicateEventID) || errors.Is(mapped, ErrInvalidEvent) {
+		return mapped
+	}
+	if ctx != nil && ctx.Err() != nil && isSQLiteInterrupt(err) {
+		return ctx.Err()
+	}
+	return s.wrapDBErr(mapped)
+}
+
+// isSQLiteInterrupt reports SQLITE_INTERRUPT-class driver errors (code 9).
+func isSQLiteInterrupt(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "interrupted") || strings.Contains(msg, "interrupt")
+}
+
 // wrapDBErr maps connection/shutdown failures to ErrStoreClosed.
 // Domain errors (duplicate sequence/event ID, invalid event) are never rewritten
 // solely because s.closed is true — a concurrent Close can flip that flag after a
@@ -348,7 +375,9 @@ func (s *Store) wrapDBErr(err error) error {
 	if errors.Is(err, sql.ErrConnDone) ||
 		strings.Contains(errStr, "database is closed") ||
 		strings.Contains(errStr, "transaction has already been committed or rolled back") ||
-		strings.Contains(errStr, "sql: connection is already closed") {
+		strings.Contains(errStr, "sql: connection is already closed") ||
+		// SQLITE_INTERRUPT during close/cancel races; map even before closed flag flips.
+		isSQLiteInterrupt(err) {
 		return ErrStoreClosed
 	}
 	// Closed window: map all remaining operational errors to ErrStoreClosed.

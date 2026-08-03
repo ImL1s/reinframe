@@ -7,13 +7,15 @@
 
 ## Public decision contract
 
-Only two public outcomes:
+The **classifier Stage 2 public outcome** is only:
 
 ```text
 ALLOW | BLOCK
 ```
 
 A model `severity` score is **evidence for the Harness**, never direct authority to block.
+
+**Note:** Existing HookGate still has three *transport* actions (`allow` | `deny` | `defer`) for pending-advisory latch. That `defer` is **not** a Stage 2 classifier public decision — it is adapter tool-gating until advice ACK. Stage 0 may *map* to HookGate defer as a pre-classifier control, but must not expand the Stage 2 public enum.
 
 ## Stage 0 — deterministic pre-rules (no model)
 
@@ -23,9 +25,9 @@ Runs first on every PreTool / proposed action:
 |------------|---------|----------|
 | Hard deny tool/path | `DeniedTools`, scope whitelist | **BLOCK** |
 | Budget exhausted | `BudgetExhausted` | **BLOCK** |
-| Pending advisory latch | `PendingAdvisoryInterventionID` | **defer** (tool gate) / **BLOCK** if policy requires |
+| Pending advisory latch | `PendingAdvisoryInterventionID` | HookGate **defer** (tool gate; not Stage 2 enum) or **BLOCK** if policy requires |
 | Verification churn / over-SOP | before_tool disproportionate | **BLOCK** |
-| High-confidence detector latch | repeated_error already enqueued | **defer**/policy existing path |
+| High-confidence detector latch | repeated_error already enqueued | HookGate **defer**/policy existing path (not Stage 2 public) |
 
 Stage 0 **must not** call Reviewer or Stage 1 classifier.
 

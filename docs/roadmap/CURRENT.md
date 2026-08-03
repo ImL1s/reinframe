@@ -16,7 +16,7 @@
 | Review-session detectors | #98 / #101–#102 | Library + thin policy; uncalibrated |
 | Optional LLM reviewer | PR #103 | Uncertain path only; high-confidence no LLM |
 | Governance / source of truth | **#109 / PR #110** | CURRENT roadmap + archive markers only |
-| Action Alignment design | **#104 / PR #111** | Normative Stage 0/1/2 design; **not** shadow runtime |
+| Action Alignment design | **#104 / PR #111** | Normative Stage 0/1/2 design ([`docs/specs/action_alignment_classifier.md`](../specs/action_alignment_classifier.md)); **not** shadow runtime |
 | Claude project-local install | **#106 / PR #112** | Installer + unit tests; **no pinned live Claude smoke** |
 | Codex product observe surface | **#107 / PR #113** | Discovery/cursor/caps/codexctl; **observe-only** Level 0 |
 

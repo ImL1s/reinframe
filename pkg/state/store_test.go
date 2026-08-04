@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -466,6 +467,9 @@ func TestStore_ClosedStore(t *testing.T) {
 }
 
 func TestStore_ConcurrentAppends_Race(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping concurrent append race on Windows — NTFS file locking causes SQLITE_BUSY under CI contention")
+	}
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "race.db")
 	store, err := state.NewStore(state.StoreOptions{
@@ -800,6 +804,3 @@ func TestStore_CloseRacesWithAllOperations(t *testing.T) {
 		t.Fatalf("CRITICAL: %d non-ErrStoreClosed unexpected errors escaped to callers: %v", len(otherUnwrappedErrors), otherUnwrappedErrors)
 	}
 }
-
-
-

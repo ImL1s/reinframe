@@ -434,6 +434,45 @@ func TestUnknownBlockClassHumanReview(t *testing.T) {
 	}
 }
 
+func TestSharedTargetScopeDifferentShellNotBound(t *testing.T) {
+	// cmd-bearing shell with identical TargetScope must not bind via RelBypass.
+	a := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ToolName: "Bash", ToolClass: adapter.ToolClassShell,
+		Command: "echo build", TargetScope: []string{"build"},
+		WorkspaceRevision: "ws", ContractRevision: 1,
+	}
+	b := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ToolName: "Bash", ToolClass: adapter.ToolClassShell,
+		Command: "sleep build", TargetScope: []string{"build"},
+		WorkspaceRevision: "ws", ContractRevision: 1,
+	}
+	fa := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: a, SessionID: "sess-1"})
+	fb := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: b, SessionID: "sess-1"})
+	if fa.Fingerprint == fb.Fingerprint {
+		t.Fatal("fingerprints must differ")
+	}
+	if challenge.ClassifyRelationship(fa, fb) != challenge.RelDifferent {
+		t.Fatalf("rel=%s", challenge.ClassifyRelationship(fa, fb))
+	}
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "sess-1", Proposed: a, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
+	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, Proposed: b,
+		ReEval: &challenge.ReEvalContext{UserException: true},
+	})
+	if err == nil || res.RejectedReason != "not_same_semantic_action" {
+		t.Fatalf("must not bind: %+v err=%v", res, err)
+	}
+}
+
 func TestCacheKeyChangesWithJustificationAndRules(t *testing.T) {
 	svc := challenge.NewService(challenge.ServiceConfig{})
 	rec, _ := svc.Open(context.Background(), challenge.OpenRequest{

@@ -104,11 +104,11 @@ func ClassifyRelationship(original FingerprintResult, candidate FingerprintResul
 	if original.Fingerprint == candidate.Fingerprint {
 		return RelSame
 	}
-	// Same side-effect + same non-empty target multiset → syntax-rewrite bypass attempt.
-	// Pathless classes (empty targets) must NOT collapse via RelBypass — fingerprints already
-	// include normalized command for shell_generic/network/git_mutate.
-	if original.SideEffectClass == candidate.SideEffectClass &&
-		original.SideEffectClass != SideEffectNone &&
+	// Syntax-rewrite bypass only for rewrite-eligible classes (delete/write), where
+	// command surface varies but targets+side-effect define identity.
+	// shell_generic/network/git_mutate use cmd-bearing fingerprints; never RelBypass.
+	if rewriteEligible(original.SideEffectClass) &&
+		original.SideEffectClass == candidate.SideEffectClass &&
 		len(original.TargetResources) > 0 &&
 		sameStringSet(original.TargetResources, candidate.TargetResources) {
 		return RelBypass
@@ -223,6 +223,15 @@ func normalizeCommand(cmd string) string {
 	// Collapse whitespace only — do not invent semantic equality for arbitrary shell.
 	fields := strings.Fields(cmd)
 	return strings.Join(fields, " ")
+}
+
+func rewriteEligible(side string) bool {
+	switch side {
+	case SideEffectDeleteTree, SideEffectDeleteFile, SideEffectWriteFile:
+		return true
+	default:
+		return false
+	}
 }
 
 func uniqueSorted(in []string) []string {

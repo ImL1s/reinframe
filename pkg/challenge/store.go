@@ -1,6 +1,8 @@
 package challenge
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -21,6 +23,9 @@ type Store struct {
 	// all observe terminal transitions (not service-local).
 	termMu     sync.Mutex
 	terminalCh map[string]chan struct{}
+	// idSeq is store-scoped so concurrent Service instances cannot collide IDs.
+	idMu  sync.Mutex
+	idSeq uint64
 }
 
 // NewStore creates an empty store.
@@ -31,6 +36,16 @@ func NewStore() *Store {
 		openByFP:       make(map[string]string),
 		terminalCh:     make(map[string]chan struct{}),
 	}
+}
+
+// newID allocates a store-wide unique challenge/human-review id.
+func (s *Store) newID(prefix string, now time.Time) string {
+	s.idMu.Lock()
+	s.idSeq++
+	n := s.idSeq
+	s.idMu.Unlock()
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s-%d-%d", prefix, now.UnixNano(), n)))
+	return prefix + "-" + hex.EncodeToString(h[:8])
 }
 
 // terminalWaitCh returns a channel closed when the challenge becomes terminal.

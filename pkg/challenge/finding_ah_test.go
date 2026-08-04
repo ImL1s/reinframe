@@ -668,6 +668,145 @@ func TestOwnerCancelDuringReEvalNoAllow(t *testing.T) {
 	}
 }
 
+// Codex P1: HUMAN_REVIEW Open expires prior productivity challenge for same session|fp.
+func TestHumanReviewExpiresActiveProductivityChallenge(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	pa := samplePA("rm -rf build")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+		PolicyClass: challenge.PolicyClassProductivity,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.State != challenge.StateOpen {
+		t.Fatalf("want OPEN got %s", rec.State)
+	}
+	// Reclassify same action to SECURITY / production deploy → HUMAN_REVIEW
+	hr, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassProductionDeploy,
+		PolicyClass: challenge.PolicyClassSecurity,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hr.State != challenge.StateHumanReview {
+		t.Fatalf("want HUMAN_REVIEW got %s", hr.State)
+	}
+	got, ok := svc.Get(rec.ChallengeID)
+	if !ok {
+		t.Fatal("missing old record")
+	}
+	if got.State != challenge.StateExpired {
+		t.Fatalf("stale productivity challenge must be EXPIRED after HUMAN_REVIEW reclass, got %s", got.State)
+	}
+	// Retry on expired must not ALLOW
+	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
+	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+		CorrelationID: "after-hr",
+		ReEval:        &challenge.ReEvalContext{UserException: true},
+	})
+	if res.Stage2Decision == challenge.DecisionAllow || res.Record.State == challenge.StateAllowedOnce {
+		t.Fatalf("must not ALLOW after HR reclass: %+v err=%v", res, err)
+	}
+}
+
+// Codex P1: `echo rm -rf build` must not share delete identity with real rm.
+func TestEchoRmNotDeleteTreeIdentity(t *testing.T) {
+	real := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	echo := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("echo rm -rf build"), SessionID: "sess-1"})
+	if real.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("real rm want delete_tree got %s", real.SideEffectClass)
+	}
+	if echo.SideEffectClass == challenge.SideEffectDeleteTree || echo.SideEffectClass == challenge.SideEffectDeleteFile {
+		t.Fatalf("echo rm must not be delete_*, got %s", echo.SideEffectClass)
+	}
+	if real.Fingerprint == echo.Fingerprint {
+		t.Fatal("echo rm must not share fingerprint with real delete")
+	}
+	rel := challenge.ClassifyRelationship(real, echo)
+	if rel == challenge.RelSame || rel == challenge.RelBypass {
+		t.Fatalf("echo rm must not RelSame/RelBypass real delete, got %s", rel)
+	}
+}
+
+// Codex P2: multi-Service shared Store IDs must not collide under fixed Now.
+func TestSharedStoreUniqueIDs(t *testing.T) {
+	fixed := time.Date(2026, 8, 4, 15, 0, 0, 0, time.UTC)
+	st := challenge.NewStore()
+	now := func() time.Time { return fixed }
+	svcA := challenge.NewService(challenge.ServiceConfig{Store: st, Now: now})
+	svcB := challenge.NewService(challenge.ServiceConfig{Store: st, Now: now})
+	pa1 := samplePA("rm -rf build")
+	pa2 := samplePA("rm -rf other")
+	pa2.SessionID = "sess-2"
+	r1, err := svcA.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa1.SessionID, Proposed: pa1, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := svcB.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "sess-2", Proposed: pa2, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.ChallengeID == "" || r2.ChallengeID == "" {
+		t.Fatal("empty id")
+	}
+	if r1.ChallengeID == r2.ChallengeID {
+		t.Fatalf("ID collision across services: %s", r1.ChallengeID)
+	}
+	if _, ok := svcA.Get(r1.ChallengeID); !ok {
+		t.Fatal("r1 missing")
+	}
+	if _, ok := svcB.Get(r2.ChallengeID); !ok {
+		t.Fatal("r2 missing")
+	}
+}
+
+// Codex P2: sequence expiry rechecked under lock before budget consume.
+func TestRetryExpiresUnderLockBeforeBudget(t *testing.T) {
+	fixed := time.Date(2026, 8, 4, 16, 0, 0, 0, time.UTC)
+	svc := challenge.NewService(challenge.ServiceConfig{Now: func() time.Time { return fixed }})
+	pa := samplePA("rm -rf build")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+		ExpiresAfterSequences: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Advance store sequence past ExpiresAtSequence without calling ExpireDue.
+	other := samplePA("echo other")
+	other.SessionID = "sess-other"
+	_, _ = svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "sess-other", Proposed: other, BlockClass: challenge.BlockClassOverSOP,
+	})
+	// AttemptRetry must expire under lock, not ALLOW.
+	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+		CorrelationID: "late-retry",
+		ReEval:        &challenge.ReEvalContext{UserException: true},
+	})
+	if res.Stage2Decision == challenge.DecisionAllow || res.Record.State == challenge.StateAllowedOnce {
+		t.Fatalf("expired under lock must not ALLOW: %+v err=%v", res, err)
+	}
+	if res.RejectedReason != "expired" && res.Record.State != challenge.StateExpired {
+		// Accept either explicit expired reason or terminal expired state
+		got, _ := svc.Get(rec.ChallengeID)
+		if got.State != challenge.StateExpired && res.RejectedReason != "expired" {
+			t.Fatalf("want expired path, res=%+v got.state=%s err=%v", res, got.State, err)
+		}
+	}
+}
+
 // Codex/review: conflicting edit args vs payload rejected.
 func TestEditArgsPayloadConflictRejected(t *testing.T) {
 	payload, _ := json.Marshal(map[string]string{"new_string": "from-payload", "old_string": "old-p"})

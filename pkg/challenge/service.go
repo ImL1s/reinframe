@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ImL1s/reinframe/pkg/classifier"
@@ -17,9 +16,6 @@ type Service struct {
 	store  *Store
 	reeval ReEvaluator
 	now    func() time.Time
-	// idMu serializes Open id generation only; store has its own lock.
-	idSeq uint64
-	idMu  sync.Mutex
 }
 
 // ServiceConfig configures Service.
@@ -147,6 +143,9 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 	}
 	if appeal == AppealHumanReview {
 		now := s.now()
+		// Expire any active productivity challenge for the same session|fp first so a
+		// later HUMAN_REVIEW / security reclass cannot be bypassed via stale retry.
+		s.expireActiveByFingerprint(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_human_review", now)
 		rec := ChallengeRecord{
 			SchemaVersion:     SchemaChallengeRecord,
 			ChallengeID:       s.newID("hr"),
@@ -398,6 +397,18 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		return RetryResult{}, fmt.Errorf("retry: unknown challenge")
 	}
 	rec = cloneRecord(*cur)
+
+	// Recheck sequence expiry under the same lock before budget consume / terminal handling
+	// (expireIfNeeded above can race with concurrent store sequence advances).
+	if rec.ExpiresAtSequence > 0 && s.store.seq >= rec.ExpiresAtSequence && !isTerminal(rec.State) {
+		from := rec.State
+		now := s.now()
+		rec = s.store.appendTransition(rec, from, StateExpired, "expired", req.CorrelationID, req.Proposed.ActionID, fpOwner.Fingerprint, "sequence_expiry_under_lock", now, nil)
+		out := cloneRecord(rec)
+		s.store.mu.Unlock()
+		s.signalTerminal(out.ChallengeID)
+		return RetryResult{Record: out, Stage2Decision: DecisionBlock, Relationship: rel, RejectedReason: "expired"}, fmt.Errorf("retry: expired")
+	}
 
 	if rec.State == StateExpired {
 		s.store.mu.Unlock()
@@ -708,13 +719,8 @@ func ValidStage2Decision(d string) bool {
 }
 
 func (s *Service) newID(prefix string) string {
-	s.idMu.Lock()
-	s.idSeq++
-	n := s.idSeq
-	s.idMu.Unlock()
-	now := s.now().UnixNano()
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s-%d-%d", prefix, now, n)))
-	return prefix + "-" + hex.EncodeToString(h[:8])
+	// Store-scoped sequence so multi-Service shared Store cannot collide on idSeq=1.
+	return s.store.newID(prefix, s.now())
 }
 
 func (s *Service) expireIfNeeded(rec *ChallengeRecord) error {

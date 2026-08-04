@@ -190,13 +190,19 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 		}
 		return "", nil, fmt.Errorf("fingerprint: ambiguous recursive rm with no targets")
 	}
-	if m := reFindDelete.FindStringSubmatch(cmd); len(m) >= 2 {
+	// find -delete only when find is in command position.
+	if strings.EqualFold(shellArgv0(cmd), "find") && reFindDelete.MatchString(cmd) {
 		if unsafeShell {
 			return SideEffectShellGeneric, extractPaths(cmd), nil
 		}
 		targets := extractFindDeleteTargets(cmd)
 		if len(targets) == 0 {
-			targets = []string{normalizeResource(m[1])}
+			if m := reFindDelete.FindStringSubmatch(cmd); len(m) >= 2 {
+				targets = []string{normalizeResource(m[1])}
+			}
+		}
+		if len(targets) == 0 {
+			return SideEffectShellGeneric, extractPaths(cmd), nil
 		}
 		return SideEffectDeleteTree, targets, nil
 	}
@@ -391,25 +397,36 @@ func shellHasCompoundOrQuoting(cmd string) bool {
 	return false
 }
 
+// shellArgv0 returns the command-position name (basename of first non ENV=val field).
+// Used so `echo rm -rf build` is not classified as delete.
+func shellArgv0(cmd string) string {
+	fields := strings.Fields(strings.TrimSpace(cmd))
+	i := 0
+	for i < len(fields) {
+		f := fields[i]
+		// ENV=value prefixes only (not --flag=x)
+		if strings.Contains(f, "=") && !strings.HasPrefix(f, "-") {
+			i++
+			continue
+		}
+		break
+	}
+	if i >= len(fields) {
+		return ""
+	}
+	return path.Base(fields[i])
+}
+
 func isRecursiveForceRm(cmd string) bool {
-	low := strings.ToLower(cmd)
-	if !strings.Contains(low, "rm") {
+	// Command-position only — never match `echo rm -rf build`.
+	if !strings.EqualFold(shellArgv0(cmd), "rm") {
 		return false
 	}
+	low := strings.ToLower(cmd)
 	if reRmRF.MatchString(cmd) || reRmRF2.MatchString(cmd) {
 		return true
 	}
 	fields := strings.Fields(low)
-	hasRm := false
-	for _, f := range fields {
-		if f == "rm" {
-			hasRm = true
-			break
-		}
-	}
-	if !hasRm {
-		return false
-	}
 	hasR, hasF := false, false
 	for _, f := range fields {
 		if f == "--recursive" {
@@ -431,33 +448,37 @@ func isRecursiveForceRm(cmd string) bool {
 }
 
 func isPlainRm(cmd string) bool {
-	low := strings.ToLower(strings.TrimSpace(cmd))
-	if !strings.Contains(low, "rm ") && !strings.HasPrefix(low, "rm ") && low != "rm" {
+	if !strings.EqualFold(shellArgv0(cmd), "rm") {
 		return false
 	}
 	if isRecursiveForceRm(cmd) {
 		return false
 	}
-	fields := strings.Fields(low)
-	for _, f := range fields {
-		if f == "rm" {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 func extractRmTargets(cmd string) []string {
+	if !strings.EqualFold(shellArgv0(cmd), "rm") {
+		return nil
+	}
 	fields := strings.Fields(cmd)
 	var out []string
-	seenRm := false
-	for _, f := range fields {
-		if !seenRm {
-			if strings.EqualFold(f, "rm") {
-				seenRm = true
-			}
+	// Skip ENV= and the command-position rm token only.
+	i := 0
+	for i < len(fields) {
+		f := fields[i]
+		if strings.Contains(f, "=") && !strings.HasPrefix(f, "-") {
+			i++
 			continue
 		}
+		break
+	}
+	if i >= len(fields) {
+		return nil
+	}
+	i++ // skip argv0 (rm)
+	for ; i < len(fields); i++ {
+		f := fields[i]
 		if strings.HasPrefix(f, "-") {
 			continue
 		}
@@ -467,16 +488,26 @@ func extractRmTargets(cmd string) []string {
 }
 
 func extractFindDeleteTargets(cmd string) []string {
+	if !strings.EqualFold(shellArgv0(cmd), "find") {
+		return nil
+	}
 	fields := strings.Fields(cmd)
 	var out []string
-	seenFind := false
-	for _, f := range fields {
-		if !seenFind {
-			if strings.EqualFold(f, "find") {
-				seenFind = true
-			}
+	i := 0
+	for i < len(fields) {
+		f := fields[i]
+		if strings.Contains(f, "=") && !strings.HasPrefix(f, "-") {
+			i++
 			continue
 		}
+		break
+	}
+	if i >= len(fields) {
+		return nil
+	}
+	i++ // skip find
+	for ; i < len(fields); i++ {
+		f := fields[i]
 		if strings.HasPrefix(f, "-") {
 			continue
 		}

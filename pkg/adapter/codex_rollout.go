@@ -64,15 +64,22 @@ func (c *CodexRolloutSource) eventsFromReader(ctx context.Context, r io.Reader, 
 		buf := make([]byte, 0, 256*1024)
 		sc.Buffer(buf, 4*1024*1024)
 		parser := &rolloutParser{
-			sessionID: c.SessionIDOverride,
-			meta:      map[string]string{},
+			sessionID:    c.SessionIDOverride,
+			meta:         map[string]string{},
+			fileIdentity: FileIdentityFromPath(c.Path),
+			generation:   0,
 		}
+		var byteOff int64
 		for sc.Scan() {
 			if ctx.Err() != nil {
 				return
 			}
+			line := sc.Bytes()
+			lineBytes := int64(len(line) + 1)
 			parser.linesRead++
-			ev, ok := parseCodexRolloutLine(parser, sc.Bytes())
+			parser.lineEndOffset = byteOff + lineBytes
+			ev, ok := parseCodexRolloutLine(parser, line)
+			byteOff += lineBytes
 			if !ok {
 				continue
 			}
@@ -91,7 +98,7 @@ func (c *CodexRolloutSource) eventsFromReader(ctx context.Context, r io.Reader, 
 	return ch, nil
 }
 
-func makeToolEvent(sessionID string, seq int64, ts time.Time, name string, payload map[string]any) protocol.AgentEvent {
+func makeToolEvent(sessionID string, seq int64, ts time.Time, name string, payload map[string]any, id *SourceRecordIdentity) protocol.AgentEvent {
 	if sessionID == "" {
 		sessionID = "codex-unknown"
 	}
@@ -101,7 +108,6 @@ func makeToolEvent(sessionID string, seq int64, ts time.Time, name string, paylo
 			input = args
 		}
 	}
-	// keep payload small
 	if len(input) > 500 {
 		input = input[:500] + "…"
 	}
@@ -110,17 +116,25 @@ func makeToolEvent(sessionID string, seq int64, ts time.Time, name string, paylo
 		"source":    "codex_rollout",
 		"input":     input,
 	})
+	eid := fmt.Sprintf("codex-tool-%d", seq)
+	if id != nil {
+		id.SessionID = sessionID
+		id.EventKind = "tool_call"
+		if id.Source == "" {
+			id.Source = CodexEventIDSource
+		}
+		eid = id.FormatEventID()
+		if id.RecordOffset > 0 {
+			seq = id.RecordOffset
+		}
+	}
 	return protocol.AgentEvent{
-		EventID:     fmt.Sprintf("codex-tool-%d", seq),
-		SessionID:   sessionID,
-		SequenceNum: seq,
-		EventType:   "tool_call",
-		Timestamp:   ts,
-		Payload:     body,
+		EventID: eid, SessionID: sessionID, SequenceNum: seq,
+		EventType: "tool_call", Timestamp: ts, Payload: body,
 	}
 }
 
-func makeErrorEvent(sessionID string, seq int64, ts time.Time, out string) protocol.AgentEvent {
+func makeErrorEvent(sessionID string, seq int64, ts time.Time, out string, id *SourceRecordIdentity) protocol.AgentEvent {
 	if sessionID == "" {
 		sessionID = "codex-unknown"
 	}
@@ -129,13 +143,21 @@ func makeErrorEvent(sessionID string, seq int64, ts time.Time, out string) proto
 		snippet = snippet[:400]
 	}
 	body, _ := json.Marshal(map[string]string{"error": snippet, "source": "codex_rollout"})
+	eid := fmt.Sprintf("codex-err-%d", seq)
+	if id != nil {
+		id.SessionID = sessionID
+		id.EventKind = "error"
+		if id.Source == "" {
+			id.Source = CodexEventIDSource
+		}
+		eid = id.FormatEventID()
+		if id.RecordOffset > 0 {
+			seq = id.RecordOffset
+		}
+	}
 	return protocol.AgentEvent{
-		EventID:     fmt.Sprintf("codex-err-%d", seq),
-		SessionID:   sessionID,
-		SequenceNum: seq,
-		EventType:   "error",
-		Timestamp:   ts,
-		Payload:     body,
+		EventID: eid, SessionID: sessionID, SequenceNum: seq,
+		EventType: "error", Timestamp: ts, Payload: body,
 	}
 }
 

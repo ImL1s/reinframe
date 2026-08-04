@@ -75,7 +75,7 @@ func main() {
 			if err != nil {
 				fail(err)
 			}
-			c = adapter.ReconcileCursorAgainstFile(c, st.Size())
+			c = adapter.ReconcileCursorAgainstFile(c, st.Size(), nil)
 			out["cursor"] = c
 		}
 		_ = enc.Encode(out)

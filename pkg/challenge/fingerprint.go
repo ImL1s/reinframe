@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
 )
@@ -340,7 +341,9 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 				return "", fmt.Errorf("proposed_action: edit payload key %q unsupported", k)
 			}
 		}
-		if s, ok := stringFieldPresent(m, "old_string", "old_str"); ok {
+		if s, ok, err := stringFieldsAgree(m, "old_string", "old_str"); err != nil {
+			return "", err
+		} else if ok {
 			d := digestBytes([]byte(s))
 			if oldDig != "" && oldDig != d {
 				return "", fmt.Errorf("proposed_action: edit old content conflicts between args and payload")
@@ -348,7 +351,10 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 			oldDig = d
 		}
 		// Present empty string is a valid write/truncate surface (≠ missing key).
-		if s, ok := stringFieldPresent(m, "new_string", "new_str", "content", "contents"); ok {
+		// All present new-content aliases must agree (new_string vs content).
+		if s, ok, err := stringFieldsAgree(m, "new_string", "new_str", "content", "contents"); err != nil {
+			return "", err
+		} else if ok {
 			d := digestBytes([]byte(s))
 			if newDig != "" && newDig != d {
 				return "", fmt.Errorf("proposed_action: edit new content conflicts between args and payload")
@@ -390,8 +396,8 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 }
 
 func stringField(m map[string]any, keys ...string) string {
-	s, ok := stringFieldPresent(m, keys...)
-	if !ok || s == "" {
+	s, ok, err := stringFieldsAgree(m, keys...)
+	if err != nil || !ok || s == "" {
 		return ""
 	}
 	return s
@@ -399,14 +405,34 @@ func stringField(m map[string]any, keys ...string) string {
 
 // stringFieldPresent returns a string field even when empty (key present with "").
 func stringFieldPresent(m map[string]any, keys ...string) (string, bool) {
+	s, ok, err := stringFieldsAgree(m, keys...)
+	if err != nil {
+		return "", false
+	}
+	return s, ok
+}
+
+// stringFieldsAgree requires every present alias among keys to be a string and equal.
+// Conflicting aliases (e.g. new_string vs content) fail closed.
+func stringFieldsAgree(m map[string]any, keys ...string) (value string, present bool, err error) {
 	for _, k := range keys {
-		if v, ok := m[k]; ok {
-			if s, ok := v.(string); ok {
-				return s, true
-			}
+		v, ok := m[k]
+		if !ok {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok {
+			return "", false, fmt.Errorf("proposed_action: edit payload key %q must be string", k)
+		}
+		if !present {
+			value, present = s, true
+			continue
+		}
+		if s != value {
+			return "", false, fmt.Errorf("proposed_action: edit payload aliases conflict for key set")
 		}
 	}
-	return "", false
+	return value, present, nil
 }
 
 func digestBytes(b []byte) string {
@@ -481,6 +507,25 @@ func shellHasResolutionEnv(cmd string) bool {
 	return false
 }
 
+// shellFields splits on ASCII shell whitespace only (space/tab/LF/CR).
+// ok is false if non-ASCII Unicode whitespace appears — Bash would not treat those
+// as separators, so privileged classification must fail closed (e.g. NBSP).
+func shellFields(cmd string) (fields []string, ok bool) {
+	for _, r := range cmd {
+		if r >= 0x80 && unicode.IsSpace(r) {
+			return nil, false
+		}
+	}
+	return strings.FieldsFunc(cmd, func(r rune) bool {
+		switch r {
+		case ' ', '\t', '\n', '\r':
+			return true
+		default:
+			return false
+		}
+	}), true
+}
+
 // shellArgv0 returns the bare command-position name (first non ENV=val field).
 // Path-qualified argv0 (./rm, /tmp/rm) returns "" so privileged delete/find
 // classification fails closed — never path.Base (would treat ./rm as rm).
@@ -489,7 +534,10 @@ func shellArgv0(cmd string) string {
 	if shellHasResolutionEnv(cmd) {
 		return ""
 	}
-	fields := strings.Fields(strings.TrimSpace(cmd))
+	fields, ok := shellFields(strings.TrimSpace(cmd))
+	if !ok {
+		return ""
+	}
 	i := 0
 	for i < len(fields) {
 		f := fields[i]
@@ -522,7 +570,10 @@ func shellPrivilegedOpDigest(cmd, kind string) string {
 			"scope_flags": encodeStringList(extractDeleteScopeFlags(cmd)),
 		})))
 	}
-	fields := strings.Fields(strings.TrimSpace(cmd))
+	fields, ok := shellFields(strings.TrimSpace(cmd))
+	if !ok {
+		fields = nil
+	}
 	i := skipShellEnvPrefixes(fields)
 	rest := []string{}
 	if i < len(fields) {
@@ -539,7 +590,10 @@ func shellPrivilegedOpDigest(cmd, kind string) string {
 // recursive flags (rewrite-eligible between rm -r and find -delete when targets match).
 // Find traversal: last-wins single mode. Rm prompt: last-wins normalized mode.
 func extractDeleteScopeFlags(cmd string) []string {
-	fields := strings.Fields(cmd)
+	fields, ok := shellFields(cmd)
+	if !ok {
+		return nil
+	}
 	i := skipShellEnvPrefixes(fields)
 	if i >= len(fields) {
 		return nil
@@ -684,7 +738,10 @@ func findFailClosedGlobals(cmd string) bool {
 	if shellArgv0(cmd) != "find" {
 		return false
 	}
-	fields := strings.Fields(cmd)
+	fields, ok := shellFields(cmd)
+	if !ok {
+		return true // Unicode whitespace → fail closed for privileged find
+	}
 	i := skipShellEnvPrefixes(fields)
 	if i >= len(fields) {
 		return false
@@ -738,7 +795,10 @@ func rmHasExitOnlyOrUnknownOption(cmd string) bool {
 	if shellArgv0(cmd) != "rm" {
 		return false
 	}
-	fields := strings.Fields(cmd)
+	fields, ok := shellFields(cmd)
+	if !ok {
+		return true
+	}
 	i := skipShellEnvPrefixes(fields)
 	if i >= len(fields) {
 		return false
@@ -792,7 +852,10 @@ func rmHasExitOnlyOrUnknownOption(cmd string) bool {
 // findHasExpressionPredicates reports find expression tokens beyond path roots and -delete.
 // e.g. -name, -type, -path, ! EXPR make delete scope unequal to plain path -delete.
 func findHasExpressionPredicates(cmd string) bool {
-	fields := strings.Fields(cmd)
+	fields, ok := shellFields(cmd)
+	if !ok {
+		return true
+	}
 	i := skipShellEnvPrefixes(fields)
 	if i >= len(fields) || fields[i] != "find" {
 		return false
@@ -850,7 +913,10 @@ func isRecursiveRm(cmd string) bool {
 	if shellArgv0(cmd) != "rm" {
 		return false
 	}
-	fields := strings.Fields(cmd)
+	fields, ok := shellFields(cmd)
+	if !ok {
+		return false
+	}
 	i := skipShellEnvPrefixes(fields)
 	if i >= len(fields) {
 		return false
@@ -902,7 +968,10 @@ func extractRmTargets(cmd string) []string {
 	if shellArgv0(cmd) != "rm" {
 		return nil
 	}
-	fields := strings.Fields(cmd)
+	fields, ok := shellFields(cmd)
+	if !ok {
+		return nil
+	}
 	var out []string
 	i := skipShellEnvPrefixes(fields)
 	if i >= len(fields) {
@@ -936,7 +1005,10 @@ func extractFindDeleteTargets(cmd string) []string {
 	if shellArgv0(cmd) != "find" {
 		return nil
 	}
-	fields := strings.Fields(cmd)
+	fields, ok := shellFields(cmd)
+	if !ok {
+		return nil
+	}
 	var out []string
 	i := skipShellEnvPrefixes(fields)
 	if i >= len(fields) {

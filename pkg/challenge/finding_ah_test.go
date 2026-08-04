@@ -1350,6 +1350,41 @@ func TestDeleteTrailingDotComponentDistinct(t *testing.T) {
 	}
 }
 
+// Codex: NBSP is not a shell field separator — must not classify as privileged delete.
+func TestNBSPDoesNotPrivilegedDeleteIdentity(t *testing.T) {
+	// U+00A0 NO-BREAK SPACE between rm and -rf
+	cmd := "rm\u00a0-rf build"
+	fp := mustFP(t, challenge.FingerprintInput{Proposed: samplePA(cmd), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	if fp.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("NBSP command must not be delete_tree, got %s", fp.SideEffectClass)
+	}
+	if fp.Fingerprint == plain.Fingerprint {
+		t.Fatal("NBSP-split command must not share fingerprint with real rm -rf")
+	}
+}
+
+// Codex: conflicting new-content aliases fail closed.
+func TestEditConflictingContentAliasesRejected(t *testing.T) {
+	payload, _ := json.Marshal(map[string]string{"new_string": "from-new", "content": "from-content"})
+	pa := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ActionID: "e", ToolName: "Write", ToolClass: adapter.ToolClassEdit,
+		FilePath: "f.go", RedactedPayload: payload, ParseStatus: "ok",
+		WorkspaceRevision: "ws-1", ContractRevision: 3,
+	}
+	_, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa, SessionID: "sess-1"})
+	if err == nil {
+		t.Fatal("conflicting new_string/content must fail closed")
+	}
+	// Agreeing aliases still work.
+	payload2, _ := json.Marshal(map[string]string{"new_string": "same", "content": "same"})
+	pa.RedactedPayload = payload2
+	if _, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa, SessionID: "sess-1"}); err != nil {
+		t.Fatalf("agreeing aliases must be ok: %v", err)
+	}
+}
+
 // Skeptic: uniqueSorted must not drop bare "." — multi-target cwd expansion.
 func TestDeleteDotOperandPreservedInIdentity(t *testing.T) {
 	cases := []struct {

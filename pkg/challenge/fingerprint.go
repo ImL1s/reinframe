@@ -491,12 +491,15 @@ func shellArgv0(cmd string) string {
 }
 
 // shellPrivilegedOpDigest binds operation identity for privileged shell sides.
-// Pure delete_tree/file (no ENV, no predicates) uses kind-only digest so syntax
-// rewrites (rm -rf ↔ find -delete) still match via targets + RelBypass.
+// Pure delete uses kind + scope-altering flags only (not -r/-f), so syntax rewrites
+// (rm -rf ↔ find -delete) still match, while --one-file-system etc. do not.
 // test_suite binds residual argv so flag variants cannot collapse.
 func shellPrivilegedOpDigest(cmd, kind string) string {
 	if kind == "delete" {
-		return digestBytes([]byte(encodeFingerprintCanon(map[string]string{"kind": "delete"})))
+		return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
+			"kind":        "delete",
+			"scope_flags": encodeStringList(extractDeleteScopeFlags(cmd)),
+		})))
 	}
 	fields := strings.Fields(strings.TrimSpace(cmd))
 	i := skipShellEnvPrefixes(fields)
@@ -509,6 +512,40 @@ func shellPrivilegedOpDigest(cmd, kind string) string {
 		"rest": encodeStringList(rest),
 		"cmd":  normalizeCommandPreserveCase(cmd),
 	})))
+}
+
+// extractDeleteScopeFlags returns flags that change deletion scope/safety beyond
+// recursive/force (which are rewrite-eligible between rm and find -delete).
+func extractDeleteScopeFlags(cmd string) []string {
+	fields := strings.Fields(cmd)
+	i := skipShellEnvPrefixes(fields)
+	if i >= len(fields) {
+		return nil
+	}
+	argv0 := strings.ToLower(fields[i])
+	i++
+	var out []string
+	if argv0 == "rm" {
+		for ; i < len(fields); i++ {
+			f := fields[i]
+			low := strings.ToLower(f)
+			switch {
+			case low == "--one-file-system" || low == "--preserve-root" || low == "--no-preserve-root" ||
+				low == "-i" || low == "-I" || low == "--interactive" || strings.HasPrefix(low, "--interactive="):
+				out = append(out, low)
+			case strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--"):
+				// short clusters: ignore r/f/v; any other letter is scope-altering (e.g. -i)
+				for _, r := range low[1:] {
+					if r != 'r' && r != 'f' && r != 'v' {
+						out = append(out, string(r))
+					}
+				}
+			}
+		}
+	}
+	// find sole -delete: no scope flags (predicates already fail closed earlier)
+	sort.Strings(out)
+	return out
 }
 
 // findHasExpressionPredicates reports find expression tokens beyond path roots and -delete.
@@ -548,20 +585,12 @@ func findHasExpressionPredicates(cmd string) bool {
 	for i < len(fields) && !strings.HasPrefix(fields[i], "-") {
 		i++
 	}
-	// remaining expression: only -delete (and boolean glue) allowed for plain delete_tree
-	for ; i < len(fields); i++ {
-		f := fields[i]
-		low := strings.ToLower(f)
-		switch low {
-		case "-delete", "-print", "-print0", "(", ")", "-a", "-o", "-and", "-or", "-not", "!":
-			continue
-		default:
-			if strings.HasPrefix(f, "-") {
-				return true // -name, -type, -path, etc.
-			}
-			// non-flag residue after expression start
-			return true
-		}
+	// remaining expression: only the sole token -delete is rewrite-eligible.
+	// Boolean glue (-o/-a), printers (-print), and other actions make scope unequal
+	// (e.g. find build -print -o -delete must not share delete_tree with find build -delete).
+	expr := fields[i:]
+	if len(expr) != 1 || !strings.EqualFold(expr[0], "-delete") {
+		return true
 	}
 	return false
 }
@@ -718,11 +747,23 @@ func normalizeResource(s string) string {
 	return s
 }
 
-// normalizeCommandPreserveCase collapses whitespace only; does not lowercase paths/args.
+// normalizeCommandPreserveCase collapses horizontal whitespace only.
+// Newlines/carriage returns are preserved as separators so multi-command
+// lines cannot collide with space-joined single commands
+// (echo ok\nrm -rf build ≠ echo ok rm -rf build).
 func normalizeCommandPreserveCase(cmd string) string {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return ""
+	}
+	cmd = strings.ReplaceAll(cmd, "\r\n", "\n")
+	cmd = strings.ReplaceAll(cmd, "\r", "\n")
+	if strings.Contains(cmd, "\n") {
+		parts := strings.Split(cmd, "\n")
+		for i, p := range parts {
+			parts[i] = strings.Join(strings.Fields(p), " ")
+		}
+		return strings.Join(parts, "\n")
 	}
 	return strings.Join(strings.Fields(cmd), " ")
 }

@@ -907,6 +907,60 @@ func TestFindDeleteTargetsExcludeNameArgs(t *testing.T) {
 	}
 }
 
+// Codex/skeptic: boolean find expressions must not share delete_tree with sole -delete.
+func TestFindBooleanExpressionNotDeleteTree(t *testing.T) {
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -delete"), SessionID: "sess-1"})
+	if plain.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("plain want delete_tree got %s", plain.SideEffectClass)
+	}
+	for _, cmd := range []string{
+		"find build -print -o -delete",
+		"find build -print0 -delete",
+		"find build -a -delete",
+		"find build -o -delete",
+		"find build ( -name x ) -delete",
+		"find build -not -delete",
+	} {
+		got := mustFP(t, challenge.FingerprintInput{Proposed: samplePA(cmd), SessionID: "sess-1"})
+		if got.SideEffectClass == challenge.SideEffectDeleteTree {
+			t.Fatalf("%q must not be delete_tree (boolean/printer glue)", cmd)
+		}
+		if got.Fingerprint == plain.Fingerprint {
+			t.Fatalf("%q must not share fingerprint with plain find -delete", cmd)
+		}
+		rel := challenge.ClassifyRelationship(plain, got)
+		if rel == challenge.RelSame || rel == challenge.RelBypass {
+			t.Fatalf("%q must not RelSame/RelBypass plain delete, got %s", cmd, rel)
+		}
+	}
+}
+
+// Codex: newline command separators must not collapse to spaces in fingerprints.
+func TestNewlineCommandSeparatorNotCollapsed(t *testing.T) {
+	space := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("echo ok rm -rf build"), SessionID: "sess-1"})
+	nl := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("echo ok\nrm -rf build"), SessionID: "sess-1"})
+	if space.Fingerprint == nl.Fingerprint {
+		t.Fatal("newline separator must not share fingerprint with space-joined form")
+	}
+}
+
+// Codex: scope-altering rm flags must change delete identity.
+func TestRmOneFileSystemChangesFingerprint(t *testing.T) {
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	ofs := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf --one-file-system build"), SessionID: "sess-1"})
+	if plain.SideEffectClass != challenge.SideEffectDeleteTree || ofs.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("both want delete_tree plain=%s ofs=%s", plain.SideEffectClass, ofs.SideEffectClass)
+	}
+	if plain.Fingerprint == ofs.Fingerprint {
+		t.Fatal("--one-file-system must not share fingerprint with plain rm -rf")
+	}
+	// Syntax rewrite still holds for plain forms.
+	findPlain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -delete"), SessionID: "sess-1"})
+	if plain.Fingerprint != findPlain.Fingerprint {
+		t.Fatal("rm -rf build and find build -delete should still match")
+	}
+}
+
 // Codex: replace_all must bind into edit digest.
 func TestEditReplaceAllChangesFingerprint(t *testing.T) {
 	aPayload, _ := json.Marshal(map[string]any{"new_string": "X", "replace_all": false})

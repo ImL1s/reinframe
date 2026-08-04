@@ -757,14 +757,7 @@ func (s *Service) expireIfNeeded(rec *ChallengeRecord) error {
 	return fmt.Errorf("challenge expired")
 }
 
-// expireActiveByFingerprint expires every non-terminal challenge for session|fp.
-func (s *Service) expireActiveByFingerprint(sessionID, fingerprint, corr, cause, note string, now time.Time) {
-	s.store.mu.Lock()
-	defer s.store.mu.Unlock()
-	s.expireActiveByFingerprintLocked(sessionID, fingerprint, corr, cause, note, now)
-}
-
-// expireActiveByFingerprintLocked is the locked body of expireActiveByFingerprint.
+// expireActiveByFingerprintLocked expires every non-terminal challenge for session|fp.
 // Caller must hold s.store.mu.
 func (s *Service) expireActiveByFingerprintLocked(sessionID, fingerprint, corr, cause, note string, now time.Time) {
 	var ids []string

@@ -27,10 +27,11 @@
 | M3 synthetic/FP benchmarks | **#100 / PR #129** | MORE-DATA; **no hard-gate** |
 | Managed worktree rollback | **#99 / PR #130** | Clean-only; not primary checkout |
 | Post-merge P1 hygiene | **PR #133** | Eval rate denominators; workspace fail-closed |
+| Open-set governance | **#142 / PR #143** | README/CURRENT/Epic match live open set |
 
 ## Active backlog (open only — must match `gh issue list --state open`)
 
-Full open set: **#80, #108, #120, #131, #132, #134, #135, #136, #137, #138, #139, #140, #141, #142**.
+Full open set: **#80, #108, #120, #131, #132, #134, #135, #136, #137, #138, #139, #140, #141** (#142 closed via PR #143).
 
 ### Ready product / docs work
 
@@ -38,7 +39,6 @@ Full open set: **#80, #108, #120, #131, #132, #134, #135, #136, #137, #138, #139
 |-------|-----|-------|
 | **#131** | P1 | Appealable BLOCK challenges + one-shot semantic retries (host-neutral). Public classifier enum stays `ALLOW \| BLOCK`. |
 | **#132** | P1 | Classifier provider runtime, usage telemetry, capability-safe generic adapter |
-| **#142** | P1 | Governance: sync README/CURRENT/Epic open set (this docs track) |
 
 ### Blocked by environment
 
@@ -67,7 +67,6 @@ Full open set: **#80, #108, #120, #131, #132, #134, #135, #136, #137, #138, #139
 Ready, parallel:
   #131 challenge core
   #132 provider runtime
-  #142 docs/open-set governance (docs-only)
 
 Environment lane:
   #120 pinned live Claude ALLOW/BLOCK/context smoke

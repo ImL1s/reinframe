@@ -333,10 +333,27 @@ func aggregate(cases []CaseResult) AggregateMetrics {
 		m.DetectorByKind[cr.Kind] = finishBinary(bm)
 	}
 	m.ClassifierShadow = finishBinary(BinaryMetrics{TP: cTP, FP: cFP, FN: cFN, TN: cTN})
-	if classN > 0 {
-		m.FalseBlockRate = float64(fb) / float64(classN)
-		m.FalseAllowRate = float64(fa) / float64(classN)
+	// Denominators are label-conditioned (not all classifier cases):
+	// false_block_rate = FB / N(expect ALLOW); false_allow_rate = FA / N(expect BLOCK).
+	var expectAllowN, expectBlockN int
+	for _, cr := range cases {
+		if cr.Kind != KindClassifierShadow {
+			continue
+		}
+		switch cr.ExpectStage2 {
+		case classifier.DecisionAllow:
+			expectAllowN++
+		case classifier.DecisionBlock:
+			expectBlockN++
+		}
 	}
+	if expectAllowN > 0 {
+		m.FalseBlockRate = float64(fb) / float64(expectAllowN)
+	}
+	if expectBlockN > 0 {
+		m.FalseAllowRate = float64(fa) / float64(expectBlockN)
+	}
+	_ = classN // retained as total classifier sample in BinaryMetrics via TP+FP+FN+TN
 	// re-finish detector maps
 	for k, bm := range m.DetectorByKind {
 		m.DetectorByKind[k] = finishBinary(bm)

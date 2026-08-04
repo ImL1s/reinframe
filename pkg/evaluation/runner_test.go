@@ -121,6 +121,48 @@ func TestRepeatedFailurePositiveAndHealthy(t *testing.T) {
 	}
 }
 
+func TestFalseBlockRateUsesExpectAllowDenominator(t *testing.T) {
+	t.Parallel()
+	// 1 false block among 2 expect-ALLOW cases → rate 0.5, not 1/3.
+	// 1 false allow among 2 expect-BLOCK cases → rate 0.5, not 1/4 total.
+	cases := []evaluation.Case{
+		{
+			SchemaVersion: evaluation.DatasetSchemaVersion, CaseID: "fb-1",
+			ScenarioClass: evaluation.ClassHealthy, Kind: evaluation.KindClassifierShadow,
+			Source: "synthetic", ClassifierFixture: "clear_block", // predicts BLOCK
+			ExpectStage2Decision: "ALLOW", // labeled ALLOW → false block
+		},
+		{
+			SchemaVersion: evaluation.DatasetSchemaVersion, CaseID: "ok-allow",
+			ScenarioClass: evaluation.ClassHealthy, Kind: evaluation.KindClassifierShadow,
+			Source: "synthetic", ClassifierFixture: "clear_allow", ExpectStage2Decision: "ALLOW",
+		},
+		{
+			SchemaVersion: evaluation.DatasetSchemaVersion, CaseID: "ok-block",
+			ScenarioClass: evaluation.ClassPositiveDeviation, Kind: evaluation.KindClassifierShadow,
+			Source: "synthetic", ClassifierFixture: "clear_block", ExpectStage2Decision: "BLOCK",
+		},
+		{
+			SchemaVersion: evaluation.DatasetSchemaVersion, CaseID: "fa-1",
+			ScenarioClass: evaluation.ClassPositiveDeviation, Kind: evaluation.KindClassifierShadow,
+			Source: "synthetic", ClassifierFixture: "clear_allow", // predicts ALLOW
+			ExpectStage2Decision: "BLOCK", // labeled BLOCK → false allow
+		},
+	}
+	rep, err := (&evaluation.Runner{}).Run(context.Background(), cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// FB rate = 1/2 expect-ALLOW, not 1/4 total classifier cases.
+	if rep.Metrics.FalseBlockRate < 0.49 || rep.Metrics.FalseBlockRate > 0.51 {
+		t.Fatalf("false_block_rate=%.3f want 0.5", rep.Metrics.FalseBlockRate)
+	}
+	// FA rate = 1/2 expect-BLOCK, not 1/4 total (0.25) or 1/3 (~0.33).
+	if rep.Metrics.FalseAllowRate < 0.49 || rep.Metrics.FalseAllowRate > 0.51 {
+		t.Fatalf("false_allow_rate=%.3f want 0.5", rep.Metrics.FalseAllowRate)
+	}
+}
+
 func TestClassifierFalseBlockMetricPath(t *testing.T) {
 	t.Parallel()
 	cases := []evaluation.Case{

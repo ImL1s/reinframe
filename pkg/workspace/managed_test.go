@@ -207,11 +207,76 @@ func TestLoadCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := workspace.LoadCheckpoint(wt.Path, rec.CheckpointID)
+	loaded, err := reg.LoadCheckpoint(wt.ID, rec.CheckpointID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if loaded.HEAD != rec.HEAD {
 		t.Fatal(loaded.HEAD)
+	}
+}
+
+func TestManagedWorktree_MarkerIDMismatchFailClosed(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	base := t.TempDir()
+	initRepo(t, base)
+	root := t.TempDir()
+	reg, _ := workspace.NewRegistry(root)
+	wt, err := reg.CreateWorktree("sess-ok", base, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tamper id on in-memory record while marker still has original id.
+	wt.ID = "not-the-marker-id"
+	if _, _, err := reg.Checkpoint(wt, "should fail"); err == nil {
+		t.Fatal("expected marker id mismatch")
+	}
+}
+
+func TestManagedWorktree_MarkerSessionMismatchFailClosed(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	base := t.TempDir()
+	initRepo(t, base)
+	root := t.TempDir()
+	reg, _ := workspace.NewRegistry(root)
+	wt, err := reg.CreateWorktree("sess-ok", base, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tamper session on in-memory record while marker still says sess-ok.
+	wt.SessionID = "sess-evil"
+	if _, _, err := reg.Checkpoint(wt, "should fail"); err == nil {
+		t.Fatal("expected marker session mismatch")
+	}
+}
+
+func TestManagedWorktree_CheckpointNotInAgentTree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	base := t.TempDir()
+	initRepo(t, base)
+	root := t.TempDir()
+	reg, _ := workspace.NewRegistry(root)
+	wt, err := reg.CreateWorktree("s", base, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, _, err := reg.Checkpoint(wt, "private")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Must not live under agent worktree path.
+	agentPath := filepath.Join(wt.Path, ".reinframe-checkpoints", rec.CheckpointID+".json")
+	if _, err := os.Stat(agentPath); err == nil {
+		t.Fatal("checkpoint must not be inside agent-writable worktree")
+	}
+	// Must load from private store.
+	if _, err := reg.LoadCheckpoint(wt.ID, rec.CheckpointID); err != nil {
+		t.Fatal(err)
 	}
 }

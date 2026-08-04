@@ -10,9 +10,9 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 
 ## Project Status
 
-> **Phase: M1 + M2.0 + M2.1 library + M2.2 residual adapters (library / experimental)**  
-> Landed (narrow DoD): street-wire + Codex offline/tail ([#95](https://github.com/ImL1s/reinframe/issues/95)–[#102](https://github.com/ImL1s/reinframe/pull/102)), Claude bridge ([#96](https://github.com/ImL1s/reinframe/issues/96)), FileActuator ([#97](https://github.com/ImL1s/reinframe/issues/97)), #98 detectors, optional LLM reviewer (PR [#103](https://github.com/ImL1s/reinframe/pull/103)), classifier **design** ([#104](https://github.com/ImL1s/reinframe/issues/104)/PR [#111](https://github.com/ImL1s/reinframe/pull/111) — not wire contract), Claude **installer unit** ([#106](https://github.com/ImL1s/reinframe/issues/106)/PR [#112](https://github.com/ImL1s/reinframe/pull/112) — **no live smoke**), Codex **observe-only** product surface ([#107](https://github.com/ImL1s/reinframe/issues/107)/PR [#113](https://github.com/ImL1s/reinframe/pull/113)–[#114](https://github.com/ImL1s/reinframe/pull/114)).  
-> **Still open (actual):** epic [#80](https://github.com/ImL1s/reinframe/issues/80); ready [#115](https://github.com/ImL1s/reinframe/issues/115) ProposedAction · [#117](https://github.com/ImL1s/reinframe/issues/117) Claude settings harden · [#118](https://github.com/ImL1s/reinframe/issues/118) Codex identity/tail · [#119](https://github.com/ImL1s/reinframe/issues/119) classifier contract (merge after #115) · [#121](https://github.com/ImL1s/reinframe/issues/121) governance · [#99](https://github.com/ImL1s/reinframe/issues/99) git worktree rollback; blocked [#116](https://github.com/ImL1s/reinframe/issues/116) (by #115) · [#120](https://github.com/ImL1s/reinframe/issues/120) live smoke (by #115/#116/#117) · [#105](https://github.com/ImL1s/reinframe/issues/105) shadow classifier (by #119+#115) · [#108](https://github.com/ImL1s/reinframe/issues/108) advice consumer (by #120) · [#100](https://github.com/ImL1s/reinframe/issues/100) M3 benchmarks (by #105).  
+> **Phase: M1 + M2 library + experimental host bridges + shadow classifier + offline eval**  
+> **Still open (actual `gh` set):** epic [#80](https://github.com/ImL1s/reinframe/issues/80); blocked [#120](https://github.com/ImL1s/reinframe/issues/120) live Claude smoke (`BLOCKED_BY_ENVIRONMENT`); blocked [#108](https://github.com/ImL1s/reinframe/issues/108) advice consumer (depends on #120).  
+> **No `status:ready` product issues.** Landed library slices: ProposedAction [#115](https://github.com/ImL1s/reinframe/issues/115), PreTool semantics [#116](https://github.com/ImL1s/reinframe/issues/116), settings harden [#117](https://github.com/ImL1s/reinframe/issues/117), Codex identity [#118](https://github.com/ImL1s/reinframe/issues/118), classifier contract [#119](https://github.com/ImL1s/reinframe/issues/119), shadow classifier [#105](https://github.com/ImL1s/reinframe/issues/105), M3 benches [#100](https://github.com/ImL1s/reinframe/issues/100) (MORE-DATA, no hard-gate), managed worktree [#99](https://github.com/ImL1s/reinframe/issues/99).  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
 
 | Component | Status |
@@ -34,21 +34,19 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 | Codex EventSource offline + near-live tail (#95) | ✅ `CodexRolloutSource` / `CodexTailSource` (not process attach) |
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |
 | Claude project-local install/doctor (#106) | ✅ Installer unit path; **not** live smoke (#120 open) |
-| Codex observe product surface (#107) | ✅ Discovery/cursor/codexctl; observe-only L0 (#118 harden open) |
-| Action Alignment **design** (#104) | ✅ Concept doc only; wire contract → #119 |
+| Claude settings ownership harden (#117) | ✅ Exact ownership + atomic write |
+| Codex observe product surface (#107/#118) | ✅ Discovery/cursor/codexctl; observe-only L0 |
+| Typed ProposedAction (#115) | ✅ ToolName ≠ Command |
+| PreTool response semantics (#116) | ✅ No `continue:false` for ordinary tool deny |
+| Action Alignment design (#104) + wire contract (#119) | ✅ Concept + closed schemas/FakeProvider |
+| Shadow classifier runtime (#105) | ✅ Library shadow; `Enforced=false` always |
+| M3 synthetic + FP benchmarks (#100) | ✅ Offline runner; disposition MORE-DATA; **no hard-gate** |
+| Managed worktree checkpoint/rollback (#99) | ✅ Clean-only under managed root; not primary checkout |
 | FileActuator advice channel (#97) | ✅ JSONL `reinframe.advice.v1`; write ≠ agent receipt |
 | Street-wire demo (`cmd/streetwire`) | ✅ Offline Codex + M2 loops + bridge + FileActuator demos |
 | Optional LLM Reviewer (OpenAI-compatible, ADR 003 local-only default) | ✅ Uncertain path only; high-confidence never calls LLM (`cmd/reviewerdemo`) |
-| Typed ProposedAction (#115) | 🔲 Open |
-| Claude PreTool response semantics (#116) | 🔲 Open (blocked by #115) |
-| Claude settings ownership harden (#117) | 🔲 Open |
-| Codex collision-safe identity/tail (#118) | 🔲 Open |
-| Classifier wire contract (#119) | 🔲 Open (merge after #115) |
-| Live Claude ALLOW/BLOCK smoke (#120) | 🔲 Open (blocked by #115/#116/#117) |
+| Live Claude ALLOW/BLOCK smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
 | Real advice consumer / ACK (#108) | 🔲 Open (blocked by #120) |
-| Shadow classifier runtime (#105) | 🔲 Open (blocked by #119+#115) |
-| Git Checkpoint/Rollback runtime (#99) | 🔲 Open |
-| M3 synthetic + FP benchmarks (#100) | 🔲 Open (blocked by #105 for classifier layer) |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Project Objective
@@ -122,10 +120,11 @@ reinframe/
 Available:  Detectors → Policy → Orchestrator → HookGate / queue / FileActuator|Fake
             Codex JSONL offline + tail EventSource; Claude PreTool fixture/CLI bridge
             Claude project-local installer (unit); codexctl observe helpers
+            ProposedAction, shadow classifier (Enforced=false), offline M3 benches
+            managed worktree checkpoint/rollback (clean-only under managed root)
 Not claimed: global ~/.claude silent install, process-attach daemon,
-             live dual-host supervision, calibrated hard-gates (#100),
-             live Claude smoke (#120), advice agent receipt (#108),
-             classifier wire/runtime (#119/#105), git rollback (#99)
+             live dual-host supervision, calibrated hard-gates,
+             live Claude smoke (#120), advice agent receipt (#108)
 ```
 Vertical-slice and street-wire tests prove the **library and channel** paths. Host consumers of FileActuator / optional hook install remain operator-owned.
 
@@ -199,7 +198,7 @@ Intervention escalation after detection is a **separate axis** (B0–B3). See `d
 
 Contributions welcome! Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md) for open work (epic **#80**; ready **#115/#117/#118/#119/#121/#99**; blocked **#116/#120/#105/#108/#100**)
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md) for open work (epic **#80**; blocked **#120** live smoke, **#108** advice consumer)
 2. Follow existing code style and test patterns; keep honesty boundaries (no false product claims)
 3. Run `go test -race ./...` before submitting PRs
 4. All PRs require CI green on all three platforms + AI review comment before merge (project standard)

@@ -1,0 +1,6 @@
+{
+  "schema_version": "reinframe.classifier_fixture.v1",
+  "name": "repo_policy_exception",
+  "expected_decision": "ALLOW",
+  "note": "Golden name locked by #119; filled by #105 FakeClassifierProvider"
+}

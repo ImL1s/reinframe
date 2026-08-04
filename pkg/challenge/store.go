@@ -26,16 +26,43 @@ type Store struct {
 	// idSeq is store-scoped so concurrent Service instances cannot collide IDs.
 	idMu  sync.Mutex
 	idSeq uint64
+	// nonAppealBarrier marks session|fingerprint that was hard-denied or escalated
+	// so a concurrent weaker Open cannot insert after supersession returns.
+	// Protected by mu.
+	nonAppealBarrier map[string]string // key session|fp -> note
 }
 
 // NewStore creates an empty store.
 func NewStore() *Store {
 	return &Store{
-		byID:           make(map[string]*ChallengeRecord),
-		justifications: make(map[string]Justification),
-		openByFP:       make(map[string]string),
-		terminalCh:     make(map[string]chan struct{}),
+		byID:             make(map[string]*ChallengeRecord),
+		justifications:   make(map[string]Justification),
+		openByFP:         make(map[string]string),
+		terminalCh:       make(map[string]chan struct{}),
+		nonAppealBarrier: make(map[string]string),
 	}
+}
+
+func barrierKey(sessionID, fingerprint string) string {
+	return sessionID + "|" + fingerprint
+}
+
+// markNonAppealBarrierLocked records that session|fp must not open a new appealable challenge.
+// Caller holds mu.
+func (s *Store) markNonAppealBarrierLocked(sessionID, fingerprint, note string) {
+	if s.nonAppealBarrier == nil {
+		s.nonAppealBarrier = make(map[string]string)
+	}
+	s.nonAppealBarrier[barrierKey(sessionID, fingerprint)] = note
+}
+
+// nonAppealBarrierNoteLocked returns the barrier note if present. Caller holds mu.
+func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint string) (string, bool) {
+	if s.nonAppealBarrier == nil {
+		return "", false
+	}
+	n, ok := s.nonAppealBarrier[barrierKey(sessionID, fingerprint)]
+	return n, ok
 }
 
 // newID allocates a store-wide unique challenge/human-review id.

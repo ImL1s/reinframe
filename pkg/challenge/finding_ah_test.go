@@ -668,6 +668,74 @@ func TestOwnerCancelDuringReEvalNoAllow(t *testing.T) {
 	}
 }
 
+// Codex: compound full-suite must not share test_suite fingerprint.
+func TestCompoundFullSuiteNotTestSuiteIdentity(t *testing.T) {
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("go test ./..."), SessionID: "sess-1"})
+	compound := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("go test ./...; rm -rf build"), SessionID: "sess-1"})
+	if plain.SideEffectClass != challenge.SideEffectTestSuite {
+		t.Fatalf("plain want test_suite got %s", plain.SideEffectClass)
+	}
+	if compound.SideEffectClass == challenge.SideEffectTestSuite {
+		t.Fatal("compound full-suite must not be test_suite")
+	}
+	if plain.Fingerprint == compound.Fingerprint {
+		t.Fatal("compound must not share fingerprint with plain suite")
+	}
+}
+
+// Codex: find path roots stop at first expression predicate.
+func TestFindDeleteTargetsExcludeNameArgs(t *testing.T) {
+	narrow := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -name cache -delete"), SessionID: "sess-1"})
+	wide := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build cache -delete"), SessionID: "sess-1"})
+	if narrow.SideEffectClass != challenge.SideEffectDeleteTree || wide.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("want delete_tree narrow=%s wide=%s", narrow.SideEffectClass, wide.SideEffectClass)
+	}
+	if narrow.Fingerprint == wide.Fingerprint {
+		t.Fatal("find -name operand must not equal second path root")
+	}
+	if len(narrow.TargetResources) != 1 || narrow.TargetResources[0] != "build" {
+		t.Fatalf("narrow targets=%v want [build]", narrow.TargetResources)
+	}
+}
+
+// Codex: replace_all must bind into edit digest.
+func TestEditReplaceAllChangesFingerprint(t *testing.T) {
+	aPayload, _ := json.Marshal(map[string]any{"new_string": "X", "replace_all": false})
+	bPayload, _ := json.Marshal(map[string]any{"new_string": "X", "replace_all": true})
+	a := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ActionID: "e1", ToolName: "Edit", ToolClass: adapter.ToolClassEdit,
+		FilePath: "main.go", RedactedPayload: aPayload, ParseStatus: "ok",
+		WorkspaceRevision: "ws-1", ContractRevision: 3,
+	}
+	b := a
+	b.ActionID = "e2"
+	b.RedactedPayload = bPayload
+	fa := mustFP(t, challenge.FingerprintInput{Proposed: a, SessionID: "sess-1"})
+	fb := mustFP(t, challenge.FingerprintInput{Proposed: b, SessionID: "sess-1"})
+	if fa.Fingerprint == fb.Fingerprint {
+		t.Fatal("replace_all false vs true must not share fingerprint")
+	}
+}
+
+// Codex: hard-deny barrier blocks later appealable Open for same session|fp.
+func TestHardDenyBarrierBlocksLaterAppealableOpen(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	pa := samplePA("rm -rf build")
+	_, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassSecretExfiltration,
+	})
+	if err == nil {
+		t.Fatal("expected non-appealable")
+	}
+	_, err = svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err == nil {
+		t.Fatal("appealable Open after hard deny must be blocked by barrier")
+	}
+}
+
 // Codex P1: HUMAN_REVIEW Open expires prior productivity challenge for same session|fp.
 func TestHumanReviewExpiresActiveProductivityChallenge(t *testing.T) {
 	svc := challenge.NewService(challenge.ServiceConfig{})

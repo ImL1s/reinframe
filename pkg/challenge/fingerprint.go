@@ -157,6 +157,10 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 	}
 
 	if adapter.FullSuiteCommand(pa) {
+		// Compound shells that merely contain ./... must not collapse to test_suite identity.
+		if shellHasCompoundOrQuoting(cmd) {
+			return SideEffectShellGeneric, extractPaths(cmd), nil
+		}
 		return SideEffectTestSuite, []string{"./..."}, nil
 	}
 	if reSecretOut.MatchString(cmd) {
@@ -310,10 +314,22 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 		newDig = digestBytes([]byte(pa.Arguments[1]))
 	}
 
+	// Closed payload keys only — unknown control fields are rejected (e.g. replace_all).
+	allowedEditPayloadKeys := map[string]struct{}{
+		"old_string": {}, "old_str": {},
+		"new_string": {}, "new_str": {}, "content": {}, "contents": {},
+		"file_path": {}, "path": {},
+		"replace_all": {},
+	}
 	if len(pa.RedactedPayload) > 0 && string(pa.RedactedPayload) != "{}" && string(pa.RedactedPayload) != "null" {
 		var m map[string]any
 		if err := json.Unmarshal(pa.RedactedPayload, &m); err != nil {
 			return "", fmt.Errorf("proposed_action: edit redacted_payload is not valid JSON object")
+		}
+		for k := range m {
+			if _, ok := allowedEditPayloadKeys[k]; !ok {
+				return "", fmt.Errorf("proposed_action: edit payload key %q unsupported", k)
+			}
 		}
 		if s := stringField(m, "old_string", "old_str"); s != "" {
 			d := digestBytes([]byte(s))
@@ -328,6 +344,10 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 				return "", fmt.Errorf("proposed_action: edit new content conflicts between args and payload")
 			}
 			newDig = d
+		}
+		// Bind replace_all so false vs true cannot share fingerprint.
+		if v, ok := m["replace_all"]; ok {
+			parts["replace_all"] = fmt.Sprintf("%v", v)
 		}
 	}
 
@@ -505,10 +525,12 @@ func extractFindDeleteTargets(cmd string) []string {
 		return nil
 	}
 	i++ // skip find
+	// GNU find: [path...] [expression]. First '-' token starts the expression;
+	// do not treat -name PATTERN operands as roots.
 	for ; i < len(fields); i++ {
 		f := fields[i]
 		if strings.HasPrefix(f, "-") {
-			continue
+			break
 		}
 		out = append(out, normalizeResource(f))
 	}

@@ -114,9 +114,11 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 	// hard deny cannot be bypassed via a stale productivity challenge retry.
 	if appeal == AppealNonAppealable {
 		now := s.now()
-		// Expire under lock so concurrent appealable Open cannot race past supersession.
+		// Expire under lock + durable barrier so a concurrent appealable Open cannot
+		// insert after this hard deny returns.
 		s.store.mu.Lock()
 		s.expireActiveByFingerprintLocked(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_hard_block", now)
+		s.store.markNonAppealBarrierLocked(req.SessionID, fp.Fingerprint, "hard_block")
 		s.store.mu.Unlock()
 		rec := ChallengeRecord{
 			SchemaVersion:     SchemaChallengeRecord,
@@ -176,6 +178,7 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 		}
 		s.store.mu.Lock()
 		s.expireActiveByFingerprintLocked(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_human_review", now)
+		s.store.markNonAppealBarrierLocked(req.SessionID, fp.Fingerprint, "human_review")
 		rec = s.store.appendTransition(rec, "", StateHumanReview, "human_review", req.CorrelationID, req.Proposed.ActionID, fp.Fingerprint, "open_human_review", now, nil)
 		s.store.mu.Unlock()
 		s.signalTerminal(rec.ChallengeID)
@@ -218,6 +221,10 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
+	// Hard-deny / human-review barrier: reject weaker concurrent Open after supersession.
+	if note, blocked := s.store.nonAppealBarrierNoteLocked(req.SessionID, fp.Fingerprint); blocked {
+		return ChallengeRecord{}, fmt.Errorf("challenge open: non-appealable barrier (%s) for fingerprint", note)
+	}
 	// Under lock: reclaim any active record with the same action fingerprint.
 	// Collect IDs first — do not range+mutate byID (map iteration skips on concurrent map writes).
 	// Always expire policy mismatches first; return a single policy match if any remains.

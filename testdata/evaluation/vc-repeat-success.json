@@ -1,0 +1,31 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "vc-repeat-success",
+  "scenario_class": "positive_deviation",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "verification_churn",
+  "source": "synthetic",
+  "validation_attempts": [
+    {
+      "command": "go test ./...",
+      "target_scope": [
+        "."
+      ],
+      "workspace_rev": "r1",
+      "contract_revision": 1,
+      "purpose": "full",
+      "succeeded": true
+    },
+    {
+      "command": "go test ./...",
+      "target_scope": [
+        "."
+      ],
+      "workspace_rev": "r1",
+      "contract_revision": 1,
+      "purpose": "full",
+      "succeeded": true
+    }
+  ],
+  "expect_detector_fire": true
+}

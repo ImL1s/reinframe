@@ -1,0 +1,10 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "cls-malformed",
+  "scenario_class": "boundary_robustness",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "classifier_shadow",
+  "source": "synthetic",
+  "classifier_fixture": "malformed_output",
+  "expect_stage2_decision": "ALLOW"
+}

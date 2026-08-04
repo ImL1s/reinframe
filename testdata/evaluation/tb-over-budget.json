@@ -1,0 +1,18 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "tb-over-budget",
+  "scenario_class": "positive_deviation",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "tool_budget",
+  "source": "synthetic",
+  "tool_calls": [
+    "Bash",
+    "Bash",
+    "Bash",
+    "Bash",
+    "Bash",
+    "Bash"
+  ],
+  "tool_budget_max": 5,
+  "expect_detector_fire": true
+}

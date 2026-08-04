@@ -1,9 +1,11 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-04) — open-set sync (#142) after residual library drain + PR #133
+**Status:** current (2026-08-04) — post-#142/PR #143 and PR #144 challenge/provider/cache follow-up  
 **Wins on conflict:** README (public status) > this file (executable queue) > `docs/specs/*` (normative model) > Epic #80 (tracker) > historical docs.
 
-## Implemented (narrow DoD — do not reopen for same scope)
+Governance issue #142 and PR #143 completed the initial open-set sync; PR #144 removed #142 from the active set after closure. They are historical here, not active product work.
+
+## Implemented (narrow DoD — do not reopen for the same scope)
 
 | Track | Issues/PRs | Honesty boundary |
 |-------|------------|------------------|
@@ -13,104 +15,130 @@
 | Codex observation scaffold | #95 / #101–#102 | Offline + near-live JSONL tail; not process attach |
 | Claude bridge API | #96 / #102 | Experimental API/CLI |
 | FileActuator | #97 / #102 | Write ≠ agent receipt |
-| Review-session detectors | #98 / #101–#102 | Library + thin policy; uncalibrated |
-| Optional LLM reviewer | PR #103 | Uncertain path only; high-confidence no LLM |
-| Governance / source of truth | **#109 / PR #110** + **#121 / PR #122** | CURRENT + README honesty |
-| Action Alignment design | **#104 / PR #111** | Concept Stage 0/1/2 only |
-| Classifier wire contract | **#119 / PR #126** | Schemas, ADR 005, FakeProvider |
-| Claude project-local install | **#106 / PR #112** | Installer unit; **no live smoke** |
-| Claude settings harden | **#117 / PR #124** | Exact ownership; atomic write |
-| ProposedAction projection | **#115 / PR #123** | ToolName ≠ Command |
-| PreTool response semantics | **#116 / PR #127** | No `continue:false` for tool deny |
-| Codex product observe + identity | **#107/#118 / PR #113–#125** | Observe-only L0; collision-safe IDs |
-| Shadow classifier | **#105 / PR #128** | `Enforced=false` always |
-| M3 synthetic/FP benchmarks | **#100 / PR #129** | MORE-DATA; **no hard-gate** |
-| Managed worktree rollback | **#99 / PR #130** | Clean-only; not primary checkout |
-| Post-merge P1 hygiene | **PR #133** | Eval rate denominators; workspace fail-closed |
-| Open-set governance | **#142 / PR #143** | README/CURRENT/Epic match live open set |
+| Review-session detectors | #98 / #101–#102 | Library + thin policy; provisional |
+| Optional LLM reviewer | PR #103 | Uncertain path only; not the classifier provider |
+| Governance / source of truth | #109/#121/#142 / PR #110/#122/#143/#144 | README/CURRENT/Epic synchronization only |
+| Action Alignment design | #104 / PR #111 | Concept Stage 0/1/2 only |
+| Classifier wire contract | #119 / PR #126 | Schemas, ADR 005, FakeProvider |
+| Claude project-local install | #106 / PR #112 | Installer unit; **no live smoke** |
+| Claude settings harden | #117 / PR #124 | Exact ownership; atomic write |
+| ProposedAction projection | #115 / PR #123 | ToolName ≠ Command |
+| PreTool response semantics | #116 / PR #127 | No `continue:false` for ordinary tool deny |
+| Codex product observe + identity | #107/#118 / PR #113–#125 | Observe-only L0; collision-safe IDs |
+| Shadow classifier | #105 / PR #128 | `Enforced=false` always |
+| M3 synthetic/FP benchmark foundation | #100 / PR #129 | **MORE-DATA**; no hard-gate |
+| Managed worktree rollback | #99 / PR #130 | Clean-only; not primary checkout |
+| Post-merge hygiene | PR #133 | Evaluation denominator, workspace fail-closed, docs |
 
-## Active backlog (open only — must match `gh issue list --state open`)
+## Active backlog (product/research issues only)
 
-Full open set: **#80, #108, #120, #131, #132, #134, #135, #136, #137, #138, #139, #140, #141** (#142 closed via PR #143).
+### Ready — no open code dependency
 
-### Ready product / docs work
-
-| Issue | Pri | Notes |
-|-------|-----|-------|
-| **#131** | P1 | Appealable BLOCK challenges + one-shot semantic retries (host-neutral). Public classifier enum stays `ALLOW \| BLOCK`. |
-| **#132** | P1 | Classifier provider runtime, usage telemetry, capability-safe generic adapter |
+| Issue | Pri | Scope | Boundary |
+|-------|-----|-------|----------|
+| **#131** | P1 | Appealable productivity BLOCK, justification, one-shot semantic retry | Host-neutral core; no live Claude claim |
+| **#132** | P1 | Real classifier provider runtime, strict parser, normalized usage, cache-neutral generic adapter | No native provider/cache claim |
 
 ### Blocked by environment
 
+| Issue | Pri | Blocker | Notes |
+|-------|-----|---------|-------|
+| **#120** | P0 | Interactive/operator Claude Code session | Pinned project-local ALLOW/BLOCK/context smoke; `BLOCKED_BY_ENVIRONMENT` |
+
+Closed #115/#116/#117 are implementation prerequisites, not current blockers. Do not mark #120 ready until the live behavioral evidence exists.
+
+### Blocked by open code/evidence dependency
+
 | Issue | Pri | Blocked by | Notes |
 |-------|-----|------------|-------|
-| **#120** | P0 | interactive Claude only | Pinned live project-local ALLOW/BLOCK smoke — `BLOCKED_BY_ENVIRONMENT` (impl prereqs #115/#116/#117 closed) |
-| **#108** | P0 | **#120** | Real advice consume / SafeBoundary / ACK; challenge ownership stays #131/#139 |
+| **#108** | P0 | **#120** | Real advice consumer / SafeBoundary / honest ACK; does not own challenge state |
+| **#139** | P1 | **#131 + #120** | Claude challenge context, structured appeal, bound one-shot retry |
+| **#134** | P1 | **#132** | Native OpenAI Responses + explicit prompt-cache controls |
+| **#135** | P1 | **#132** | Native Anthropic Messages + `cache_control` profiles |
+| **#136** | P1 | **#132** | Native Gemini `generateContent` + implicit-cache telemetry/eligibility |
+| **#137** | P1 | **#132** | Native xAI Responses + sticky prefix-cache routing |
+| **#138** | P1 | **#132** | Exact `RawAssessment` cache + singleflight + cache observability |
+| **#140** | P2 | **#131** for Lane A | Challenge appeal, bypass, recovery, and cost evaluation; later lanes need provider/#139 |
+| **#141** | P2 | **#132** minimum | Provider/cache correctness and economics; full scope needs #138 + native provider lane |
+| **#80** | epic | — | Residual tracker; keep open |
 
-### Blocked by code dependencies
+## Architectural invariants
 
-| Issue | Pri | Blocked by | Notes |
-|-------|-----|------------|-------|
-| **#134** | P1 | **#132** | OpenAI native Responses classifier adapter |
-| **#135** | P1 | **#132** | Anthropic native Messages adapter |
-| **#136** | P1 | **#132** | Gemini native generateContent adapter |
-| **#137** | P1 | **#132** | xAI native Responses adapter |
-| **#138** | P1 | **#132** | Exact-assessment memoization / singleflight / cache observability |
-| **#139** | P1 | **#131** and **#120** | Claude appeal delivery + structured one-shot retries |
-| **#140** | P2 | **#131** (Lane A); **#139** / **#132**+provider for later lanes | Challenge appeal / bypass / recovery benchmarks (no hard-gate) |
-| **#141** | P2 | **#132**; exact-cache lane **#138**; provider-cache lanes **#134–#137** | Provider/exact-cache economics benchmarks (no hard-gate) |
-| **#80** | epic | — | Residual tracker; keep OPEN |
-
-## Execution order (remaining)
+### Classifier vs challenge
 
 ```text
-Ready, parallel:
+Classifier / deterministic resolver: ALLOW | BLOCK
+Appeal workflow metadata: none | APPEALABLE_CHALLENGE | HUMAN_REVIEW
+```
+
+`CHALLENGE` is not a third classifier decision. A justification is new evidence, never automatic permission. Hard security boundaries remain non-appealable or require human review.
+
+### Provider cache vs Reinframe exact cache
+
+```text
+Stage 0 deterministic skip       → no model call
+Reinframe exact assessment hit   → provider call skipped
+Provider prompt/prefix cache     → provider call occurs; provider may reuse prefix work
+No cache                         → normal provider path
+```
+
+The generic OpenAI-compatible adapter defaults to no vendor-specific cache capability. Native adapters own provider-specific fields. Cache never owns the final decision; Stage 2 reruns with current threshold, exceptions, policy, approval, and challenge state.
+
+## Execution order
+
+```text
+Ready in parallel:
   #131 challenge core
   #132 provider runtime
 
 Environment lane:
-  #120 pinned live Claude ALLOW/BLOCK/context smoke
+  #120 live Claude smoke
     → #108 generic advice consumer
 
 After #131 + #120:
-  #139 Claude challenge delivery / one-shot retry
+  #139 Claude challenge integration
 
 After #132, parallel:
-  #134 OpenAI native cache
-  #135 Anthropic native cache
-  #136 Gemini native cache
-  #137 xAI native cache
-  #138 exact cache + singleflight
+  #134 OpenAI native adapter/cache
+  #135 Anthropic native adapter/cache
+  #136 Gemini native adapter/cache
+  #137 xAI native adapter/cache
+  #138 exact assessment cache + singleflight
 
-Evaluation (follow-ups to closed #100 MORE-DATA — do not reopen #100):
-  #140 Lane A after #131; Claude lane after #139; model lane after #132 + provider
-  #141 after #132 plus #138 and at least one native provider lane
-
-Epic #80 stays open until product-complete or explicit scope transfer.
-Future hard-gate promotion only after LIMITED-GO evidence + separate issue
-(#100 disposition is MORE-DATA — do not promote).
+Evaluation:
+  #140 Lane A after #131
+       model-backed lane after #132 + native provider
+       Claude lane after #139
+  #141 after #132 and the implementation lanes selected for its matrix
 ```
 
 ## Explicit non-claims
 
-- No calibrated hard-gate (MORE-DATA on synthetic #100)
-- No silent global Claude/Codex install
-- No dual-host production supervision claim
-- FileActuator write ≠ agent receipt
-- Codex JSONL tail / codexctl ≠ bidirectional control
-- #106 installer ≠ proven live control-loop without #120
-- OS SIGSTOP ≠ CapPause
-- Managed worktree rollback ≠ primary checkout mutation
-- #119 FakeProvider / #105 shadow ≠ production provider runtime (#132 open)
-- #131 appeal design ≠ live Claude retry proof (#139 needs #131 and #120)
-- #140/#141 evaluation issues ≠ implementation of challenge/providers/cache
-- No native provider, token-savings, or cache-hit claims until measured
+- No calibrated classifier/detector hard-gate; #100 disposition is **MORE-DATA**  
+- No live challenge-response product  
+- No real production classifier provider beyond fakes until #132 and a provider adapter land  
+- No cross-provider cache API equivalence claim  
+- No measured token/cost savings before #141 evidence  
+- No silent global Claude/Codex install  
+- No dual-host production supervision claim  
+- FileActuator write or context transport ≠ explicit agent ACK  
+- Codex JSONL tail / codexctl ≠ bidirectional control  
+- #106 installer ≠ #120 live control-loop proof  
+- OS SIGSTOP ≠ native CapPause  
+- Managed worktree rollback ≠ primary checkout or external-side-effect rollback  
 
 ## Evaluation
 
-Offline synthetic benchmarks: [`docs/evaluation/m3_benchmarks.md`](../evaluation/m3_benchmarks.md). Hard-gates not enabled. Report disposition **MORE-DATA**. Follow-up datasets: #140 (challenges), #141 (provider/cache).
+Baseline offline synthetic benchmarks: [`docs/evaluation/m3_benchmarks.md`](../evaluation/m3_benchmarks.md). The report disposition is **MORE-DATA** and hard-gates remain disabled.
+
+Follow-ups:
+
+- #140 evaluates challenge appeal quality, semantic bypass resistance, recovery, and added cost.
+- #141 evaluates provider prefix caching, Reinframe exact caching, singleflight, correctness invariance, and measured economics.
+
+Both require a separate promotion issue for any enforcement or default-enable decision.
 
 ## Historical sources (not executable backlog)
 
-- `docs/plans/2026-08-03-issue-queue.md` — superseded
-- Closed Epic #1 — foundation archive
+- `docs/plans/2026-08-03-issue-queue.md` — superseded  
+- Closed Epic #1 — foundation archive  

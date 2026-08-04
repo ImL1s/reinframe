@@ -1,6 +1,8 @@
 # Claude PreTool response semantics (#116)
 
-**Pinned profile:** `reinframe.claude_hook_response.v1`
+**Pinned profile:** `reinframe.claude_hook_response.v1`  
+
+**Host pin honesty:** Claude Code does not publish a single stable public Hook JSON schema version pin that Reinframe can freeze forever. This profile is Reinframe’s closed subset of the documented PreToolUse fields (`decision`, `hookSpecificOutput.permissionDecision` = allow|deny|ask). Unknown host mode uses fail-closed (`unsupported_host_version`). Live version evidence is tracked under #120.
 
 ## Tool-level BLOCK
 

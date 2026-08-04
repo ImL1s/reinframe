@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/ImL1s/reinframe/pkg/workspace"
@@ -76,7 +77,8 @@ func TestManagedWorktree_CheckpointRollback(t *testing.T) {
 		t.Fatalf("restored=%s want %s", rb.RestoredCommitHash, rec.HEAD)
 	}
 	b, _ := os.ReadFile(filepath.Join(wt.Path, "README"))
-	if string(b) != "v1\n" {
+	// Normalize CRLF (Windows git autocrlf) before compare.
+	if strings.TrimSpace(string(b)) != "v1" {
 		t.Fatalf("content=%q", b)
 	}
 }
@@ -147,6 +149,45 @@ func TestManagedWorktree_SymlinkRootFailClosed(t *testing.T) {
 	}
 	if _, err := workspace.NewRegistry(link); err == nil {
 		t.Fatal("expected symlink root fail closed")
+	}
+}
+
+func TestManagedWorktree_UntrackedAfterCheckpointFailsRollback(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	base := t.TempDir()
+	initRepo(t, base)
+	root := t.TempDir()
+	reg, _ := workspace.NewRegistry(root)
+	wt, err := reg.CreateWorktree("s", base, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, _, err := reg.Checkpoint(wt, "ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// New untracked file after checkpoint — clean-only policy fails closed on rollback.
+	if err := os.WriteFile(filepath.Join(wt.Path, "ghost.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Rollback(wt, rec); err == nil {
+		t.Fatal("expected untracked drift fail closed")
+	}
+}
+
+func TestManagedWorktree_PrimaryCheckoutRejectedAsManaged(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	// Primary checkout = base repo outside managed root cannot be Adopted.
+	base := t.TempDir()
+	initRepo(t, base)
+	root := t.TempDir()
+	reg, _ := workspace.NewRegistry(root)
+	if _, err := reg.AdoptExisting("s", base); err == nil {
+		t.Fatal("primary/outside must be rejected")
 	}
 }
 

@@ -51,6 +51,7 @@ type CheckpointRecord struct {
 	CheckpointID       string    `json:"checkpoint_id"`
 	SessionID          string    `json:"session_id"`
 	ManagedWorktreeID  string    `json:"managed_worktree_id"`
+	Generation         int       `json:"generation"`
 	GitCommonDir       string    `json:"git_common_dir"`
 	WorktreePath       string    `json:"worktree_path"`
 	HEAD               string    `json:"head"`
@@ -95,10 +96,7 @@ func (r *Registry) CreateWorktree(sessionID, baseRepo, branch string) (*ManagedW
 	if err != nil {
 		return nil, err
 	}
-	if err := r.rejectPrimaryAsTarget(baseAbs); err != nil {
-		// base is source repo — allowed; we only reject using primary as managed path.
-		_ = err
-	}
+	// baseAbs is source repository only (never the managed target).
 	if err := requireGitRepo(baseAbs); err != nil {
 		return nil, err
 	}
@@ -125,9 +123,8 @@ func (r *Registry) CreateWorktree(sessionID, baseRepo, branch string) (*ManagedW
 		_ = removeWorktree(baseAbs, dest)
 		return nil, err
 	}
-	// Ignore checkpoint store so clean-only checks stay valid after Checkpoint writes.
-	gitignore := filepath.Join(dest, ".gitignore")
-	if err := os.WriteFile(gitignore, []byte(".reinframe-checkpoints/\n"), 0o644); err != nil {
+	// Ensure checkpoint store is gitignored without wiping existing .gitignore.
+	if err := ensureGitignoreLine(dest, ".reinframe-checkpoints/"); err != nil {
 		_ = removeWorktree(baseAbs, dest)
 		return nil, err
 	}
@@ -209,6 +206,7 @@ func (r *Registry) Checkpoint(wt *ManagedWorktree, reason string) (*CheckpointRe
 		CheckpointID:          id,
 		SessionID:             wt.SessionID,
 		ManagedWorktreeID:     wt.ID,
+		Generation:            wt.Generation,
 		GitCommonDir:          wt.GitCommonDir,
 		WorktreePath:          wt.Path,
 		HEAD:                  head,
@@ -262,9 +260,14 @@ func (r *Registry) Rollback(wt *ManagedWorktree, rec *CheckpointRecord) (*protoc
 		res.ErrorMessage = "checkpoint worktree mismatch"
 		return res, fmt.Errorf("workspace: %s", res.ErrorMessage)
 	}
-	if rec.SessionID != "" && wt.SessionID != "" && rec.SessionID != wt.SessionID {
+	if rec.SessionID == "" || wt.SessionID == "" || rec.SessionID != wt.SessionID {
 		res.Success = false
-		res.ErrorMessage = "checkpoint session mismatch"
+		res.ErrorMessage = "checkpoint session mismatch (fail closed)"
+		return res, fmt.Errorf("workspace: %s", res.ErrorMessage)
+	}
+	if rec.Generation != 0 && wt.Generation != 0 && rec.Generation != wt.Generation {
+		res.Success = false
+		res.ErrorMessage = "worktree generation mismatch"
 		return res, fmt.Errorf("workspace: %s", res.ErrorMessage)
 	}
 	common, err := gitCommonDir(wt.Path)
@@ -288,7 +291,14 @@ func (r *Registry) Rollback(wt *ManagedWorktree, rec *CheckpointRecord) (*protoc
 	}
 	prev, _ := gitOutput(wt.Path, "rev-parse", "HEAD")
 	res.PreviousCommitHash = prev
-	if out, err := git(wt.Path, "reset", "--hard", rec.HEAD); err != nil {
+	// Require full commit object id before mutate.
+	commit, err := gitOutput(wt.Path, "rev-parse", "--verify", rec.HEAD+"^{commit}")
+	if err != nil || commit == "" {
+		res.Success = false
+		res.ErrorMessage = "checkpoint HEAD is not a commit object"
+		return res, fmt.Errorf("workspace: %s", res.ErrorMessage)
+	}
+	if out, err := git(wt.Path, "reset", "--hard", commit); err != nil {
 		res.Success = false
 		res.ErrorMessage = fmt.Sprintf("reset failed: %v (%s)", err, out)
 		return res, fmt.Errorf("workspace: %s", res.ErrorMessage)
@@ -341,7 +351,7 @@ func (r *Registry) validateOwned(wt *ManagedWorktree) error {
 
 func (r *Registry) underRoot(abs string) error {
 	rel, err := filepath.Rel(r.Root, abs)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || strings.HasPrefix(rel, "..") || rel == "." {
 		return fmt.Errorf("workspace: path outside managed root (fail closed)")
 	}
 	return nil
@@ -415,7 +425,18 @@ func requireClean(path string) error {
 }
 
 func gitCommonDir(path string) (string, error) {
-	return gitOutput(path, "rev-parse", "--git-common-dir")
+	out, err := gitOutput(path, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	if filepath.IsAbs(out) {
+		return filepath.Clean(out), nil
+	}
+	abs, err := filepath.Abs(filepath.Join(path, out))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
 }
 
 func git(dir string, args ...string) (string, error) {
@@ -451,6 +472,25 @@ func writeJSON(path string, v any) error {
 	}
 	b = append(b, '\n')
 	return os.WriteFile(path, b, 0o600)
+}
+
+func ensureGitignoreLine(dir, line string) error {
+	path := filepath.Join(dir, ".gitignore")
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	content := string(b)
+	for _, l := range strings.Split(content, "\n") {
+		if strings.TrimSpace(l) == line {
+			return nil
+		}
+	}
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += line + "\n"
+	return os.WriteFile(path, []byte(content), 0o644)
 }
 
 func shortID(s string) string {

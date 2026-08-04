@@ -57,6 +57,7 @@ Schema: `reinframe.proposed_action.v1`
   "model_id": "",
   "model_version": "",
   "prompt_hash": "",
+  "ruleset_id": "",
   "ruleset_hash": "",
   "parse_status": "ok",
   "latency_ms": 0

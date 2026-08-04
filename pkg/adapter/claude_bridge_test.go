@@ -106,15 +106,25 @@ func TestEvaluateClaudePreTool_BeforeToolDisproportionate(t *testing.T) {
 	for _, cr := range c.SuccessCriteria {
 		led.CriteriaStatus[cr.ID] = protocol.CriterionStatus{CriterionID: cr.ID, Status: "met"}
 	}
+	// Real Claude shape: tool_name=Bash, command in tool_input (#115).
 	in, err := adapter.MapClaudePreToolUseJSON([]byte(
-		`{"session_id":"s4","tool_name":"go test -race ./...","tool_input":{}}`,
+		`{"session_id":"s4","tool_name":"Bash","tool_input":{"command":"go test -race ./..."}}`,
 	))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if in.ToolName != "Bash" || in.Proposed == nil || in.Proposed.Command != "go test -race ./..." {
+		t.Fatalf("mapping: tool=%s proposed=%+v", in.ToolName, in.Proposed)
+	}
 	eng := policy.NewEngine(policy.EngineConfig{})
 	resp, dec, err := adapter.EvaluateClaudePreTool(context.Background(), in, adapter.ClaudeBridgeConfig{
 		Evaluate: func(ctx context.Context, req adapter.HookRequest) adapter.HookDecision {
+			if req.ToolName != "Bash" {
+				t.Errorf("HookRequest.ToolName must stay Bash, got %q", req.ToolName)
+			}
+			if req.Proposed == nil || !adapter.FullSuiteCommand(*req.Proposed) {
+				t.Errorf("expected full-suite ProposedAction on request")
+			}
 			return eng.EvaluateBeforeTool(ctx, policy.BeforeToolInput{
 				Request:    req,
 				Contract:   c,

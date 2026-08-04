@@ -63,9 +63,20 @@ func TestEffortCalibration_OverSOPVerticalSlice(t *testing.T) {
 
 	eng := policy.NewEngine(policy.EngineConfig{})
 	// 4) Agent attempts full suite again → before_tool DENY
-	tool := "go test -race ./..."
+	// Real host shape: ToolName=Bash, Command in ProposedAction (#115).
+	pa := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion,
+		SessionID:     intake.Submitted.SessionID,
+		ToolName:      "Bash",
+		ToolClass:     adapter.ToolClassShell,
+		Command:       "go test -race ./...",
+		Source:        "claude_pretool",
+	}
 	dec := eng.EvaluateBeforeTool(ctx, policy.BeforeToolInput{
-		Request:     adapter.HookRequest{SessionID: intake.Submitted.SessionID, Phase: "PreTool", ToolName: tool},
+		Request: adapter.HookRequest{
+			SessionID: intake.Submitted.SessionID, Phase: "PreTool",
+			ToolName: "Bash", Proposed: &pa,
+		},
 		BasePolicy:  adapter.HookPolicy{},
 		Contract:    c,
 		Ledger:      &led,
@@ -98,8 +109,16 @@ func TestEffortCalibration_DisproportionateWithoutPriorFullSuite(t *testing.T) {
 		led.CriteriaStatus[cr.ID] = protocol.CriterionStatus{CriterionID: cr.ID, Status: "met"}
 	}
 	eng := policy.NewEngine(policy.EngineConfig{})
+	pa := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion,
+		SessionID:     "effort-2",
+		ToolName:      "Bash",
+		ToolClass:     adapter.ToolClassShell,
+		Command:       "go test -race ./...",
+		Source:        "claude_pretool",
+	}
 	dec := eng.EvaluateBeforeTool(ctx, policy.BeforeToolInput{
-		Request:    adapter.HookRequest{SessionID: "effort-2", ToolName: "go test -race ./..."},
+		Request:    adapter.HookRequest{SessionID: "effort-2", ToolName: "Bash", Proposed: &pa},
 		Contract:   c,
 		Ledger:     &led,
 		BasePolicy: adapter.HookPolicy{},
@@ -145,8 +164,13 @@ func TestEffortCalibration_HighRiskAllowsFullSuite(t *testing.T) {
 	led := protocol.NewEvidenceLedger("t", 1)
 	led.CriteriaStatus["c1"] = protocol.CriterionStatus{CriterionID: "c1", Status: "met"}
 	eng := policy.NewEngine(policy.EngineConfig{})
+	pa := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion,
+		ToolName:      "Bash", ToolClass: adapter.ToolClassShell,
+		Command: "go test -race ./...", Source: "claude_pretool",
+	}
 	dec := eng.EvaluateBeforeTool(ctx, policy.BeforeToolInput{
-		Request:    adapter.HookRequest{ToolName: "go test -race ./..."},
+		Request:    adapter.HookRequest{ToolName: "Bash", Proposed: &pa},
 		Contract:   &c,
 		Ledger:     &led,
 		BasePolicy: adapter.HookPolicy{},

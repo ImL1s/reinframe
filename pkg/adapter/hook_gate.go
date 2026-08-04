@@ -16,17 +16,17 @@ const (
 
 // Common reason codes (audit-friendly, no secrets).
 const (
-	ReasonAllow                = "allow"
-	ReasonDeniedTool           = "denied_tool"
-	ReasonDeniedPathScope      = "denied_path_scope"
-	ReasonDeniedBudget         = "denied_budget_exhausted"
-	ReasonDeniedHardLatch      = "denied_hard_latch"
-	ReasonDeferPendingAdvisory   = "defer_pending_advisory"
-	ReasonTimeoutFailOpen        = "timeout_fail_open"
-	ReasonTimeoutFailClosed      = "timeout_fail_closed"
-	ReasonContextCanceled        = "context_canceled"
-	ReasonRedundantValidation    = "redundant_validation"
-	ReasonDisproportionateScope  = "disproportionate_scope"
+	ReasonAllow                 = "allow"
+	ReasonDeniedTool            = "denied_tool"
+	ReasonDeniedPathScope       = "denied_path_scope"
+	ReasonDeniedBudget          = "denied_budget_exhausted"
+	ReasonDeniedHardLatch       = "denied_hard_latch"
+	ReasonDeferPendingAdvisory  = "defer_pending_advisory"
+	ReasonTimeoutFailOpen       = "timeout_fail_open"
+	ReasonTimeoutFailClosed     = "timeout_fail_closed"
+	ReasonContextCanceled       = "context_canceled"
+	ReasonRedundantValidation   = "redundant_validation"
+	ReasonDisproportionateScope = "disproportionate_scope"
 )
 
 // DefaultHookTimeout is the default wall-clock budget for pure-Go deterministic checks.
@@ -42,14 +42,17 @@ type HookDecision struct {
 
 // HookRequest is the adapter-facing PreTool / PreCommand interception surface.
 // Fields are intentionally narrow: only data needed for deterministic rules.
+// Prefer Proposed (#115) when available so shell Command is not stuffed into ToolName.
 type HookRequest struct {
 	SessionID string
 	// Phase is "PreTool" or "PreCommand" (informational; not validated strictly).
 	Phase string
-	// ToolName is the tool or command name being gated.
+	// ToolName is the host tool identifier (e.g. "Bash"), not a full shell command.
 	ToolName string
 	// FilePath is an optional workspace path associated with the call (scope checks).
 	FilePath string
+	// Proposed is the optional versioned action projection (#115).
+	Proposed *ProposedAction
 }
 
 // HookPolicy is the deterministic policy table consulted by EvaluateHook.

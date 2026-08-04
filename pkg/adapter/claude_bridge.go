@@ -26,6 +26,9 @@ type ClaudePreToolInput struct {
 	Phase string
 	// RawToolInput is optional tool_input object JSON for audit (truncated).
 	RawToolInput string
+	// Proposed is the versioned host→core action projection (#115). Prefer this
+	// over stuffing shell commands into ToolName.
+	Proposed *ProposedAction
 }
 
 // ClaudeHookResponse is the JSON shape written back to Claude Code hooks.
@@ -72,23 +75,19 @@ func MapClaudePreToolUseJSON(raw []byte) (ClaudePreToolInput, error) {
 	}
 	in := ClaudePreToolInput{Phase: "PreTool"}
 	in.SessionID = firstString(m, "session_id", "sessionId", "sessionID")
+	// Host tool id only — never take shell command from tool_input.command as ToolName (#115).
 	in.ToolName = firstString(m, "tool_name", "toolName", "tool")
-	// Nested tool_name under tool_input
 	if in.ToolName == "" {
 		if ti, ok := m["tool_input"].(map[string]any); ok {
-			in.ToolName = firstString(ti, "tool_name", "name", "command")
+			// Accept nested tool_name/name only — not "command" (that is shell text).
+			in.ToolName = firstString(ti, "tool_name", "name")
 			in.FilePath = firstString(ti, "file_path", "filePath", "path")
 		}
 	}
 	in.FilePath = firstNonEmpty(in.FilePath, firstString(m, "file_path", "filePath", "path"))
-	if in.FilePath == "" {
-		// Some hooks put path only in tool_input.file_path already handled.
-		if cwd := firstString(m, "cwd"); cwd != "" && in.FilePath == "" {
-			// cwd is workspace root, not a tool path — leave FilePath empty.
-			_ = cwd
-		}
-	}
+	var toolInput any
 	if ti, ok := m["tool_input"]; ok && ti != nil {
+		toolInput = ti
 		b, err := json.Marshal(ti)
 		if err == nil {
 			s := string(b)
@@ -102,6 +101,10 @@ func MapClaudePreToolUseJSON(raw []byte) (ClaudePreToolInput, error) {
 			s = s[:400] + "…"
 		}
 		in.RawToolInput = s
+		var parsed any
+		if err := json.Unmarshal([]byte(s), &parsed); err == nil {
+			toolInput = parsed
+		}
 	}
 	if in.SessionID == "" {
 		return ClaudePreToolInput{}, fmt.Errorf("claude pretool: session_id required")
@@ -109,11 +112,26 @@ func MapClaudePreToolUseJSON(raw []byte) (ClaudePreToolInput, error) {
 	if in.ToolName == "" {
 		return ClaudePreToolInput{}, fmt.Errorf("claude pretool: tool_name required")
 	}
+	pa, err := ProposedActionFromClaudePreTool(in, toolInput, ProposedActionOptions{})
+	if err != nil {
+		return ClaudePreToolInput{}, err
+	}
+	in.Proposed = &pa
+	if in.FilePath == "" && pa.FilePath != "" {
+		in.FilePath = pa.FilePath
+	}
 	return in, nil
 }
 
 // HookRequestFromClaudePreTool converts adapter input to HookRequest for core gates.
+// When Proposed is present, ToolName/FilePath come from the projection (Command is
+// not placed into ToolName).
 func HookRequestFromClaudePreTool(in ClaudePreToolInput) HookRequest {
+	if in.Proposed != nil {
+		req := HookRequestFromProposedAction(*in.Proposed, "PreTool")
+		req.Proposed = in.Proposed
+		return req
+	}
 	return HookRequest{
 		SessionID: in.SessionID,
 		Phase:     "PreTool",

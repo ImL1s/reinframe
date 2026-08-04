@@ -188,7 +188,7 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 	// Matches FullSuiteCommand fail-closed on executable-resolution overrides.
 	unsafeShell := shellHasCompoundOrQuoting(cmd) || shellHasResolutionEnv(cmd)
 	if isRecursiveForceRm(cmd) {
-		if unsafeShell {
+		if unsafeShell || rmHasExitOnlyOrUnknownOption(cmd) {
 			return SideEffectShellGeneric, extractPaths(cmd), nil
 		}
 		targets := extractRmTargets(cmd)
@@ -218,7 +218,7 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 		return SideEffectDeleteTree, targets, nil
 	}
 	if isPlainRm(cmd) {
-		if unsafeShell {
+		if unsafeShell || rmHasExitOnlyOrUnknownOption(cmd) {
 			return SideEffectShellGeneric, extractPaths(cmd), nil
 		}
 		targets := extractRmTargets(cmd)
@@ -560,9 +560,80 @@ func extractDeleteScopeFlags(cmd string) []string {
 			}
 		}
 	}
-	// find sole -delete: no scope flags (predicates already fail closed earlier)
+	if argv0 == "find" {
+		// Bind symlink traversal mode: -L follows dirs, -P does not, -H is mixed.
+		for ; i < len(fields); i++ {
+			f := fields[i]
+			if f == "--" {
+				break
+			}
+			if f == "-H" || f == "-L" || f == "-P" {
+				out = append(out, f)
+				continue
+			}
+			// Only leading global options; stop at paths/expression.
+			if strings.HasPrefix(f, "-O") || f == "-D" || (strings.HasPrefix(f, "-D") && len(f) > 2) {
+				if f == "-D" {
+					i++ // skip following debugopts if present (loop will i++)
+				}
+				continue
+			}
+			break
+		}
+	}
 	sort.Strings(out)
 	return out
+}
+
+// rmHasExitOnlyOrUnknownOption is true when rm carries --help/--version or an
+// unknown long option before `--`. Such commands must not get privileged delete
+// identity (e.g. `rm --help build` does not delete build).
+func rmHasExitOnlyOrUnknownOption(cmd string) bool {
+	if !strings.EqualFold(shellArgv0(cmd), "rm") {
+		return false
+	}
+	fields := strings.Fields(cmd)
+	i := skipShellEnvPrefixes(fields)
+	if i >= len(fields) {
+		return false
+	}
+	i++ // skip rm
+	for ; i < len(fields); i++ {
+		f := fields[i]
+		if f == "--" {
+			break
+		}
+		low := strings.ToLower(f)
+		if low == "--help" || low == "--version" {
+			return true
+		}
+		if strings.HasPrefix(f, "--") {
+			// Closed allowlist of long options for privileged rm identity.
+			switch {
+			case low == "--recursive" || low == "--force" || low == "--verbose" ||
+				low == "--dir" || low == "--directory" ||
+				low == "--one-file-system" || low == "--preserve-root" ||
+				strings.HasPrefix(low, "--preserve-root=") || low == "--no-preserve-root" ||
+				low == "--interactive" || strings.HasPrefix(low, "--interactive="):
+				// known
+			default:
+				return true
+			}
+			continue
+		}
+		if strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--") {
+			// short clusters: only r/f/v/i/I/d/R allowed for privileged delete
+			for _, r := range low[1:] {
+				switch r {
+				case 'r', 'R', 'f', 'v', 'i', 'I', 'd':
+				default:
+					// still allow other shorts via scope flags; do not fail closed here
+					// (extractDeleteScopeFlags binds unknown short letters)
+				}
+			}
+		}
+	}
+	return false
 }
 
 // findHasExpressionPredicates reports find expression tokens beyond path roots and -delete.
@@ -617,24 +688,34 @@ func isRecursiveForceRm(cmd string) bool {
 	if !strings.EqualFold(shellArgv0(cmd), "rm") {
 		return false
 	}
-	low := strings.ToLower(cmd)
-	if reRmRF.MatchString(cmd) || reRmRF2.MatchString(cmd) {
-		return true
+	// Field-based only, stop at `--`: operands like `-rf` must not set flags
+	// (`rm -- -rf build` is NOT recursive delete of build).
+	fields := strings.Fields(cmd)
+	i := skipShellEnvPrefixes(fields)
+	if i >= len(fields) {
+		return false
 	}
-	fields := strings.Fields(low)
+	i++ // skip rm
 	hasR, hasF := false, false
-	for _, f := range fields {
-		if f == "--recursive" {
-			hasR = true
+	for ; i < len(fields); i++ {
+		f := fields[i]
+		if f == "--" {
+			break
 		}
-		if f == "--force" {
+		low := strings.ToLower(f)
+		if low == "--recursive" {
+			hasR = true
+			continue
+		}
+		if low == "--force" {
 			hasF = true
+			continue
 		}
 		if strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--") {
-			if strings.Contains(f, "r") {
+			if strings.Contains(low, "r") {
 				hasR = true
 			}
-			if strings.Contains(f, "f") {
+			if strings.Contains(low, "f") {
 				hasF = true
 			}
 		}

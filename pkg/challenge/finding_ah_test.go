@@ -1035,6 +1035,63 @@ func TestHardDenyExpiresRelBypassToolVariant(t *testing.T) {
 	}
 }
 
+// Codex: rm --help/--version must not share delete identity with real deletes.
+func TestRmHelpVersionNotDeleteIdentity(t *testing.T) {
+	help := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm --help build"), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build"), SessionID: "sess-1"})
+	if help.SideEffectClass == challenge.SideEffectDeleteFile || help.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("rm --help must not be delete_*, got %s", help.SideEffectClass)
+	}
+	if help.Fingerprint == plain.Fingerprint {
+		t.Fatal("rm --help build must not share fingerprint with rm build")
+	}
+	ver := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm --version build"), SessionID: "sess-1"})
+	if ver.SideEffectClass == challenge.SideEffectDeleteFile || ver.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("rm --version must not be delete_*, got %s", ver.SideEffectClass)
+	}
+}
+
+// Codex: find -L vs -P must not share delete_tree identity (symlink traversal).
+func TestFindSymlinkTraversalChangesFingerprint(t *testing.T) {
+	p := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -P build -delete"), SessionID: "sess-1"})
+	l := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -L build -delete"), SessionID: "sess-1"})
+	if p.SideEffectClass != challenge.SideEffectDeleteTree || l.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("want delete_tree, got p=%s l=%s", p.SideEffectClass, l.SideEffectClass)
+	}
+	if p.Fingerprint == l.Fingerprint {
+		t.Fatal("find -P vs -L must not share fingerprint")
+	}
+	// Bare find build -delete still rewrite-matches rm -rf without traversal flags.
+	bare := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -delete"), SessionID: "sess-1"})
+	rm := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	if bare.Fingerprint != rm.Fingerprint {
+		t.Fatal("plain find -delete should still match rm -rf")
+	}
+	if p.Fingerprint == bare.Fingerprint {
+		t.Fatal("find -P must not match bare find -delete")
+	}
+}
+
+// Codex: recursive-flag scan must stop at rm `--` (filename -rf is not recursive).
+func TestRmDoubleDashStopsRecursiveFlagScan(t *testing.T) {
+	// `rm -- -rf build` should NOT be delete_tree of build via recursive classification.
+	operand := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -- -rf build"), SessionID: "sess-1"})
+	recursive := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf -- -rf build"), SessionID: "sess-1"})
+	if operand.Fingerprint == recursive.Fingerprint {
+		t.Fatal("rm -- -rf build must not share fingerprint with rm -rf -- -rf build")
+	}
+	if recursive.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("rm -rf -- -rf build want delete_tree, got %s", recursive.SideEffectClass)
+	}
+	// Operand form is plain rm of two names, not recursive force of build alone.
+	if operand.SideEffectClass == challenge.SideEffectDeleteTree {
+		// Acceptable only if targets include both -rf and build; still must differ FP (checked above).
+		if len(operand.TargetResources) < 2 {
+			t.Fatalf("operand form should target -rf and build, got %v", operand.TargetResources)
+		}
+	}
+}
+
 // Codex: --preserve-root=all must not share delete identity with plain rm -rf.
 func TestRmPreserveRootAllChangesFingerprint(t *testing.T) {
 	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf mount"), SessionID: "sess-1"})

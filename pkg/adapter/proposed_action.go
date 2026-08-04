@@ -225,32 +225,27 @@ func isFullSuiteText(s string) bool {
 	// Require a real test runner in command position — never match substring ./... alone
 	// (e.g. curl .../evil/./... must not be test_suite).
 	fields := strings.Fields(n)
-	i := 0
-	// Any leading ENV= assignment can override PATH/executable resolution
-	// (e.g. PATH=/tmp go test ./...). Fail closed: not a full-suite identity.
-	for i < len(fields) {
-		f := fields[i]
-		if len(f) > 0 && f[0] != '-' && strings.Contains(f, "=") {
-			eq := strings.IndexByte(f, '=')
-			name := f[:eq]
-			if eq > 0 && isShellIdent(name) {
-				return false
-			}
-		}
-		break
-	}
-	if i >= len(fields) {
+	if len(fields) == 0 {
 		return false
 	}
+	// Any leading ENV= assignment can override PATH/executable resolution
+	// (e.g. PATH=/tmp go test ./...). Fail closed: not a full-suite identity.
+	lead := fields[0]
+	if len(lead) > 0 && lead[0] != '-' && strings.Contains(lead, "=") {
+		eq := strings.IndexByte(lead, '=')
+		if eq > 0 && isShellIdent(lead[:eq]) {
+			return false
+		}
+	}
 	// Trusted argv0 only: bare tool names — not ./go, /tmp/go, or path.Base tricks.
-	argv0 := fields[i]
+	argv0 := fields[0]
 	if strings.ContainsAny(argv0, `/\`) {
 		return false
 	}
 	base := strings.ToLower(argv0)
 	switch base {
 	case "go":
-		if i+1 >= len(fields) || !strings.EqualFold(fields[i+1], "test") {
+		if len(fields) < 2 || !strings.EqualFold(fields[1], "test") {
 			return false
 		}
 		// go test ... with package scope ./... or -race ./pkg

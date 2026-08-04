@@ -33,10 +33,11 @@ func ClassifyAppealability(blockClass string, pa adapter.ProposedAction) (appeal
 					bc = BlockClassRemoteDeletion
 				}
 			default:
-				if bc == BlockClassUnknownSecurity {
+				switch bc {
+				case BlockClassUnknownSecurity:
 					// keep unknown security
-				} else if bc == "" {
-					// empty class with no strong security signal stays unknown → fail closed below
+				case "":
+					// empty class with no strong security signal → fail closed below
 					bc = BlockClassUnknownSecurity
 				}
 			}

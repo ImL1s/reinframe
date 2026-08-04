@@ -395,6 +395,43 @@ func TestFingerprintDoesNotCollapseUnrelatedShell(t *testing.T) {
 	if a.Fingerprint == b.Fingerprint {
 		t.Fatalf("unrelated shell must not share fingerprint: %s", a.CanonicalForm)
 	}
+	if challenge.ClassifyRelationship(a, b) != challenge.RelDifferent {
+		t.Fatalf("rel=%s want different", challenge.ClassifyRelationship(a, b))
+	}
+	// End-to-end: sleep must not bind to an echo challenge.
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "sess-1", Proposed: samplePA("echo hi"), BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
+	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID,
+		Proposed:    samplePA("sleep 1"),
+		ReEval:      &challenge.ReEvalContext{UserException: true},
+	})
+	if err == nil || res.RejectedReason != "not_same_semantic_action" {
+		t.Fatalf("sleep must not consume echo challenge: %+v err=%v", res, err)
+	}
+	got, _ := svc.Get(rec.ChallengeID)
+	if got.RetryBudget != 1 || got.State != challenge.StateJustified {
+		t.Fatalf("budget/state mutated: budget=%d state=%s", got.RetryBudget, got.State)
+	}
+}
+
+func TestUnknownBlockClassHumanReview(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "sess-1", Proposed: samplePA("echo hi"), BlockClass: "TOTALLY_UNKNOWN_CLASS",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.State != challenge.StateHumanReview || rec.Appealability != challenge.AppealHumanReview {
+		t.Fatalf("%+v", rec)
+	}
 }
 
 func TestCacheKeyChangesWithJustificationAndRules(t *testing.T) {

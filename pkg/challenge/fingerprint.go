@@ -104,9 +104,12 @@ func ClassifyRelationship(original FingerprintResult, candidate FingerprintResul
 	if original.Fingerprint == candidate.Fingerprint {
 		return RelSame
 	}
-	// Same side-effect + same target multiset → treat as bypass attempt (syntax rewrite).
+	// Same side-effect + same non-empty target multiset → syntax-rewrite bypass attempt.
+	// Pathless classes (empty targets) must NOT collapse via RelBypass — fingerprints already
+	// include normalized command for shell_generic/network/git_mutate.
 	if original.SideEffectClass == candidate.SideEffectClass &&
 		original.SideEffectClass != SideEffectNone &&
+		len(original.TargetResources) > 0 &&
 		sameStringSet(original.TargetResources, candidate.TargetResources) {
 		return RelBypass
 	}

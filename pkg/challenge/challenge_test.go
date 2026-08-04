@@ -385,6 +385,84 @@ func TestConcurrentDuplicateRetriesOneOutcome(t *testing.T) {
 	}
 }
 
+// slowAllowReEval sleeps longer than any fixed poll budget then ALLOWs.
+// Proves concurrent waiters block on terminal signal, not a 200ms timeout.
+type slowAllowReEval struct {
+	delay time.Duration
+}
+
+func (s slowAllowReEval) ReEvaluate(ctx context.Context, rec challenge.ChallengeRecord, proposed adapter.ProposedAction, just *challenge.Justification, in *challenge.ReEvalContext) (challenge.ReEvalResult, error) {
+	select {
+	case <-ctx.Done():
+		return challenge.ReEvalResult{Stage2Decision: challenge.DecisionBlock, Reason: "ctx"}, ctx.Err()
+	case <-time.After(s.delay):
+	}
+	return challenge.ReEvalResult{
+		Stage2Decision: challenge.DecisionAllow,
+		Intervention:   challenge.InterventionNone,
+		Reason:         "slow_allow",
+	}, nil
+}
+
+func TestConcurrentDuplicateRetriesSlowReEvalOneOutcome(t *testing.T) {
+	// delay >> former 200ms poll budget; all callers must still match final store.
+	const delay = 350 * time.Millisecond
+	svc := challenge.NewService(challenge.ServiceConfig{
+		ReEval: slowAllowReEval{delay: delay},
+	})
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "sess-1", Proposed: samplePA("rm -rf build"), BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 12
+	results := make([]challenge.RetryResult, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	start := time.Now()
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			results[i], _ = svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+				ChallengeID: rec.ChallengeID,
+				Proposed:    samplePA("rm -rf build"),
+			})
+		}(i)
+	}
+	wg.Wait()
+	elapsed := time.Since(start)
+	if elapsed < delay {
+		t.Fatalf("expected wait >= re-eval delay %v, got %v", delay, elapsed)
+	}
+
+	final, ok := svc.Get(rec.ChallengeID)
+	if !ok {
+		t.Fatal("missing challenge")
+	}
+	if final.State != challenge.StateAllowedOnce || final.Stage2Decision != challenge.DecisionAllow {
+		t.Fatalf("final %+v", final)
+	}
+	disagree := 0
+	for i, r := range results {
+		if r.Record.State != final.State || r.Stage2Decision != final.Stage2Decision {
+			disagree++
+			t.Errorf("i=%d got state=%s stage2=%s want state=%s stage2=%s",
+				i, r.Record.State, r.Stage2Decision, final.State, final.Stage2Decision)
+		}
+	}
+	if disagree != 0 {
+		t.Fatalf("disagree_count=%d (want 0 under slow re-eval)", disagree)
+	}
+	if final.RetryBudget != 0 {
+		t.Fatalf("budget %d", final.RetryBudget)
+	}
+}
+
 func TestFingerprintDoesNotCollapseUnrelatedShell(t *testing.T) {
 	a := challenge.ComputeFingerprint(challenge.FingerprintInput{
 		Proposed: samplePA("echo hi"), SessionID: "sess-1",

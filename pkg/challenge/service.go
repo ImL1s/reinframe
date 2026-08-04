@@ -20,6 +20,10 @@ type Service struct {
 	// idMu serializes Open id generation only; store has its own lock.
 	idSeq uint64
 	idMu  sync.Mutex
+	// terminalCh maps challenge ID → closed when the challenge reaches a terminal state.
+	// Concurrent AttemptRetry waiters block on this instead of a fixed poll budget.
+	termMu     sync.Mutex
+	terminalCh map[string]chan struct{}
 }
 
 // ServiceConfig configures Service.
@@ -43,7 +47,12 @@ func NewService(cfg ServiceConfig) *Service {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Service{store: st, reeval: re, now: now}
+	return &Service{
+		store:      st,
+		reeval:     re,
+		now:        now,
+		terminalCh: make(map[string]chan struct{}),
+	}
 }
 
 // Store exposes the underlying store for tests/replay.
@@ -146,6 +155,7 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 		s.store.mu.Lock()
 		rec = s.store.appendTransition(rec, "", StateHumanReview, "human_review", req.CorrelationID, req.Proposed.ActionID, fp.Fingerprint, "open_human_review", now, nil)
 		s.store.mu.Unlock()
+		s.signalTerminal(rec.ChallengeID)
 		return rec, nil
 	}
 
@@ -352,6 +362,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 		out := cloneRecord(rec)
 		s.store.mu.Unlock()
+		s.signalTerminal(out.ChallengeID)
 		return RetryResult{
 			Record:         out,
 			Stage2Decision: DecisionBlock,
@@ -370,6 +381,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 		out := cloneRecord(rec)
 		s.store.mu.Unlock()
+		s.signalTerminal(out.ChallengeID)
 		return RetryResult{
 			Record:         out,
 			Stage2Decision: DecisionBlock,
@@ -382,7 +394,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	// so concurrent duplicates share one authoritative business result.
 	if rec.State == StateRetryPending {
 		s.store.mu.Unlock()
-		final := s.waitTerminal(req.ChallengeID, 200)
+		final := s.waitTerminal(ctx, req.ChallengeID)
 		return RetryResult{
 			Record:           final,
 			Stage2Decision:   final.Stage2Decision,
@@ -449,6 +461,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	rec = cloneRecord(*cur2)
 	// If another goroutine already finalized, return that outcome.
 	if rec.State == StateAllowedOnce || rec.State == StateRejected || rec.State == StateHumanReview {
+		s.signalTerminal(rec.ChallengeID)
 		return RetryResult{
 			Record:           rec,
 			Stage2Decision:   rec.Stage2Decision,
@@ -480,6 +493,8 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 	}
 	out := cloneRecord(*s.store.byID[rec.ChallengeID])
+	// signalTerminal is safe while holding store.mu (uses separate termMu).
+	s.signalTerminal(out.ChallengeID)
 	return RetryResult{
 		Record:         out,
 		Stage2Decision: out.Stage2Decision,
@@ -491,36 +506,44 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 // Abandon marks an open/justified challenge abandoned.
 func (s *Service) Abandon(ctx context.Context, challengeID, corr string) (ChallengeRecord, error) {
 	s.store.mu.Lock()
-	defer s.store.mu.Unlock()
 	cur, ok := s.store.byID[challengeID]
 	if !ok {
+		s.store.mu.Unlock()
 		return ChallengeRecord{}, fmt.Errorf("abandon: unknown challenge")
 	}
 	rec := cloneRecord(*cur)
 	if isTerminal(rec.State) {
+		s.store.mu.Unlock()
 		return rec, nil
 	}
 	from := rec.State
 	now := s.now()
 	rec = s.store.appendTransition(rec, from, StateAbandoned, "abandoned", corr, challengeID, "", "user_abandon", now, nil)
-	return cloneRecord(rec), nil
+	out := cloneRecord(rec)
+	s.store.mu.Unlock()
+	s.signalTerminal(out.ChallengeID)
+	return out, nil
 }
 
 // ExpireDue marks challenges past ExpiresAtSequence as EXPIRED. Cannot be revived.
 func (s *Service) ExpireDue(ctx context.Context) int {
 	s.store.mu.Lock()
-	defer s.store.mu.Unlock()
 	n := 0
 	seq := s.store.seq
 	now := s.now()
+	var expired []string
 	for id, rec := range s.store.byID {
 		if rec.ExpiresAtSequence > 0 && seq >= rec.ExpiresAtSequence && !isTerminal(rec.State) {
 			from := rec.State
 			cp := cloneRecord(*rec)
-			cp = s.store.appendTransition(cp, from, StateExpired, "expired", "", id, "", "sequence_expiry", now, nil)
-			_ = cp
+			_ = s.store.appendTransition(cp, from, StateExpired, "expired", "", id, "", "sequence_expiry", now, nil)
+			expired = append(expired, id)
 			n++
 		}
+	}
+	s.store.mu.Unlock()
+	for _, id := range expired {
+		s.signalTerminal(id)
 	}
 	return n
 }
@@ -608,21 +631,72 @@ func (s *Service) expireIfNeeded(rec *ChallengeRecord) error {
 	return fmt.Errorf("challenge expired")
 }
 
-// waitTerminal polls until the challenge leaves RETRY_PENDING or attempts exhaust.
-func (s *Service) waitTerminal(id string, attempts int) ChallengeRecord {
-	var last ChallengeRecord
-	for i := 0; i < attempts; i++ {
+// waitTerminal blocks until the challenge reaches a terminal state or ctx is done.
+// Uses a per-challenge channel closed by signalTerminal — not a fixed poll budget.
+func (s *Service) waitTerminal(ctx context.Context, id string) ChallengeRecord {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
 		rec, ok := s.store.Get(id)
-		if !ok {
-			return last
-		}
-		last = rec
-		if isTerminal(rec.State) {
+		if ok && isTerminal(rec.State) {
 			return rec
 		}
-		time.Sleep(time.Millisecond)
+		ch := s.terminalWaitCh(id)
+		// Re-check after registering to avoid missing a concurrent signal.
+		rec, ok = s.store.Get(id)
+		if ok && isTerminal(rec.State) {
+			return rec
+		}
+		select {
+		case <-ctx.Done():
+			rec, _ = s.store.Get(id)
+			return rec
+		case <-ch:
+			// Terminal signaled; loop to load authoritative record.
+		}
 	}
-	return last
+}
+
+// terminalWaitCh returns a channel that is closed when the challenge becomes terminal.
+func (s *Service) terminalWaitCh(id string) <-chan struct{} {
+	s.termMu.Lock()
+	defer s.termMu.Unlock()
+	if s.terminalCh == nil {
+		s.terminalCh = make(map[string]chan struct{})
+	}
+	ch, ok := s.terminalCh[id]
+	if !ok {
+		ch = make(chan struct{})
+		s.terminalCh[id] = ch
+	}
+	return ch
+}
+
+// signalTerminal unblocks all waitTerminal callers for id.
+func (s *Service) signalTerminal(id string) {
+	if id == "" {
+		return
+	}
+	s.termMu.Lock()
+	defer s.termMu.Unlock()
+	if s.terminalCh == nil {
+		s.terminalCh = make(map[string]chan struct{})
+	}
+	ch, ok := s.terminalCh[id]
+	if !ok {
+		// Create already-closed so late waiters observe terminal immediately.
+		ch = make(chan struct{})
+		close(ch)
+		s.terminalCh[id] = ch
+		return
+	}
+	select {
+	case <-ch:
+		// already closed
+	default:
+		close(ch)
+	}
 }
 
 func hashPolicy(ver, ruleset, block string) string {

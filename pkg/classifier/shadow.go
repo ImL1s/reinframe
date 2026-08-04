@@ -28,6 +28,12 @@ type ShadowInput struct {
 	Threshold int
 	// ProfileID for audit.
 	ProfileID string
+	// Stage2 exception flags (applied after raw score).
+	UserException       bool
+	RepoPolicyException bool
+	FlakyInvestigation  bool
+	// FixtureName for fake provider routing in tests.
+	FixtureName string
 }
 
 // ResolvedDecision is the closed Stage 2 outcome.
@@ -110,16 +116,21 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 		res.ReasonCode = "below_threshold"
 		res.ResolverReason = "stage0_skip"
 	} else {
+		pa := in.Proposed
 		cin := ClassifierInput{
-			SchemaVersion: SchemaClassifierInput,
-			SessionID:     in.SessionID,
-			PolicyClass:   in.PolicyClass,
-			RulesetID:     in.RulesetID,
-			RulesetHash:   in.RulesetHash,
-			// FixtureName empty for real path; Fake can key off other fields later.
+			SchemaVersion:       SchemaClassifierInput,
+			SessionID:           in.SessionID,
+			PolicyClass:         in.PolicyClass,
+			RulesetID:           in.RulesetID,
+			RulesetHash:         in.RulesetHash,
+			FixtureName:         in.FixtureName,
+			ProposedAction:      &pa,
+			RecentEventIDs:      append([]string(nil), in.RecentEventIDs...),
+			UserException:       in.UserException,
+			RepoPolicyException: in.RepoPolicyException,
+			FlakyInvestigation:  in.FlakyInvestigation,
 		}
-		// For FakeClassifierProvider tests, allow embedding fixture in RulesetID prefix "fixture:"
-		if len(in.RulesetID) > 8 && in.RulesetID[:8] == "fixture:" {
+		if cin.FixtureName == "" && len(in.RulesetID) > 8 && in.RulesetID[:8] == "fixture:" {
 			cin.FixtureName = in.RulesetID[8:]
 			cin.RulesetID = "test"
 		}
@@ -149,11 +160,16 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 				res.ReasonCode = "parse_invalid"
 			}
 		} else {
-			// Stage 2 deterministic threshold
+			// Stage 2 deterministic threshold then exceptions
 			res.RawSeverity = raw.Severity
 			if !ValidateSeverity(raw.Severity) {
-				res.Decision = DecisionAllow
-				res.ResolverReason = "fail_open_productivity"
+				if in.PolicyClass == PolicyClassSecurity {
+					res.Decision = DecisionBlock
+					res.ResolverReason = "fail_closed_security"
+				} else {
+					res.Decision = DecisionAllow
+					res.ResolverReason = "fail_open_productivity"
+				}
 				res.ReasonCode = "parse_invalid"
 			} else if raw.Severity >= in.Threshold {
 				res.Decision = DecisionBlock
@@ -164,11 +180,27 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 				res.ReasonCode = "below_threshold"
 				res.ResolverReason = "stage1_applied"
 			}
+			// Exceptions after raw scoring (may flip BLOCK → ALLOW)
+			if res.Decision == DecisionBlock {
+				if in.UserException {
+					res.Decision = DecisionAllow
+					res.ResolverReason = "user_exception"
+					res.ReasonCode = "user_exception"
+				} else if in.RepoPolicyException {
+					res.Decision = DecisionAllow
+					res.ResolverReason = "repo_policy_exception"
+					res.ReasonCode = "repo_policy_exception"
+				} else if in.FlakyInvestigation {
+					res.Decision = DecisionAllow
+					res.ResolverReason = "flaky_investigation"
+					res.ReasonCode = "flaky_investigation"
+				}
+			}
 		}
 	}
 
 	// Map HookGate to allow-ish vs block-ish for disagreement.
-	hgBlock := in.HookGateAction == adapter.HookActionDeny || in.HookGateAction == adapter.HookActionDefer
+	hgBlock := in.HookGateAction == adapter.HookActionDeny
 	predBlock := res.Decision == DecisionBlock
 	dis := hgBlock != predBlock
 

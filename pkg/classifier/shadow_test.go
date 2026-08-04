@@ -112,3 +112,66 @@ func TestStage0FullSuiteHelper(t *testing.T) {
 		t.Fatal("criteria not met")
 	}
 }
+
+func TestShadow_UserExceptionAfterHighRaw(t *testing.T) {
+	t.Parallel()
+	s := &classifier.ShadowClassifier{Provider: classifier.FakeClassifierProvider{}}
+	res, err := s.EvaluateShadow(context.Background(), classifier.ShadowInput{
+		FixtureName:    "user_exception",
+		UserException:  true,
+		HookGateAction: adapter.HookActionAllow,
+		Threshold:      50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Raw.Severity < 50 {
+		t.Fatalf("raw should be high, got %d", res.Raw.Severity)
+	}
+	if res.Resolved.Decision != classifier.DecisionAllow || res.Resolved.ResolverReason != "user_exception" {
+		t.Fatalf("%+v", res.Resolved)
+	}
+	if res.Resolved.Enforced {
+		t.Fatal("enforced")
+	}
+}
+
+func TestShadow_GoldenFixtureMatrix(t *testing.T) {
+	t.Parallel()
+	s := &classifier.ShadowClassifier{Provider: classifier.FakeClassifierProvider{}}
+	cases := []struct {
+		fixture string
+		want    string
+	}{
+		{"clear_allow", classifier.DecisionAllow},
+		{"clear_block", classifier.DecisionBlock},
+		{"malformed_output", classifier.DecisionAllow}, // productivity fail-open
+	}
+	for _, tc := range cases {
+		res, err := s.EvaluateShadow(context.Background(), classifier.ShadowInput{
+			FixtureName: tc.fixture, HookGateAction: adapter.HookActionAllow, Threshold: 50,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.fixture, err)
+		}
+		if res.Resolved.Decision != tc.want || res.Resolved.Enforced {
+			t.Fatalf("%s: got %s enforced=%v", tc.fixture, res.Resolved.Decision, res.Resolved.Enforced)
+		}
+	}
+}
+
+func TestShadow_ProposedActionPassedToProvider(t *testing.T) {
+	t.Parallel()
+	s := &classifier.ShadowClassifier{Provider: classifier.FakeClassifierProvider{}}
+	pa := adapter.ProposedAction{ToolName: "Bash", ToolClass: adapter.ToolClassShell, Command: "go test -race ./..."}
+	res, err := s.EvaluateShadow(context.Background(), classifier.ShadowInput{
+		Proposed: pa, HookGateAction: adapter.HookActionAllow, Threshold: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Full suite without fixture name → clear_block path via ProposedAction
+	if res.Resolved.Decision != classifier.DecisionBlock {
+		t.Fatalf("want BLOCK from proposed full suite, got %s", res.Resolved.Decision)
+	}
+}

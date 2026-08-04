@@ -669,7 +669,8 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	}, nil
 }
 
-// Abandon marks an open/justified challenge abandoned.
+// Abandon marks an OPEN or JUSTIFIED challenge abandoned.
+// RETRY_PENDING (in-flight one-shot) cannot be abandoned — wait for terminal evaluation.
 func (s *Service) Abandon(ctx context.Context, challengeID, corr string) (ChallengeRecord, error) {
 	s.store.mu.Lock()
 	cur, ok := s.store.byID[challengeID]
@@ -681,6 +682,10 @@ func (s *Service) Abandon(ctx context.Context, challengeID, corr string) (Challe
 	if isTerminal(rec.State) {
 		s.store.mu.Unlock()
 		return rec, nil
+	}
+	if rec.State != StateOpen && rec.State != StateJustified {
+		s.store.mu.Unlock()
+		return rec, fmt.Errorf("abandon: invalid state %s (only OPEN/JUSTIFIED)", rec.State)
 	}
 	from := rec.State
 	now := s.now()

@@ -512,6 +512,8 @@ func validateTransition(from, to ChallengeState, evType string) error {
 			StateAllowedOnce: true,
 			StateRejected:    true,
 			StateHumanReview: true,
+			// ExpireDue / post-re-eval sequence expiry may terminalize in-flight retries.
+			StateExpired: true,
 		},
 	}
 	if m, ok := allowed[from]; ok && m[to] {

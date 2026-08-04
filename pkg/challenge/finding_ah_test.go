@@ -1338,6 +1338,109 @@ func TestDeleteTrailingSlashDistinct(t *testing.T) {
 	}
 }
 
+// Codex: path.Clean would collapse build/. → build; delete identity must differ.
+func TestDeleteTrailingDotComponentDistinct(t *testing.T) {
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build"), SessionID: "sess-1"})
+	dot := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build/."), SessionID: "sess-1"})
+	if plain.Fingerprint == dot.Fingerprint {
+		t.Fatal("rm build must not share fingerprint with rm build/.")
+	}
+	if plain.SideEffectClass != challenge.SideEffectDeleteFile || dot.SideEffectClass != challenge.SideEffectDeleteFile {
+		t.Fatalf("want delete_file plain=%s dot=%s", plain.SideEffectClass, dot.SideEffectClass)
+	}
+}
+
+// Codex: RETRY_PENDING → EXPIRED must be a valid replay edge.
+func TestReplayRetryPendingToExpired(t *testing.T) {
+	st := challenge.NewStore()
+	gate := &gateReEval{entered: make(chan struct{}), release: make(chan struct{})}
+	svc := challenge.NewService(challenge.ServiceConfig{Store: st, ReEval: gate})
+	pa := samplePA("rm -rf build")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+		ExpiresAfterSequences: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_, _ = svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+			ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+			CorrelationID: "exp-pending",
+			ReEval:        &challenge.ReEvalContext{UserException: true},
+		})
+	}()
+	select {
+	case <-gate.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reeval did not enter")
+	}
+	// Bump seq past ExpiresAtSequence
+	other := samplePA("echo pad")
+	other.SessionID = "pad-exp"
+	other.ActionID = "pad-exp"
+	_, _ = svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "pad-exp", Proposed: other, BlockClass: challenge.BlockClassOverSOP,
+	})
+	n := svc.ExpireDue(context.Background())
+	close(gate.release)
+	if n < 1 {
+		got, _ := svc.Get(rec.ChallengeID)
+		if got.State != challenge.StateExpired {
+			// retry may have finished ALLOW first if expiry raced; still check replay of log
+			t.Logf("ExpireDue n=%d state=%s", n, got.State)
+		}
+	}
+	evs := st.Events(rec.ChallengeID)
+	if _, err := challenge.Replay(evs, challenge.ChallengeRecord{}); err != nil {
+		t.Fatalf("replay must accept RETRY_PENDING→EXPIRED: %v", err)
+	}
+}
+
+// Codex: Abandon rejects RETRY_PENDING.
+func TestAbandonRejectsRetryPending(t *testing.T) {
+	st := challenge.NewStore()
+	gate := &gateReEval{entered: make(chan struct{}), release: make(chan struct{})}
+	svc := challenge.NewService(challenge.ServiceConfig{Store: st, ReEval: gate})
+	pa := samplePA("rm -rf build")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+			ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+			CorrelationID: "abandon-race",
+			ReEval:        &challenge.ReEvalContext{UserException: true},
+		})
+	}()
+	select {
+	case <-gate.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reeval did not enter")
+	}
+	_, err = svc.Abandon(context.Background(), rec.ChallengeID, "corr")
+	close(gate.release)
+	<-done
+	if err == nil {
+		t.Fatal("Abandon during RETRY_PENDING must error")
+	}
+	got, _ := svc.Get(rec.ChallengeID)
+	if got.State == challenge.StateAbandoned {
+		t.Fatal("must not record ABANDONED from RETRY_PENDING")
+	}
+}
+
 // Codex: -d/--dir bind into delete digest.
 func TestRmDirFlagChangesFingerprint(t *testing.T) {
 	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build"), SessionID: "sess-1"})

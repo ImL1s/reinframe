@@ -1016,21 +1016,34 @@ func normalizeResource(s string) string {
 	return s
 }
 
-// normalizeDeleteTarget preserves meaningful trailing-slash semantics for deletion
-// identity (rm build vs rm build/ differ when build is a regular file).
+// normalizeDeleteTarget preserves deletion-sensitive path spelling that path.Clean
+// would erase: trailing slash (build/) and trailing /. (build/.).
+// rm build vs rm build/ and rm build vs rm build/. must not share identity when
+// build is a regular file (GNU rm rejects the directory-required forms).
 func normalizeDeleteTarget(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, `"'`)
-	if s == "" {
-		return ""
+	if s == "" || s == "-" {
+		return s
 	}
-	if s == "-" {
-		return "-"
-	}
-	trailingSlash := len(s) > 1 && strings.HasSuffix(s, "/")
-	cleaned := path.Clean(s)
+	raw := s
+	hadSlash := len(raw) > 1 && strings.HasSuffix(raw, "/")
+	noTrailSlash := strings.TrimRight(raw, "/")
+	// "build/." or "build/./" — path.Clean collapses to "build".
+	hadDot := noTrailSlash == "." || strings.HasSuffix(noTrailSlash, "/.")
+	cleaned := path.Clean(raw)
 	cleaned = strings.TrimPrefix(cleaned, "./")
-	if trailingSlash && cleaned != "/" && !strings.HasSuffix(cleaned, "/") {
+	if hadDot {
+		if cleaned == "." {
+			return "."
+		}
+		cleaned = strings.TrimSuffix(cleaned, "/")
+		if !strings.HasSuffix(cleaned, "/.") {
+			cleaned += "/."
+		}
+		return cleaned
+	}
+	if hadSlash && cleaned != "/" && !strings.HasSuffix(cleaned, "/") {
 		cleaned += "/"
 	}
 	return cleaned

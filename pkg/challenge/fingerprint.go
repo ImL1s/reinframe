@@ -112,12 +112,15 @@ func ClassifyRelationship(original FingerprintResult, candidate FingerprintResul
 	if original.Fingerprint == candidate.Fingerprint {
 		return RelSame
 	}
-	// Syntax-rewrite bypass only for delete classes with matching targets.
+	// Syntax-rewrite bypass only for delete classes with matching targets AND
+	// matching operation digests (flags/predicates/env must not be dropped).
 	// Write/edit requires identical operation digest — never path-only bypass.
 	if rewriteEligible(original.SideEffectClass) &&
 		original.SideEffectClass == candidate.SideEffectClass &&
 		len(original.TargetResources) > 0 &&
-		sameStringSet(original.TargetResources, candidate.TargetResources) {
+		sameStringSet(original.TargetResources, candidate.TargetResources) &&
+		original.OperationDigest != "" &&
+		original.OperationDigest == candidate.OperationDigest {
 		return RelBypass
 	}
 	// Write with same path but different op digest → different (not bypass).
@@ -158,7 +161,7 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 
 	if adapter.FullSuiteCommand(pa) {
 		// Compound shells that merely contain ./... must not collapse to test_suite identity.
-		if shellHasCompoundOrQuoting(cmd) {
+		if shellHasCompoundOrQuoting(cmd) || shellHasResolutionEnv(cmd) {
 			return SideEffectShellGeneric, extractPaths(cmd), nil
 		}
 		return SideEffectTestSuite, []string{"./..."}, nil
@@ -181,9 +184,9 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 	if reCurl.MatchString(cmd) {
 		return SideEffectNetwork, nil, nil
 	}
-	// Compound commands / quoting break Fields-based delete target extraction.
-	// Fail closed: do not classify as delete_tree/delete_file (avoids fingerprint inheritance).
-	unsafeShell := shellHasCompoundOrQuoting(cmd)
+	// Compound / quoting / resolution ENV (PATH= etc.): never privileged delete identity.
+	// Matches FullSuiteCommand fail-closed on executable-resolution overrides.
+	unsafeShell := shellHasCompoundOrQuoting(cmd) || shellHasResolutionEnv(cmd)
 	if isRecursiveForceRm(cmd) {
 		if unsafeShell {
 			return SideEffectShellGeneric, extractPaths(cmd), nil
@@ -197,6 +200,10 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 	// find -delete only when find is in command position.
 	if strings.EqualFold(shellArgv0(cmd), "find") && reFindDelete.MatchString(cmd) {
 		if unsafeShell {
+			return SideEffectShellGeneric, extractPaths(cmd), nil
+		}
+		// Predicate-bearing find (e.g. -name) is not path-only delete_tree equality.
+		if findHasExpressionPredicates(cmd) {
 			return SideEffectShellGeneric, extractPaths(cmd), nil
 		}
 		targets := extractFindDeleteTargets(cmd)
@@ -241,10 +248,13 @@ func operationDigest(pa adapter.ProposedAction, side string) (string, error) {
 	case SideEffectWriteFile:
 		return editOperationDigest(pa)
 	case SideEffectDeleteTree, SideEffectDeleteFile:
-		// Target list carries identity; command surface is rewrite-eligible.
-		return "delete_op", nil
+		// Bind residual flags/expression (not constant "delete_op") so predicate
+		// and flag differences cannot RelBypass via path-only match.
+		return shellPrivilegedOpDigest(pa.Command, "delete"), nil
 	case SideEffectTestSuite:
-		return "test_suite", nil
+		// Bind validated suite invocation (not bare constant) so residual flags
+		// that passed FullSuiteCommand still cannot collide across variants.
+		return shellPrivilegedOpDigest(pa.Command, "test_suite"), nil
 	case SideEffectRead, SideEffectSearch:
 		// ToolName + targets + bounded payload distinguish empty-target collapses.
 		return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
@@ -421,10 +431,43 @@ func shellHasCompoundOrQuoting(cmd string) bool {
 // Rejects spoof tokens like `1BAD=x` that must not skip past command position.
 var envAssignPrefix = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
+// resolutionEnvNames affect executable lookup; privileged delete/suite must fail closed.
+var resolutionEnvNames = map[string]struct{}{
+	"PATH": {}, "LD_LIBRARY_PATH": {}, "LD_PRELOAD": {}, "DYLD_LIBRARY_PATH": {},
+	"DYLD_INSERT_LIBRARIES": {}, "HOME": {}, "GOROOT": {}, "GOPATH": {},
+	"GOBIN": {}, "GOTOOLDIR": {}, "BASH_ENV": {}, "ENV": {}, "CDPATH": {},
+}
+
+// shellHasResolutionEnv reports ENV= prefixes that can redirect which binary runs.
+func shellHasResolutionEnv(cmd string) bool {
+	for _, f := range strings.Fields(strings.TrimSpace(cmd)) {
+		if !envAssignPrefix.MatchString(f) {
+			// Stop at first non-ENV field (argv0 area); only leading assigns count.
+			if strings.Contains(f, "=") && !strings.HasPrefix(f, "-") {
+				// invalid assign token — treat as present noise, continue scan until bare field
+				continue
+			}
+			break
+		}
+		eq := strings.IndexByte(f, '=')
+		name := strings.ToUpper(f[:eq])
+		if _, ok := resolutionEnvNames[name]; ok {
+			return true
+		}
+		// Any leading ENV= is also fail-closed for privileged ops (matches suite rule).
+		return true
+	}
+	return false
+}
+
 // shellArgv0 returns the bare command-position name (first non ENV=val field).
 // Path-qualified argv0 (./rm, /tmp/rm) returns "" so privileged delete/find
 // classification fails closed — never path.Base (would treat ./rm as rm).
+// When resolution ENV is present, returns "" (privileged classification unavailable).
 func shellArgv0(cmd string) string {
+	if shellHasResolutionEnv(cmd) {
+		return ""
+	}
 	fields := strings.Fields(strings.TrimSpace(cmd))
 	i := 0
 	for i < len(fields) {
@@ -445,6 +488,82 @@ func shellArgv0(cmd string) string {
 		return ""
 	}
 	return argv0
+}
+
+// shellPrivilegedOpDigest binds operation identity for privileged shell sides.
+// Pure delete_tree/file (no ENV, no predicates) uses kind-only digest so syntax
+// rewrites (rm -rf ↔ find -delete) still match via targets + RelBypass.
+// test_suite binds residual argv so flag variants cannot collapse.
+func shellPrivilegedOpDigest(cmd, kind string) string {
+	if kind == "delete" {
+		return digestBytes([]byte(encodeFingerprintCanon(map[string]string{"kind": "delete"})))
+	}
+	fields := strings.Fields(strings.TrimSpace(cmd))
+	i := skipShellEnvPrefixes(fields)
+	rest := []string{}
+	if i < len(fields) {
+		rest = append([]string(nil), fields[i+1:]...)
+	}
+	return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
+		"kind": kind,
+		"rest": encodeStringList(rest),
+		"cmd":  normalizeCommandPreserveCase(cmd),
+	})))
+}
+
+// findHasExpressionPredicates reports find expression tokens beyond path roots and -delete.
+// e.g. -name, -type, -path make delete scope unequal to plain path -delete.
+func findHasExpressionPredicates(cmd string) bool {
+	fields := strings.Fields(cmd)
+	i := skipShellEnvPrefixes(fields)
+	if i >= len(fields) || !strings.EqualFold(fields[i], "find") {
+		return false
+	}
+	i++
+	// skip global options
+	for i < len(fields) {
+		f := fields[i]
+		if f == "--" {
+			i++
+			break
+		}
+		if f == "-H" || f == "-L" || f == "-P" || strings.HasPrefix(f, "-O") {
+			i++
+			continue
+		}
+		if f == "-D" {
+			i++
+			if i < len(fields) {
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(f, "-D") && len(f) > 2 {
+			i++
+			continue
+		}
+		break
+	}
+	// skip path roots
+	for i < len(fields) && !strings.HasPrefix(fields[i], "-") {
+		i++
+	}
+	// remaining expression: only -delete (and boolean glue) allowed for plain delete_tree
+	for ; i < len(fields); i++ {
+		f := fields[i]
+		low := strings.ToLower(f)
+		switch low {
+		case "-delete", "-print", "-print0", "(", ")", "-a", "-o", "-and", "-or", "-not", "!":
+			continue
+		default:
+			if strings.HasPrefix(f, "-") {
+				return true // -name, -type, -path, etc.
+			}
+			// non-flag residue after expression start
+			return true
+		}
+	}
+	return false
 }
 
 func isRecursiveForceRm(cmd string) bool {

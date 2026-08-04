@@ -248,16 +248,43 @@ func isFullSuiteText(s string) bool {
 		if len(fields) < 2 || !strings.EqualFold(fields[1], "test") {
 			return false
 		}
+		// Operation-altering flags must not share suite identity with a plain suite.
+		if goTestHasAlteringFlags(fields[2:]) {
+			return false
+		}
 		// go test ... with package scope ./... or -race ./pkg
 		if strings.Contains(low, "./...") {
 			return true
 		}
 		return strings.Contains(low, "-race") && strings.Contains(low, "./")
 	case "gotestsum", "gotest":
+		if goTestHasAlteringFlags(fields[1:]) {
+			return false
+		}
 		return strings.Contains(low, "./...")
 	default:
 		return false
 	}
+}
+
+// goTestHasAlteringFlags rejects flags that change which toolchain programs run
+// (see `go help build`: -toolexec, -exec, -overlay, etc.).
+func goTestHasAlteringFlags(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		low := strings.ToLower(a)
+		// attached form -toolexec=prog
+		if strings.HasPrefix(low, "-toolexec") || strings.HasPrefix(low, "-exec") ||
+			strings.HasPrefix(low, "-overlay") || strings.HasPrefix(low, "-linkshared") ||
+			strings.HasPrefix(low, "-buildmode") {
+			return true
+		}
+		// separate form -toolexec prog
+		if low == "-toolexec" || low == "-exec" || low == "-overlay" || low == "-buildmode" {
+			return true
+		}
+	}
+	return false
 }
 
 func isShellIdent(s string) bool {

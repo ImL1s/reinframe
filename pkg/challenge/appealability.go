@@ -8,13 +8,19 @@ import (
 )
 
 // NormalizePolicyClass trims and uppercases policy class at API boundaries.
-// Empty defaults to PRODUCTIVITY (library default for appealable workflow).
+// Closed allowlist: PRODUCTIVITY | SECURITY only.
+// Empty → PRODUCTIVITY; any unknown/typo (e.g. SECURTY) → SECURITY (fail closed).
 func NormalizePolicyClass(s string) string {
 	s = strings.ToUpper(strings.TrimSpace(s))
-	if s == "" {
+	switch s {
+	case "", PolicyClassProductivity:
 		return PolicyClassProductivity
+	case PolicyClassSecurity:
+		return PolicyClassSecurity
+	default:
+		// Typos and unknown classes must not take productivity fail-open paths.
+		return PolicyClassSecurity
 	}
-	return s
 }
 
 // NormalizeBlockClass trims and uppercases block class codes.

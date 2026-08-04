@@ -704,6 +704,89 @@ func TestCompoundFullSuiteNotTestSuiteIdentity(t *testing.T) {
 	}
 }
 
+// Codex P1: suite/toolexec, PATH= delete, find predicates, PolicyClass closed.
+func TestShellOpIdentityInvariants(t *testing.T) {
+	suite := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("go test ./..."), SessionID: "sess-1"})
+	toolexec := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("go test -toolexec=/tmp/evil ./..."), SessionID: "sess-1"})
+	if suite.SideEffectClass != challenge.SideEffectTestSuite {
+		t.Fatalf("plain suite want test_suite got %s", suite.SideEffectClass)
+	}
+	if toolexec.SideEffectClass == challenge.SideEffectTestSuite {
+		t.Fatal("-toolexec suite must not be test_suite")
+	}
+	if suite.Fingerprint == toolexec.Fingerprint {
+		t.Fatal("toolexec must not share suite fingerprint")
+	}
+
+	rm := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	pathRm := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("PATH=/tmp rm -rf build"), SessionID: "sess-1"})
+	if rm.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatal(rm.SideEffectClass)
+	}
+	if pathRm.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatal("PATH=/tmp rm must not be delete_tree")
+	}
+	if rm.Fingerprint == pathRm.Fingerprint {
+		t.Fatal("PATH= rm must not share fp with bare rm")
+	}
+
+	plainFind := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -delete"), SessionID: "sess-1"})
+	predFind := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -name cache -delete"), SessionID: "sess-1"})
+	if plainFind.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatal(plainFind.SideEffectClass)
+	}
+	if predFind.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatal("find -name must not be delete_tree")
+	}
+	if plainFind.Fingerprint == predFind.Fingerprint {
+		t.Fatal("predicate find must not share fp with plain find -delete")
+	}
+	// Syntax rewrite: bare rm and plain find still share delete identity.
+	if rm.Fingerprint != plainFind.Fingerprint {
+		t.Fatal("rm -rf build and find build -delete should still match (rewrite)")
+	}
+}
+
+func TestNormalizePolicyClassClosed(t *testing.T) {
+	if challenge.NormalizePolicyClass("") != challenge.PolicyClassProductivity {
+		t.Fatal("empty → PRODUCTIVITY")
+	}
+	if challenge.NormalizePolicyClass("security") != challenge.PolicyClassSecurity {
+		t.Fatal("security → SECURITY")
+	}
+	// Typos must fail closed to SECURITY (never productivity fail-open).
+	if challenge.NormalizePolicyClass("SECURTY") != challenge.PolicyClassSecurity {
+		t.Fatal("SECURTY typo → SECURITY")
+	}
+	if challenge.NormalizePolicyClass("TOTALLY_UNKNOWN") != challenge.PolicyClassSecurity {
+		t.Fatal("unknown → SECURITY")
+	}
+}
+
+func TestPolicyClassTypoFailClosedOnProviderError(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	pa := samplePA("echo hi")
+	// Open under productivity, then re-eval with typo PolicyClass → must normalize to SECURITY fail-closed.
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
+	res, _ := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+		CorrelationID: "typo-policy",
+		ReEval: &challenge.ReEvalContext{
+			PolicyClass: "SECURTY", // typo → SECURITY via NormalizePolicyClass
+			Provider:    failClassifier{},
+		},
+	})
+	if res.Stage2Decision == challenge.DecisionAllow || res.Record.State == challenge.StateAllowedOnce {
+		t.Fatalf("typo PolicyClass must fail-closed BLOCK, got stage2=%s state=%s", res.Stage2Decision, res.Record.State)
+	}
+}
+
 // Codex/review: path-qualified rm/find must not share delete identity with bare rm/find.
 func TestPathQualifiedRmNotDeleteTree(t *testing.T) {
 	bare := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
@@ -801,18 +884,26 @@ func TestNonAppealBarrierClearsOnPolicyChange(t *testing.T) {
 	}
 }
 
-// Codex: find path roots stop at first expression predicate.
+// Codex: find -name predicate fails closed (not path-only delete_tree).
 func TestFindDeleteTargetsExcludeNameArgs(t *testing.T) {
-	narrow := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -name cache -delete"), SessionID: "sess-1"})
+	// Predicate-bearing find is shell_generic — not equal to plain path -delete.
+	pred := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -name cache -delete"), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -delete"), SessionID: "sess-1"})
+	if pred.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatal("find -name cache -delete must not be delete_tree")
+	}
+	if plain.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("plain find -delete want delete_tree got %s", plain.SideEffectClass)
+	}
+	if pred.Fingerprint == plain.Fingerprint {
+		t.Fatal("predicate find must not share fingerprint with plain find -delete")
+	}
 	wide := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build cache -delete"), SessionID: "sess-1"})
-	if narrow.SideEffectClass != challenge.SideEffectDeleteTree || wide.SideEffectClass != challenge.SideEffectDeleteTree {
-		t.Fatalf("want delete_tree narrow=%s wide=%s", narrow.SideEffectClass, wide.SideEffectClass)
+	if wide.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("two-path find -delete want delete_tree got %s", wide.SideEffectClass)
 	}
-	if narrow.Fingerprint == wide.Fingerprint {
-		t.Fatal("find -name operand must not equal second path root")
-	}
-	if len(narrow.TargetResources) != 1 || narrow.TargetResources[0] != "build" {
-		t.Fatalf("narrow targets=%v want [build]", narrow.TargetResources)
+	if plain.Fingerprint == wide.Fingerprint {
+		t.Fatal("find build vs find build cache must differ")
 	}
 }
 
@@ -920,10 +1011,17 @@ func TestEchoRmNotDeleteTreeIdentity(t *testing.T) {
 	if spoof.SideEffectClass == challenge.SideEffectDeleteTree || spoof.SideEffectClass == challenge.SideEffectDeleteFile {
 		t.Fatalf("spoof ENV token must not yield delete_*, got %s", spoof.SideEffectClass)
 	}
-	// Valid ENV prefix still allows command-position rm.
-	envOk := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("FOO=bar rm -rf build"), SessionID: "sess-1"})
-	if envOk.SideEffectClass != challenge.SideEffectDeleteTree {
-		t.Fatalf("valid ENV prefix + rm want delete_tree got %s", envOk.SideEffectClass)
+	// Any leading ENV= fails closed for privileged delete (matches PATH=/tmp rule).
+	envAny := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("FOO=bar rm -rf build"), SessionID: "sess-1"})
+	if envAny.SideEffectClass == challenge.SideEffectDeleteTree || envAny.SideEffectClass == challenge.SideEffectDeleteFile {
+		t.Fatalf("ENV= prefix + rm must not be delete_*, got %s", envAny.SideEffectClass)
+	}
+	pathEnv := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("PATH=/tmp rm -rf build"), SessionID: "sess-1"})
+	if pathEnv.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatal("PATH=/tmp rm -rf must not be delete_tree")
+	}
+	if real.Fingerprint == pathEnv.Fingerprint {
+		t.Fatal("PATH=/tmp rm must not share fingerprint with bare rm")
 	}
 }
 

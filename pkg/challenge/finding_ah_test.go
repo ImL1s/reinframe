@@ -579,3 +579,117 @@ func TestCacheKeyPipeCollisionFree(t *testing.T) {
 		t.Fatal("cache key pipe collision")
 	}
 }
+
+// Codex/review: empty CorrelationID and RetryRequestID rejected — no empty-key ALLOW.
+func TestRetryRequiresIdentity(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	pa := samplePA("rm -rf build")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
+	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+		// both identity fields empty
+		ReEval: &challenge.ReEvalContext{UserException: true},
+	})
+	if err == nil {
+		t.Fatalf("expected missing identity error, got %+v", res)
+	}
+	if res.RejectedReason != "missing_retry_identity" {
+		t.Fatalf("reason=%q", res.RejectedReason)
+	}
+	if res.Stage2Decision == challenge.DecisionAllow || res.Record.State == challenge.StateAllowedOnce {
+		t.Fatal("empty identity must not ALLOW")
+	}
+	// RetryRequestID alone is enough
+	res2, err2 := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+		RetryRequestID: "rid-1",
+		ReEval:         &challenge.ReEvalContext{UserException: true},
+	})
+	if err2 != nil || res2.Stage2Decision != challenge.DecisionAllow {
+		t.Fatalf("RetryRequestID-only should ALLOW: %+v err=%v", res2, err2)
+	}
+}
+
+// Codex/review: owner cancel during re-eval does not persist ALLOWED_ONCE.
+func TestOwnerCancelDuringReEvalNoAllow(t *testing.T) {
+	gate := &gateReEval{entered: make(chan struct{}), release: make(chan struct{})}
+	svc := challenge.NewService(challenge.ServiceConfig{ReEval: gate})
+	pa := samplePA("rm -rf build")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan challenge.RetryResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		r, e := svc.AttemptRetry(ctx, challenge.RetryRequest{
+			ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+			CorrelationID: "owner-cancel",
+		})
+		done <- r
+		errCh <- e
+	}()
+	select {
+	case <-gate.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("did not enter re-eval")
+	}
+	cancel() // owner cancel while re-eval blocked — do not release gate (ctx.Done must win)
+
+	var res challenge.RetryResult
+	var e error
+	select {
+	case res = <-done:
+		e = <-errCh
+	case <-time.After(3 * time.Second):
+		close(gate.release) // failsafe so package tests do not leak
+		t.Fatal("AttemptRetry hung after cancel")
+	}
+	if e == nil {
+		t.Fatalf("want context error, got nil res=%+v", res)
+	}
+	if res.Record.State == challenge.StateAllowedOnce || res.Stage2Decision == challenge.DecisionAllow {
+		t.Fatalf("owner cancel must not ALLOW: %+v", res)
+	}
+	got, _ := svc.Get(rec.ChallengeID)
+	if got.State == challenge.StateAllowedOnce {
+		t.Fatal("store must not be ALLOWED_ONCE after owner cancel")
+	}
+}
+
+// Codex/review: conflicting edit args vs payload rejected.
+func TestEditArgsPayloadConflictRejected(t *testing.T) {
+	payload, _ := json.Marshal(map[string]string{"new_string": "from-payload", "old_string": "old-p"})
+	pa := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ActionID: "conflict-edit", ToolName: "Edit", ToolClass: adapter.ToolClassEdit,
+		FilePath: "main.go", Arguments: []string{"old-args", "from-args"},
+		RedactedPayload: payload, ParseStatus: "ok",
+		WorkspaceRevision: "ws-1", ContractRevision: 3,
+	}
+	if err := challenge.ValidateProposedForChallenge(pa); err == nil {
+		t.Fatal("conflicting args/payload must fail ValidateProposedForChallenge")
+	}
+	_, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa, SessionID: "sess-1"})
+	if err == nil {
+		t.Fatal("conflicting edit must fail ComputeFingerprint")
+	}
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	_, err = svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "sess-1", Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err == nil {
+		t.Fatal("Open must reject conflicting edit")
+	}
+}

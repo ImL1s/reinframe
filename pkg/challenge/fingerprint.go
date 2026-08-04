@@ -224,11 +224,12 @@ func operationDigest(pa adapter.ProposedAction, side string) (string, error) {
 	case SideEffectTestSuite:
 		return "test_suite", nil
 	case SideEffectRead, SideEffectSearch:
-		// ToolName + targets distinguish empty-target collapses.
+		// ToolName + targets + bounded payload distinguish empty-target collapses.
 		return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
-			"tool": pa.ToolName,
-			"path": pa.FilePath,
-			"args": encodeStringList(pa.Arguments),
+			"tool":    pa.ToolName,
+			"path":    pa.FilePath,
+			"args":    encodeStringList(pa.Arguments),
+			"payload": boundedPayloadDigest(pa.RedactedPayload),
 		}))), nil
 	default:
 		// Shell / unknown / network: whitespace-collapsed command only (preserve case).
@@ -242,11 +243,29 @@ func operationDigest(pa adapter.ProposedAction, side string) (string, error) {
 			}))), nil
 		}
 		return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
-			"cmd":  cmd,
-			"args": encodeStringList(pa.Arguments),
-			"tool": pa.ToolName,
+			"cmd":     cmd,
+			"args":    encodeStringList(pa.Arguments),
+			"tool":    pa.ToolName,
+			"payload": boundedPayloadDigest(pa.RedactedPayload),
 		}))), nil
 	}
+}
+
+// boundedPayloadDigest hashes redacted JSON if present; empty when absent.
+func boundedPayloadDigest(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
+		return ""
+	}
+	// Canonical JSON re-encode when possible for stable digests.
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return digestBytes(raw)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return digestBytes(raw)
+	}
+	return digestBytes(b)
 }
 
 // editOperationDigest binds write fingerprints to the actual edit operation, not only FilePath.
@@ -260,25 +279,37 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 	}
 	var oldDig, newDig string
 
-	// Arguments: common shapes [new], [old,new], or freeform content tokens.
+	// Closed edit shapes only:
+	//  - Arguments: [new] or [old,new] (len > 2 rejected)
+	//  - RedactedPayload: old_string/new_string (aliases); conflict with args rejected
+	if len(pa.Arguments) > 2 {
+		return "", fmt.Errorf("proposed_action: edit arguments length %d unsupported (want 1 or 2)", len(pa.Arguments))
+	}
 	if len(pa.Arguments) == 1 {
 		newDig = digestBytes([]byte(pa.Arguments[0]))
-	} else if len(pa.Arguments) >= 2 {
+	} else if len(pa.Arguments) == 2 {
 		oldDig = digestBytes([]byte(pa.Arguments[0]))
 		newDig = digestBytes([]byte(pa.Arguments[1]))
 	}
 
-	// RedactedPayload closed content keys (aliases map to the same slots).
 	if len(pa.RedactedPayload) > 0 && string(pa.RedactedPayload) != "{}" && string(pa.RedactedPayload) != "null" {
 		var m map[string]any
 		if err := json.Unmarshal(pa.RedactedPayload, &m); err != nil {
 			return "", fmt.Errorf("proposed_action: edit redacted_payload is not valid JSON object")
 		}
 		if s := stringField(m, "old_string", "old_str"); s != "" {
-			oldDig = digestBytes([]byte(s))
+			d := digestBytes([]byte(s))
+			if oldDig != "" && oldDig != d {
+				return "", fmt.Errorf("proposed_action: edit old content conflicts between args and payload")
+			}
+			oldDig = d
 		}
 		if s := stringField(m, "new_string", "new_str", "content", "contents"); s != "" {
-			newDig = digestBytes([]byte(s))
+			d := digestBytes([]byte(s))
+			if newDig != "" && newDig != d {
+				return "", fmt.Errorf("proposed_action: edit new content conflicts between args and payload")
+			}
+			newDig = d
 		}
 	}
 

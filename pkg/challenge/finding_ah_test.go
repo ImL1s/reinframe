@@ -109,6 +109,7 @@ func TestLossyTruncatedRejected(t *testing.T) {
 	bad.ParseStatus = "unknown_shape"
 	_, err = svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 		ChallengeID: rec.ChallengeID, SessionID: "sess-1", Proposed: bad,
+		CorrelationID: "test-attempt",
 	})
 	if err == nil {
 		t.Fatal("lossy retry must fail")

@@ -105,8 +105,9 @@ func TestRetryWithoutJustificationBlockedNoBudget(t *testing.T) {
 	}
 	budgetBefore := rec.RetryBudget
 	res, _ := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
-		ChallengeID: rec.ChallengeID,
-		Proposed:    samplePA("rm -rf build"),
+		ChallengeID:   rec.ChallengeID,
+		CorrelationID: "test-attempt",
+		Proposed:      samplePA("rm -rf build"),
 	})
 	if res.RejectedReason != "retry_without_justification" {
 		t.Fatalf("reason %q state=%s", res.RejectedReason, res.Record.State)
@@ -147,8 +148,9 @@ func TestJustificationDoesNotAutoAllow(t *testing.T) {
 	}
 	// Default re-eval still BLOCKs (no provider exception).
 	res, _ := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
-		ChallengeID: rec.ChallengeID,
-		Proposed:    samplePA("rm -rf build"),
+		ChallengeID:   rec.ChallengeID,
+		CorrelationID: "test-attempt",
+		Proposed:      samplePA("rm -rf build"),
 	})
 	if res.Stage2Decision != challenge.DecisionBlock {
 		t.Fatalf("want BLOCK after re-eval, got %s reason=%s", res.Stage2Decision, res.RejectedReason)
@@ -169,8 +171,9 @@ func TestSecondRetryBudgetExhausted(t *testing.T) {
 		t.Fatal(err)
 	}
 	r1, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
-		ChallengeID: rec.ChallengeID,
-		Proposed:    samplePA("rm -rf build"),
+		ChallengeID:   rec.ChallengeID,
+		CorrelationID: "test-attempt",
+		Proposed:      samplePA("rm -rf build"),
 		ReEval: &challenge.ReEvalContext{
 			UserException: true, // Stage2 exception — not justification auto-allow
 		},
@@ -182,9 +185,10 @@ func TestSecondRetryBudgetExhausted(t *testing.T) {
 		t.Fatalf("first retry: %+v", r1)
 	}
 	r2, _ := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
-		ChallengeID: rec.ChallengeID,
-		Proposed:    samplePA("rm -rf build"),
-		ReEval:      &challenge.ReEvalContext{UserException: true},
+		ChallengeID:   rec.ChallengeID,
+		CorrelationID: "test-attempt",
+		Proposed:      samplePA("rm -rf build"),
+		ReEval:        &challenge.ReEvalContext{UserException: true},
 	})
 	if !r2.IdempotentReplay && r2.RejectedReason != "already_terminal" {
 		t.Fatalf("second retry should be terminal/idempotent: %+v", r2)
@@ -214,8 +218,9 @@ func TestSyntaxRewriteSameChallenge(t *testing.T) {
 	})
 	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
-		ChallengeID: rec.ChallengeID,
-		Proposed:    samplePA("find build -delete"),
+		ChallengeID:   rec.ChallengeID,
+		CorrelationID: "test-attempt",
+		Proposed:      samplePA("find build -delete"),
 	})
 	if err != nil && res.RejectedReason == "not_same_semantic_action" {
 		t.Fatalf("rewrite should bind: rel=%s err=%v", res.Relationship, err)
@@ -258,6 +263,7 @@ func TestReducedScopeSeparate(t *testing.T) {
 	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 		ChallengeID: rec.ChallengeID, Proposed: reduced,
+		CorrelationID: "test-attempt",
 	})
 	if err == nil || res.RejectedReason != "not_same_semantic_action" {
 		// Accept RelReducedScope rejection
@@ -352,6 +358,7 @@ func TestReplayIdenticalState(t *testing.T) {
 	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 	_, _ = svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 		ChallengeID: rec.ChallengeID, Proposed: samplePA("rm -rf build"),
+		CorrelationID: "test-attempt",
 	})
 	live, _ := svc.Get(rec.ChallengeID)
 	rebuilt, err := svc.Replay(rec.ChallengeID)
@@ -384,9 +391,10 @@ func TestConcurrentDuplicateRetriesOneOutcome(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			results[i], _ = svc.AttemptRetry(context.Background(), challenge.RetryRequest{
-				ChallengeID: rec.ChallengeID,
-				Proposed:    samplePA("rm -rf build"),
-				ReEval:      &challenge.ReEvalContext{UserException: true},
+				ChallengeID:   rec.ChallengeID,
+				CorrelationID: "test-attempt",
+				Proposed:      samplePA("rm -rf build"),
+				ReEval:        &challenge.ReEvalContext{UserException: true},
 			})
 		}(i)
 	}
@@ -456,8 +464,9 @@ func TestConcurrentDuplicateRetriesSlowReEvalOneOutcome(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			results[i], _ = svc.AttemptRetry(context.Background(), challenge.RetryRequest{
-				ChallengeID: rec.ChallengeID,
-				Proposed:    samplePA("rm -rf build"),
+				ChallengeID:   rec.ChallengeID,
+				CorrelationID: "test-attempt",
+				Proposed:      samplePA("rm -rf build"),
 			})
 		}(i)
 	}
@@ -513,9 +522,10 @@ func TestFingerprintDoesNotCollapseUnrelatedShell(t *testing.T) {
 	}
 	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
-		ChallengeID: rec.ChallengeID,
-		Proposed:    samplePA("sleep 1"),
-		ReEval:      &challenge.ReEvalContext{UserException: true},
+		ChallengeID:   rec.ChallengeID,
+		CorrelationID: "test-attempt",
+		Proposed:      samplePA("sleep 1"),
+		ReEval:        &challenge.ReEvalContext{UserException: true},
 	})
 	if err == nil || res.RejectedReason != "not_same_semantic_action" {
 		t.Fatalf("sleep must not consume echo challenge: %+v err=%v", res, err)
@@ -568,10 +578,11 @@ func TestExpandRetryAllows(t *testing.T) {
 	}
 	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
-		ChallengeID: rec.ChallengeID,
-		SessionID:   "sess-1",
-		Proposed:    samplePA("rm -rf build /tmp/secrets"),
-		ReEval:      &challenge.ReEvalContext{UserException: true},
+		ChallengeID:   rec.ChallengeID,
+		CorrelationID: "test-attempt",
+		SessionID:     "sess-1",
+		Proposed:      samplePA("rm -rf build /tmp/secrets"),
+		ReEval:        &challenge.ReEvalContext{UserException: true},
 	})
 	if err == nil {
 		t.Fatalf("scope expansion must not succeed: %+v", res)
@@ -618,10 +629,11 @@ func TestForeignSessionRetry(t *testing.T) {
 	foreign := samplePA("rm -rf build")
 	foreign.SessionID = "attacker-sess"
 	res, err := svc2.AttemptRetry(context.Background(), challenge.RetryRequest{
-		ChallengeID: rec.ChallengeID,
-		SessionID:   "attacker-sess",
-		Proposed:    foreign,
-		ReEval:      &challenge.ReEvalContext{UserException: true},
+		ChallengeID:   rec.ChallengeID,
+		CorrelationID: "test-attempt",
+		SessionID:     "attacker-sess",
+		Proposed:      foreign,
+		ReEval:        &challenge.ReEvalContext{UserException: true},
 	})
 	if err == nil {
 		t.Fatalf("foreign session must fail: %+v", res)
@@ -643,10 +655,11 @@ func TestForeignSessionRetry(t *testing.T) {
 	foreign2 := samplePA("rm -rf build")
 	foreign2.SessionID = "other"
 	res2, err := svc2.AttemptRetry(context.Background(), challenge.RetryRequest{
-		ChallengeID: rec.ChallengeID,
-		SessionID:   "owner-sess", // request ok
-		Proposed:    foreign2,     // proposed foreign
-		ReEval:      &challenge.ReEvalContext{UserException: true},
+		ChallengeID:   rec.ChallengeID,
+		CorrelationID: "test-attempt",
+		SessionID:     "owner-sess", // request ok
+		Proposed:      foreign2,     // proposed foreign
+		ReEval:        &challenge.ReEvalContext{UserException: true},
 	})
 	if err == nil || res2.RejectedReason != "ownership_mismatch" {
 		t.Fatalf("proposed session mismatch: %+v err=%v", res2, err)
@@ -685,7 +698,8 @@ func TestSharedTargetScopeDifferentShellNotBound(t *testing.T) {
 	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 		ChallengeID: rec.ChallengeID, Proposed: b,
-		ReEval: &challenge.ReEvalContext{UserException: true},
+		CorrelationID: "test-attempt",
+		ReEval:        &challenge.ReEvalContext{UserException: true},
 	})
 	if err == nil || res.RejectedReason != "not_same_semantic_action" {
 		t.Fatalf("must not bind: %+v err=%v", res, err)
@@ -807,8 +821,9 @@ func TestReEvalUsesClassifierProvider(t *testing.T) {
 	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 	// clear_allow → severity 10 → ALLOW
 	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
-		ChallengeID: rec.ChallengeID,
-		Proposed:    samplePA("echo hi"),
+		ChallengeID:   rec.ChallengeID,
+		CorrelationID: "test-attempt",
+		Proposed:      samplePA("echo hi"),
 		ReEval: &challenge.ReEvalContext{
 			Provider:    classifier.FakeClassifierProvider{},
 			FixtureName: "clear_allow",

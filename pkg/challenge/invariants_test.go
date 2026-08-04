@@ -42,7 +42,8 @@ func TestChallengeInvariants(t *testing.T) {
 		_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 		res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 			ChallengeID: rec.ChallengeID, SessionID: pa1.SessionID, Proposed: pa2,
-			ReEval: &challenge.ReEvalContext{UserException: true},
+			CorrelationID: "test-attempt",
+			ReEval:        &challenge.ReEvalContext{UserException: true},
 		})
 		if err == nil || res.Record.State == challenge.StateAllowedOnce {
 			t.Fatalf("delimiter collision must not inherit ALLOW: %+v err=%v", res, err)
@@ -80,7 +81,8 @@ func TestChallengeInvariants(t *testing.T) {
 			_, _ = svc2.Justify(context.Background(), validJustification(rec2.ChallengeID, nil), nil)
 			res, _ := svc2.AttemptRetry(context.Background(), challenge.RetryRequest{
 				ChallengeID: rec2.ChallengeID, SessionID: pa2.SessionID, Proposed: pa2,
-				ReEval: &challenge.ReEvalContext{PolicyClass: pc, Provider: failClassifier{}},
+				CorrelationID: "test-attempt",
+				ReEval:        &challenge.ReEvalContext{PolicyClass: pc, Provider: failClassifier{}},
 			})
 			// Provider error under SECURITY must BLOCK (fail-closed), never ALLOW/ALLOWED_ONCE.
 			if res.Stage2Decision != challenge.DecisionBlock || res.Record.State == challenge.StateAllowedOnce {
@@ -98,7 +100,8 @@ func TestChallengeInvariants(t *testing.T) {
 		_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 		_, _ = svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 			ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
-			ReEval: &challenge.ReEvalContext{UserException: true},
+			CorrelationID: "test-attempt",
+			ReEval:        &challenge.ReEvalContext{UserException: true},
 		})
 		live, _ := svc.Get(rec.ChallengeID)
 		rebuilt, err := svc.Replay(rec.ChallengeID)
@@ -131,7 +134,8 @@ func TestChallengeInvariants(t *testing.T) {
 		foreign.SessionID = "attacker"
 		res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 			ChallengeID: rec.ChallengeID, SessionID: "attacker", Proposed: foreign,
-			ReEval: &challenge.ReEvalContext{UserException: true},
+			CorrelationID: "test-attempt",
+			ReEval:        &challenge.ReEvalContext{UserException: true},
 		})
 		if err == nil || res.RejectedReason != "ownership_mismatch" {
 			t.Fatalf("%+v err=%v", res, err)
@@ -146,8 +150,9 @@ func TestChallengeInvariants(t *testing.T) {
 		_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 		res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 			ChallengeID: rec.ChallengeID, SessionID: "s", Branch: "feature",
-			Proposed: samplePA("rm -rf build"),
-			ReEval:   &challenge.ReEvalContext{UserException: true},
+			CorrelationID: "test-attempt",
+			Proposed:      samplePA("rm -rf build"),
+			ReEval:        &challenge.ReEvalContext{UserException: true},
 		})
 		if err == nil || res.RejectedReason != "ownership_mismatch" {
 			t.Fatalf("branch mismatch: %+v err=%v", res, err)
@@ -164,8 +169,9 @@ func TestChallengeInvariants(t *testing.T) {
 		exp := samplePA("rm -rf build /tmp/secrets")
 		res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 			ChallengeID: rec.ChallengeID, SessionID: pa.SessionID,
-			Proposed: exp,
-			ReEval:   &challenge.ReEvalContext{UserException: true},
+			CorrelationID: "test-attempt",
+			Proposed:      exp,
+			ReEval:        &challenge.ReEvalContext{UserException: true},
 		})
 		if err == nil || res.Record.State == challenge.StateAllowedOnce {
 			t.Fatalf("expand: %+v err=%v", res, err)
@@ -205,14 +211,16 @@ func TestChallengeInvariants(t *testing.T) {
 		_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 		r1, _ := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 			ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
-			ReEval: &challenge.ReEvalContext{UserException: true},
+			CorrelationID: "test-attempt",
+			ReEval:        &challenge.ReEvalContext{UserException: true},
 		})
 		if r1.Record.State != challenge.StateAllowedOnce {
 			t.Fatalf("%+v", r1)
 		}
 		r2, _ := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 			ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
-			ReEval: &challenge.ReEvalContext{UserException: true},
+			CorrelationID: "test-attempt",
+			ReEval:        &challenge.ReEvalContext{UserException: true},
 		})
 		if !r2.IdempotentReplay && r2.RejectedReason != "already_terminal" {
 			t.Fatalf("%+v", r2)
@@ -238,6 +246,7 @@ func TestChallengeInvariants(t *testing.T) {
 				defer wg.Done()
 				results[i], _ = svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 					ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+					CorrelationID: "test-attempt",
 				})
 			}(i)
 		}

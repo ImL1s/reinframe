@@ -335,6 +335,10 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	if err := ValidateProposedForChallenge(req.Proposed); err != nil {
 		return RetryResult{Stage2Decision: DecisionBlock, RejectedReason: "lossy_proposed_action"}, fmt.Errorf("retry: %w", err)
 	}
+	// Require durable attempt identity so empty CorrelationID cannot mint unlimited ALLOW replays.
+	if strings.TrimSpace(req.CorrelationID) == "" && strings.TrimSpace(req.RetryRequestID) == "" {
+		return RetryResult{Stage2Decision: DecisionBlock, RejectedReason: "missing_retry_identity"}, fmt.Errorf("retry: CorrelationID or RetryRequestID required")
+	}
 
 	rec, ok := s.store.Get(req.ChallengeID)
 	if !ok {
@@ -524,6 +528,23 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	}
 	re, err := s.reeval.ReEvaluate(ctx, pending, req.Proposed, &just, reCtx)
 	if err != nil {
+		// Propagate owner cancellation — do not silently convert to ordinary BLOCK success.
+		if ctx != nil && ctx.Err() != nil {
+			// Best-effort terminalize budget consumption without claiming a successful re-eval.
+			s.store.mu.Lock()
+			if cur, ok := s.store.byID[req.ChallengeID]; ok && cur.State == StateRetryPending {
+				now := s.now()
+				cp := cloneRecord(*cur)
+				cp.ConsumedRetryKey = attemptKey
+				cp.Stage2Decision = DecisionBlock
+				_ = s.store.appendTransition(cp, StateRetryPending, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, attemptKey, "owner_context_canceled", now, nil)
+				s.store.byID[req.ChallengeID].ConsumedRetryKey = attemptKey
+				s.store.byID[req.ChallengeID].Stage2Decision = DecisionBlock
+				s.signalTerminal(req.ChallengeID)
+			}
+			s.store.mu.Unlock()
+			return RetryResult{RejectedReason: "context_canceled", Relationship: rel}, ctx.Err()
+		}
 		re = ReEvalResult{Stage2Decision: DecisionBlock, Reason: "reeval_error"}
 	}
 

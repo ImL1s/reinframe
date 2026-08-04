@@ -10,9 +10,9 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 
 ## Project Status
 
-> **Phase: M1 + M2 library + experimental host bridges + shadow classifier + offline eval**  
-> **Still open (actual `gh` set):** epic [#80](https://github.com/ImL1s/reinframe/issues/80); blocked [#120](https://github.com/ImL1s/reinframe/issues/120) live Claude smoke (`BLOCKED_BY_ENVIRONMENT`); blocked [#108](https://github.com/ImL1s/reinframe/issues/108) advice consumer (depends on #120).  
-> **No `status:ready` product issues.** Landed library slices: ProposedAction [#115](https://github.com/ImL1s/reinframe/issues/115), PreTool semantics [#116](https://github.com/ImL1s/reinframe/issues/116), settings harden [#117](https://github.com/ImL1s/reinframe/issues/117), Codex identity [#118](https://github.com/ImL1s/reinframe/issues/118), classifier contract [#119](https://github.com/ImL1s/reinframe/issues/119), shadow classifier [#105](https://github.com/ImL1s/reinframe/issues/105), M3 benches [#100](https://github.com/ImL1s/reinframe/issues/100) (MORE-DATA, no hard-gate), managed worktree [#99](https://github.com/ImL1s/reinframe/issues/99).  
+> **Phase: M1 + M2 library + experimental host bridges + shadow classifier + offline eval**
+> **Still open (actual `gh` set, 2026-08-04):** epic [#80](https://github.com/ImL1s/reinframe/issues/80); **ready** [#131](https://github.com/ImL1s/reinframe/issues/131) appealable BLOCK challenges, [#132](https://github.com/ImL1s/reinframe/issues/132) classifier provider runtime; **blocked** [#120](https://github.com/ImL1s/reinframe/issues/120) live Claude smoke (`BLOCKED_BY_ENVIRONMENT`) → [#108](https://github.com/ImL1s/reinframe/issues/108) advice consumer; **blocked** native provider/cost/Claude appeal [#134](https://github.com/ImL1s/reinframe/issues/134)–[#139](https://github.com/ImL1s/reinframe/issues/139) (depend on #132/#131).
+> **Closed residual library slices (narrow DoD):** ProposedAction [#115](https://github.com/ImL1s/reinframe/issues/115), PreTool semantics [#116](https://github.com/ImL1s/reinframe/issues/116), settings harden [#117](https://github.com/ImL1s/reinframe/issues/117), Codex identity [#118](https://github.com/ImL1s/reinframe/issues/118), classifier contract [#119](https://github.com/ImL1s/reinframe/issues/119), shadow classifier [#105](https://github.com/ImL1s/reinframe/issues/105), M3 benches [#100](https://github.com/ImL1s/reinframe/issues/100) (MORE-DATA, no hard-gate), managed worktree [#99](https://github.com/ImL1s/reinframe/issues/99), post-merge hygiene [#133](https://github.com/ImL1s/reinframe/pull/133).
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
 
 | Component | Status |
@@ -47,6 +47,11 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 | Optional LLM Reviewer (OpenAI-compatible, ADR 003 local-only default) | ✅ Uncertain path only; high-confidence never calls LLM (`cmd/reviewerdemo`) |
 | Live Claude ALLOW/BLOCK smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
 | Real advice consumer / ACK (#108) | 🔲 Open (blocked by #120) |
+| Appealable BLOCK challenges (#131) | 🔲 Open — `status:ready` |
+| Classifier provider runtime (#132) | 🔲 Open — `status:ready` |
+| Native classifier adapters (#134–#137) | 🔲 Open — blocked on #132 |
+| Exact-assessment memoization (#138) | 🔲 Open — blocked on #132 |
+| Claude appeal delivery (#139) | 🔲 Open — blocked on #131 |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Project Objective
@@ -185,12 +190,12 @@ Intervention escalation after detection is a **separate axis** (B0–B3). See `d
    ```
 
 ### Further reading
-- [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md) — how pieces connect + honesty boundaries  
-- [`docs/reviewer/optional_llm_advice.md`](docs/reviewer/optional_llm_advice.md) — when LLM advice runs vs fixed ZOOM_OUT  
-- [`docs/adapter/claude_bridge.md`](docs/adapter/claude_bridge.md) — #96  
-- [`docs/adapter/file_actuator.md`](docs/adapter/file_actuator.md) — #97  
-- [`docs/adapter/codex_eventsource.md`](docs/adapter/codex_eventsource.md) — #95 offline/tail  
-- [`docs/detector/tool_budget_hypothesis.md`](docs/detector/tool_budget_hypothesis.md) — #98  
+- [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md) — how pieces connect + honesty boundaries
+- [`docs/reviewer/optional_llm_advice.md`](docs/reviewer/optional_llm_advice.md) — when LLM advice runs vs fixed ZOOM_OUT
+- [`docs/adapter/claude_bridge.md`](docs/adapter/claude_bridge.md) — #96
+- [`docs/adapter/file_actuator.md`](docs/adapter/file_actuator.md) — #97
+- [`docs/adapter/codex_eventsource.md`](docs/adapter/codex_eventsource.md) — #95 offline/tail
+- [`docs/detector/tool_budget_hypothesis.md`](docs/detector/tool_budget_hypothesis.md) — #98
 
 ---
 

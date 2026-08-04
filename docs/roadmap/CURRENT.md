@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-04) — post #99/#100 merge hygiene  
+**Status:** current (2026-08-04) — open-set sync after #99/#100/#133
 **Wins on conflict:** README (public status) > this file (executable queue) > `docs/specs/*` (normative model) > Epic #80 (tracker) > historical docs.
 
 ## Implemented (narrow DoD — do not reopen for same scope)
@@ -26,8 +26,16 @@
 | Shadow classifier | **#105 / PR #128** | `Enforced=false` always |
 | M3 synthetic/FP benchmarks | **#100 / PR #129** | MORE-DATA; **no hard-gate** |
 | Managed worktree rollback | **#99 / PR #130** | Clean-only; not primary checkout |
+| Post-merge P1 hygiene | **PR #133** | Eval rate denominators; workspace fail-closed |
 
-## Active backlog (open only)
+## Active backlog (open only — must match `gh issue list --state open`)
+
+### Ready product work
+
+| Issue | Pri | Notes |
+|-------|-----|-------|
+| **#131** | P1 | Appealable BLOCK challenges + one-shot semantic retries (host-neutral) |
+| **#132** | P1 | Classifier provider runtime, usage telemetry, capability-safe generic adapter |
 
 ### Blocked
 
@@ -35,17 +43,31 @@
 |-------|-----|------------|-------|
 | **#120** | P0 | environment (interactive Claude) | Pinned live project-local ALLOW/BLOCK smoke — `BLOCKED_BY_ENVIRONMENT` |
 | **#108** | P0 | **#120** | Real advice consume / SafeBoundary / ACK |
+| **#134** | P1 | **#132** | OpenAI native Responses classifier adapter |
+| **#135** | P1 | **#132** | Anthropic native Messages adapter |
+| **#136** | P1 | **#132** | Gemini native generateContent adapter |
+| **#137** | P1 | **#132** | xAI native Responses adapter |
+| **#138** | P1 | **#132** | Exact-assessment memoization / singleflight / cache observability |
+| **#139** | P1 | **#131** | Claude appeal delivery + structured one-shot retries |
 | **#80** | epic | — | Residual tracker; keep OPEN |
-
-### Ready product work
-
-*None.* All previously ready residual library issues (#115–#119, #121, #99, #100, #105) are closed with narrow DoD.
 
 ## Execution order (remaining)
 
 ```text
-#120 live Claude smoke (operator / interactive environment)
-  → #108 advice consumer / SafeBoundary
+Parallel ready tracks (library/product, no shared unmerged contracts):
+  #131 appealable BLOCK challenges
+  #132 classifier provider runtime
+
+After #132:
+  #134 OpenAI | #135 Anthropic | #136 Gemini | #137 xAI | #138 exact-assessment cache
+  (parallel adapters OK once #132 is merged)
+
+After #131:
+  #139 Claude appeal delivery
+
+Environment-gated (do not forge smoke):
+  #120 live Claude ALLOW/BLOCK smoke (operator / interactive environment)
+    → #108 advice consumer / SafeBoundary
 
 Epic #80 stays open until product-complete or explicit scope transfer.
 Future hard-gate promotion only after #100 LIMITED-GO + separate issue
@@ -54,14 +76,16 @@ Future hard-gate promotion only after #100 LIMITED-GO + separate issue
 
 ## Explicit non-claims
 
-- No calibrated hard-gate (MORE-DATA on synthetic #100)  
-- No silent global Claude/Codex install  
-- No dual-host production supervision claim  
-- FileActuator write ≠ agent receipt  
-- Codex JSONL tail / codexctl ≠ bidirectional control  
-- #106 installer ≠ proven live control-loop without #120  
-- OS SIGSTOP ≠ CapPause  
-- Managed worktree rollback ≠ primary checkout mutation  
+- No calibrated hard-gate (MORE-DATA on synthetic #100)
+- No silent global Claude/Codex install
+- No dual-host production supervision claim
+- FileActuator write ≠ agent receipt
+- Codex JSONL tail / codexctl ≠ bidirectional control
+- #106 installer ≠ proven live control-loop without #120
+- OS SIGSTOP ≠ CapPause
+- Managed worktree rollback ≠ primary checkout mutation
+- #119 FakeProvider / #105 shadow ≠ production provider runtime (#132 open)
+- Appealable challenge design (#131) ≠ live Claude retry proof (#139 / #120)
 
 ## Evaluation
 
@@ -69,5 +93,5 @@ Offline synthetic benchmarks: [`docs/evaluation/m3_benchmarks.md`](../evaluation
 
 ## Historical sources (not executable backlog)
 
-- `docs/plans/2026-08-03-issue-queue.md` — superseded  
-- Closed Epic #1 — foundation archive  
+- `docs/plans/2026-08-03-issue-queue.md` — superseded
+- Closed Epic #1 — foundation archive

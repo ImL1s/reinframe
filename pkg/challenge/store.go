@@ -168,9 +168,6 @@ func Replay(events []ChallengeEvent, seed ChallengeRecord) (ChallengeRecord, err
 		}
 		rec.UpdatedSequence = ev.Sequence
 		rec.UpdatedAt = ev.At
-		if ev.Type == "budget_consumed" || (ev.Type == "retry_pending" && rec.RetryBudget > 0) {
-			// budget handled by service events
-		}
 		if ev.Type == "budget_consumed" {
 			if rec.RetryBudget > 0 {
 				rec.RetryBudget--
@@ -208,16 +205,20 @@ func (s *Store) ReplayFromStore(challengeID string) (ChallengeRecord, error) {
 		seed = *snap
 		// reset mutable fields for pure replay
 		seed.State = ""
-		seed.RetryBudget = InitialRetryBudget
-		seed.RetryBudgetInitial = InitialRetryBudget
 		seed.JustificationHash = ""
 		seed.UpdatedSequence = 0
 	}
 	// Pure transition replay
 	rec := seed
 	rec.State = ""
-	rec.RetryBudget = InitialRetryBudget
-	rec.RetryBudgetInitial = InitialRetryBudget
+	// Budget initial from snapshot when present (human-review opens with 0).
+	if ok {
+		rec.RetryBudgetInitial = snap.RetryBudgetInitial
+		rec.RetryBudget = snap.RetryBudgetInitial
+	} else {
+		rec.RetryBudgetInitial = InitialRetryBudget
+		rec.RetryBudget = InitialRetryBudget
+	}
 	for _, ev := range evs {
 		switch ev.Type {
 		case "opened":
@@ -243,18 +244,22 @@ func (s *Store) ReplayFromStore(challengeID string) (ChallengeRecord, error) {
 				rec.RulesetHash = snap.RulesetHash
 				rec.PolicyHash = snap.PolicyHash
 				rec.ExpiresAtSequence = snap.ExpiresAtSequence
+				rec.RetryBudgetInitial = snap.RetryBudgetInitial
+				rec.RetryBudget = snap.RetryBudgetInitial
 			}
 		case "justified":
 			rec.State = StateJustified
 			if ok {
 				rec.JustificationHash = snap.JustificationHash
 			}
-		case "retry_pending", "budget_consumed":
-			if ev.Type == "budget_consumed" || ev.ToState == StateRetryPending {
-				if rec.RetryBudget > 0 {
-					rec.RetryBudget--
-				}
+		case "budget_consumed":
+			if rec.RetryBudget > 0 {
+				rec.RetryBudget--
 			}
+			if ev.ToState != "" {
+				rec.State = ev.ToState
+			}
+		case "retry_pending":
 			if ev.ToState != "" {
 				rec.State = ev.ToState
 			}
@@ -268,6 +273,13 @@ func (s *Store) ReplayFromStore(challengeID string) (ChallengeRecord, error) {
 			rec.State = StateHumanReview
 			rec.Stage2Decision = DecisionBlock
 			rec.Intervention = InterventionHumanReview
+			if ok {
+				rec.RetryBudgetInitial = snap.RetryBudgetInitial
+				rec.RetryBudget = 0
+			} else {
+				rec.RetryBudget = 0
+				rec.RetryBudgetInitial = 0
+			}
 		case "abandoned":
 			rec.State = StateAbandoned
 		case "expired":

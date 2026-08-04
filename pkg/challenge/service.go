@@ -378,14 +378,15 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		}, nil
 	}
 
-	// Already retry_pending / in-flight: idempotent single outcome
+	// Already retry_pending / in-flight: wait for the winner's terminal outcome
+	// so concurrent duplicates share one authoritative business result.
 	if rec.State == StateRetryPending {
-		out := cloneRecord(rec)
 		s.store.mu.Unlock()
+		final := s.waitTerminal(req.ChallengeID, 200)
 		return RetryResult{
-			Record:           out,
-			Stage2Decision:   out.Stage2Decision,
-			Intervention:     out.Intervention,
+			Record:           final,
+			Stage2Decision:   final.Stage2Decision,
+			Intervention:     final.Intervention,
 			Relationship:     rel,
 			IdempotentReplay: true,
 			RejectedReason:   "duplicate_retry",
@@ -424,7 +425,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	s.store.putLocked(rec, evBudget, nil)
 
 	// Capture justification for re-eval
-	just, _ := s.store.justifications[rec.ChallengeID]
+	just := s.store.justifications[rec.ChallengeID]
 	pending := cloneRecord(rec)
 	s.store.mu.Unlock()
 
@@ -605,6 +606,23 @@ func (s *Service) expireIfNeeded(rec *ChallengeRecord) error {
 	updated := s.store.appendTransition(cloneRecord(*cur), from, StateExpired, "expired", "", rec.ChallengeID, "", "sequence_expiry", now, nil)
 	*rec = cloneRecord(updated)
 	return fmt.Errorf("challenge expired")
+}
+
+// waitTerminal polls until the challenge leaves RETRY_PENDING or attempts exhaust.
+func (s *Service) waitTerminal(id string, attempts int) ChallengeRecord {
+	var last ChallengeRecord
+	for i := 0; i < attempts; i++ {
+		rec, ok := s.store.Get(id)
+		if !ok {
+			return last
+		}
+		last = rec
+		if isTerminal(rec.State) {
+			return rec
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return last
 }
 
 func hashPolicy(ver, ruleset, block string) string {

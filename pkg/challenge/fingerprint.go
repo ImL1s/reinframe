@@ -74,9 +74,20 @@ func ComputeFingerprint(in FingerprintInput) FingerprintResult {
 	}
 	targets = uniqueSorted(targets)
 
+	// Strong side-effect classes bind on class+targets so syntax rewrites match.
+	// Pathless/generic shells include a normalized command so unrelated actions
+	// (e.g. echo vs sleep) do not collapse into one challenge.
+	cmdPart := ""
+	switch side {
+	case SideEffectShellGeneric, SideEffectNetwork, SideEffectGitMutate, SideEffectUnknown, SideEffectNone:
+		cmdPart = normalizeCommand(pa.Command)
+	case SideEffectTestSuite:
+		cmdPart = "test_suite"
+	}
+
 	canon := fmt.Sprintf(
-		"tool_class=%s|side=%s|targets=%s|session=%s|branch=%s|ws=%s|contract=%d",
-		pa.ToolClass, side, strings.Join(targets, ","), session, in.Branch, ws, cr,
+		"tool_class=%s|side=%s|targets=%s|cmd=%s|session=%s|branch=%s|ws=%s|contract=%d",
+		pa.ToolClass, side, strings.Join(targets, ","), cmdPart, session, in.Branch, ws, cr,
 	)
 	sum := sha256.Sum256([]byte(canon))
 	fp := "af-" + hex.EncodeToString(sum[:16])
@@ -197,6 +208,18 @@ func normalizeResource(s string) string {
 	// collapse ./prefix
 	s = strings.TrimPrefix(s, "./")
 	return strings.ToLower(s)
+}
+
+// normalizeCommand is a closed, deterministic shell surface for fingerprinting
+// generic commands (not used for delete_tree rewrite equivalence).
+func normalizeCommand(cmd string) string {
+	cmd = strings.TrimSpace(strings.ToLower(cmd))
+	if cmd == "" {
+		return ""
+	}
+	// Collapse whitespace only — do not invent semantic equality for arbitrary shell.
+	fields := strings.Fields(cmd)
+	return strings.Join(fields, " ")
 }
 
 func uniqueSorted(in []string) []string {

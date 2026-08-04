@@ -9,6 +9,7 @@ import (
 
 // ClassifyAppealability maps a block class (+ optional action) to appeal behavior.
 // Hard security denials are never self-appealable. Irreversible/high-impact route to HUMAN_REVIEW.
+// Unknown block classes fail closed to HUMAN_REVIEW (no self-appeal).
 func ClassifyAppealability(blockClass string, pa adapter.ProposedAction) (appeal string, intervention string) {
 	bc := strings.ToUpper(strings.TrimSpace(blockClass))
 	// Infer from action when block class empty/unknown.
@@ -31,6 +32,13 @@ func ClassifyAppealability(blockClass string, pa adapter.ProposedAction) (appeal
 				if strings.Contains(pa.Command, "://") || strings.Contains(pa.Command, "s3://") {
 					bc = BlockClassRemoteDeletion
 				}
+			default:
+				if bc == BlockClassUnknownSecurity {
+					// keep unknown security
+				} else if bc == "" {
+					// empty class with no strong security signal stays unknown → fail closed below
+					bc = BlockClassUnknownSecurity
+				}
 			}
 		}
 	}
@@ -47,8 +55,8 @@ func ClassifyAppealability(blockClass string, pa adapter.ProposedAction) (appeal
 		BlockClassRepeatedExploration, BlockClassEvidenceGap, BlockClassProductivityGeneric:
 		return AppealAppealable, InterventionAppealableChallenge
 	default:
-		// Unknown productivity-ish: allow appeal only if policy class is PRODUCTIVITY.
-		return AppealAppealable, InterventionAppealableChallenge
+		// Unknown codes fail closed — do not invent self-appeal.
+		return AppealHumanReview, InterventionHumanReview
 	}
 }
 

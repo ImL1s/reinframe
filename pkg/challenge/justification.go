@@ -131,10 +131,9 @@ func ValidateJustification(j Justification, knownEvidence []string, requiredClai
 			return Justification{}, fmt.Errorf("justification: duplicate evidence id %q", id)
 		}
 		seen[id] = struct{}{}
-		if len(known) > 0 {
-			if _, ok := known[id]; !ok {
-				return Justification{}, fmt.Errorf("justification: unknown evidence id %q", id)
-			}
+		// Always validate against the known set (empty known ⇒ any ID is unknown).
+		if _, ok := known[id]; !ok {
+			return Justification{}, fmt.Errorf("justification: unknown evidence id %q", id)
 		}
 		if err := checkInjection("evidence_id", id); err != nil {
 			return Justification{}, err

@@ -77,15 +77,12 @@ func TestRetryWithoutJustificationBlockedNoBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	budgetBefore := rec.RetryBudget
-	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+	res, _ := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 		ChallengeID: rec.ChallengeID,
 		Proposed:    samplePA("rm -rf build"),
 	})
-	if err != nil {
-		// may be nil; rejection is business outcome
-	}
 	if res.RejectedReason != "retry_without_justification" {
-		t.Fatalf("reason %q err=%v", res.RejectedReason, err)
+		t.Fatalf("reason %q state=%s", res.RejectedReason, res.Record.State)
 	}
 	if res.Stage2Decision != challenge.DecisionBlock {
 		t.Fatal(res.Stage2Decision)
@@ -371,21 +368,32 @@ func TestConcurrentDuplicateRetriesOneOutcome(t *testing.T) {
 	if final.State != challenge.StateAllowedOnce && final.State != challenge.StateRejected {
 		t.Fatalf("final state %s", final.State)
 	}
-	// All results agree on terminal state
+	// Every caller observes the same terminal Stage2 decision as the store.
 	for i, r := range results {
 		if r.Record.ChallengeID == "" {
-			continue
+			t.Fatalf("i=%d empty result", i)
 		}
-		if r.Record.State != final.State && !r.IdempotentReplay {
-			// concurrent: one winner transitions, others may see RETRY_PENDING then terminal
-			got, _ := svc.Get(rec.ChallengeID)
-			if got.State != final.State {
-				t.Fatalf("i=%d result state %s final %s", i, r.Record.State, final.State)
-			}
+		if r.Record.State != final.State {
+			t.Fatalf("i=%d result state %s final %s", i, r.Record.State, final.State)
+		}
+		if r.Stage2Decision != final.Stage2Decision {
+			t.Fatalf("i=%d stage2 %s final %s", i, r.Stage2Decision, final.Stage2Decision)
 		}
 	}
 	if final.RetryBudget != 0 {
 		t.Fatalf("budget should be 0, got %d", final.RetryBudget)
+	}
+}
+
+func TestFingerprintDoesNotCollapseUnrelatedShell(t *testing.T) {
+	a := challenge.ComputeFingerprint(challenge.FingerprintInput{
+		Proposed: samplePA("echo hi"), SessionID: "sess-1",
+	})
+	b := challenge.ComputeFingerprint(challenge.FingerprintInput{
+		Proposed: samplePA("sleep 1"), SessionID: "sess-1",
+	})
+	if a.Fingerprint == b.Fingerprint {
+		t.Fatalf("unrelated shell must not share fingerprint: %s", a.CanonicalForm)
 	}
 }
 

@@ -22,42 +22,46 @@ func NormalizeBlockClass(s string) string {
 	return strings.ToUpper(strings.TrimSpace(s))
 }
 
-// ClassifyAppealability maps a block class (+ optional action) to appeal behavior.
-// Hard security denials are never self-appealable. Irreversible/high-impact route to HUMAN_REVIEW.
-// Unknown block classes fail closed to HUMAN_REVIEW (no self-appeal).
-func ClassifyAppealability(blockClass string, pa adapter.ProposedAction) (appeal string, intervention string) {
+// ResolveBlockClass normalizes and, when empty/unknown-security, infers from the action.
+// Empty class with no strong security signal becomes UnknownSecurity (fail closed).
+func ResolveBlockClass(blockClass string, pa adapter.ProposedAction) string {
 	bc := NormalizeBlockClass(blockClass)
 	// Infer from action when block class empty/unknown.
 	if bc == "" || bc == BlockClassUnknownSecurity {
 		if LooksLikeSecretExfil(pa) {
-			bc = BlockClassSecretExfiltration
-		} else if LooksLikeCrossWorkspace(pa) {
-			bc = BlockClassCrossWorkspace
-		} else {
-			side, _, _ := classifySideEffect(pa)
-			switch side {
-			case SideEffectDeploy:
-				bc = BlockClassProductionDeploy
-			case SideEffectPayment:
-				bc = BlockClassPayment
-			case SideEffectPermission:
-				bc = BlockClassPermissionChange
-			case SideEffectDeleteTree:
-				// Remote/high-impact deletion may be human review when path looks remote.
-				if strings.Contains(pa.Command, "://") || strings.Contains(pa.Command, "s3://") {
-					bc = BlockClassRemoteDeletion
-				}
-			default:
-				switch bc {
-				case BlockClassUnknownSecurity:
-					// keep unknown security
-				case "":
-					// empty class with no strong security signal → fail closed below
-					bc = BlockClassUnknownSecurity
-				}
+			return BlockClassSecretExfiltration
+		}
+		if LooksLikeCrossWorkspace(pa) {
+			return BlockClassCrossWorkspace
+		}
+		side, _, _ := classifySideEffect(pa)
+		switch side {
+		case SideEffectDeploy:
+			return BlockClassProductionDeploy
+		case SideEffectPayment:
+			return BlockClassPayment
+		case SideEffectPermission:
+			return BlockClassPermissionChange
+		case SideEffectDeleteTree:
+			// Remote/high-impact deletion may be human review when path looks remote.
+			if strings.Contains(pa.Command, "://") || strings.Contains(pa.Command, "s3://") {
+				return BlockClassRemoteDeletion
 			}
 		}
+		if bc == BlockClassUnknownSecurity {
+			return BlockClassUnknownSecurity
+		}
+		// empty class with no strong security signal → fail closed
+		return BlockClassUnknownSecurity
 	}
+	return bc
+}
+
+// ClassifyAppealability maps a block class (+ optional action) to appeal behavior.
+// Hard security denials are never self-appealable. Irreversible/high-impact route to HUMAN_REVIEW.
+// Unknown block classes fail closed to HUMAN_REVIEW (no self-appeal).
+func ClassifyAppealability(blockClass string, pa adapter.ProposedAction) (appeal string, intervention string) {
+	bc := ResolveBlockClass(blockClass, pa)
 
 	switch bc {
 	case BlockClassSecretExfiltration, BlockClassExplicitDeny, BlockClassCrossWorkspace:

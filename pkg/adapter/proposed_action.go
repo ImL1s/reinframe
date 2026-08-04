@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 	"unicode/utf8"
 )
@@ -217,17 +218,65 @@ func looksLikeCommandString(s string) bool {
 }
 
 func isFullSuiteText(s string) bool {
-	n := strings.ToLower(strings.TrimSpace(s))
+	n := strings.TrimSpace(s)
 	if n == "" {
 		return false
 	}
-	if strings.Contains(n, "./...") {
-		return true
+	low := strings.ToLower(n)
+	// Require a real test runner in command position — never match substring ./... alone
+	// (e.g. curl .../evil/./... must not be test_suite).
+	fields := strings.Fields(n)
+	i := 0
+	for i < len(fields) {
+		f := fields[i]
+		// ENV=value prefixes only (valid shell identifiers).
+		if len(f) > 0 && f[0] != '-' && strings.Contains(f, "=") {
+			eq := strings.IndexByte(f, '=')
+			name := f[:eq]
+			if eq > 0 && isShellIdent(name) {
+				i++
+				continue
+			}
+		}
+		break
 	}
-	if strings.Contains(n, "go test") && strings.Contains(n, "-race") && strings.Contains(n, "./") {
-		return true
+	if i >= len(fields) {
+		return false
 	}
-	return false
+	base := strings.ToLower(path.Base(fields[i]))
+	switch base {
+	case "go":
+		if i+1 >= len(fields) || !strings.EqualFold(fields[i+1], "test") {
+			return false
+		}
+		// go test ... with package scope ./... or -race ./pkg
+		if strings.Contains(low, "./...") {
+			return true
+		}
+		return strings.Contains(low, "-race") && strings.Contains(low, "./")
+	case "gotestsum", "gotest":
+		return strings.Contains(low, "./...")
+	default:
+		return false
+	}
+}
+
+func isShellIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for j, r := range s {
+		if j == 0 {
+			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_') {
+				return false
+			}
+			continue
+		}
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // HookRequestFromProposedAction builds the narrow HookRequest for EvaluateHook.

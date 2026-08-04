@@ -73,17 +73,20 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 		return ChallengeRecord{}, fmt.Errorf("challenge open: %w", err)
 	}
 	req.PolicyClass = NormalizePolicyClass(req.PolicyClass)
+	// Do not invent PRODUCTIVITY_GENERIC before appeal routing — empty class must
+	// still run action-based inference in ResolveBlockClass / ClassifyAppealability.
 	req.BlockClass = NormalizeBlockClass(req.BlockClass)
-	if req.BlockClass == "" {
-		req.BlockClass = BlockClassProductivityGeneric
-	}
 	if req.ReasonCode == "" {
 		req.ReasonCode = "BLOCK"
 	}
 	if req.PolicyClass == PolicyClassSecurity {
-		if !IsHardDenyClass(req.BlockClass) && !IsIrreversibleClass(req.BlockClass) {
+		// SECURITY policy: non-hard/non-irreversible (including empty) → unknown security.
+		if req.BlockClass == "" || (!IsHardDenyClass(req.BlockClass) && !IsIrreversibleClass(req.BlockClass)) {
 			req.BlockClass = BlockClassUnknownSecurity
 		}
+	} else {
+		// Infer storage class from action when omitted (deploy/secret/etc.).
+		req.BlockClass = ResolveBlockClass(req.BlockClass, req.Proposed)
 	}
 
 	claims := req.RequiredClaims
@@ -118,7 +121,7 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 		// insert after this hard deny returns.
 		s.store.mu.Lock()
 		s.expireActiveByFingerprintLocked(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_hard_block", now)
-		s.store.markNonAppealBarrierLocked(req.SessionID, fp.Fingerprint, "hard_block")
+		s.store.markNonAppealBarrierLocked(req.SessionID, fp.Fingerprint, "hard_block", req.PolicyVersion, req.RulesetHash)
 		s.store.mu.Unlock()
 		rec := ChallengeRecord{
 			SchemaVersion:     SchemaChallengeRecord,
@@ -178,7 +181,7 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 		}
 		s.store.mu.Lock()
 		s.expireActiveByFingerprintLocked(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_human_review", now)
-		s.store.markNonAppealBarrierLocked(req.SessionID, fp.Fingerprint, "human_review")
+		s.store.markNonAppealBarrierLocked(req.SessionID, fp.Fingerprint, "human_review", req.PolicyVersion, req.RulesetHash)
 		rec = s.store.appendTransition(rec, "", StateHumanReview, "human_review", req.CorrelationID, req.Proposed.ActionID, fp.Fingerprint, "open_human_review", now, nil)
 		s.store.mu.Unlock()
 		s.signalTerminal(rec.ChallengeID)
@@ -221,8 +224,8 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
-	// Hard-deny / human-review barrier: reject weaker concurrent Open after supersession.
-	if note, blocked := s.store.nonAppealBarrierNoteLocked(req.SessionID, fp.Fingerprint); blocked {
+	// Hard-deny / human-review barrier: reject weaker concurrent Open under same policy.
+	if note, blocked := s.store.nonAppealBarrierNoteLocked(req.SessionID, fp.Fingerprint, req.PolicyVersion, req.RulesetHash); blocked {
 		return ChallengeRecord{}, fmt.Errorf("challenge open: non-appealable barrier (%s) for fingerprint", note)
 	}
 	// Under lock: reclaim any active record with the same action fingerprint.

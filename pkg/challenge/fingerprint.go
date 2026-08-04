@@ -525,8 +525,25 @@ func extractFindDeleteTargets(cmd string) []string {
 		return nil
 	}
 	i++ // skip find
-	// GNU find: [path...] [expression]. First '-' token starts the expression;
-	// do not treat -name PATTERN operands as roots.
+	// GNU find: find [-HLP] [-Olevel] [-D opts] [--] [path...] [expression]
+	// Skip leading global options and optional `--` before path roots.
+	for i < len(fields) {
+		f := fields[i]
+		if f == "--" {
+			i++
+			break
+		}
+		if f == "-H" || f == "-L" || f == "-P" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(f, "-O") || strings.HasPrefix(f, "-D") {
+			i++
+			continue
+		}
+		break
+	}
+	// Path roots until expression (first remaining '-' token).
 	for ; i < len(fields); i++ {
 		f := fields[i]
 		if strings.HasPrefix(f, "-") {

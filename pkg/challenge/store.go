@@ -26,10 +26,19 @@ type Store struct {
 	// idSeq is store-scoped so concurrent Service instances cannot collide IDs.
 	idMu  sync.Mutex
 	idSeq uint64
-	// nonAppealBarrier marks session|fingerprint that was hard-denied or escalated
-	// so a concurrent weaker Open cannot insert after supersession returns.
+	// nonAppealBarrier blocks concurrent weaker Open after hard-deny/HR for the same
+	// session|fp under the same policy identity. A later Open with a different
+	// PolicyVersion/RulesetHash/PolicyHash clears the barrier (policy relaxed/changed).
 	// Protected by mu.
-	nonAppealBarrier map[string]string // key session|fp -> note
+	nonAppealBarrier map[string]barrierEntry
+}
+
+// barrierEntry scopes a non-appeal mark to the denial's policy generation
+// (version + ruleset only — not BlockClass, so hard-deny vs later OverSOP still race-safe).
+type barrierEntry struct {
+	Note          string
+	PolicyVersion string
+	RulesetHash   string
 }
 
 // NewStore creates an empty store.
@@ -39,7 +48,7 @@ func NewStore() *Store {
 		justifications:   make(map[string]Justification),
 		openByFP:         make(map[string]string),
 		terminalCh:       make(map[string]chan struct{}),
-		nonAppealBarrier: make(map[string]string),
+		nonAppealBarrier: make(map[string]barrierEntry),
 	}
 }
 
@@ -47,22 +56,37 @@ func barrierKey(sessionID, fingerprint string) string {
 	return sessionID + "|" + fingerprint
 }
 
-// markNonAppealBarrierLocked records that session|fp must not open a new appealable challenge.
-// Caller holds mu.
-func (s *Store) markNonAppealBarrierLocked(sessionID, fingerprint, note string) {
+// markNonAppealBarrierLocked records that session|fp must not open a new appealable
+// challenge under the same policy generation. Caller holds mu.
+func (s *Store) markNonAppealBarrierLocked(sessionID, fingerprint, note, policyVersion, rulesetHash string) {
 	if s.nonAppealBarrier == nil {
-		s.nonAppealBarrier = make(map[string]string)
+		s.nonAppealBarrier = make(map[string]barrierEntry)
 	}
-	s.nonAppealBarrier[barrierKey(sessionID, fingerprint)] = note
+	s.nonAppealBarrier[barrierKey(sessionID, fingerprint)] = barrierEntry{
+		Note:          note,
+		PolicyVersion: policyVersion,
+		RulesetHash:   rulesetHash,
+	}
 }
 
-// nonAppealBarrierNoteLocked returns the barrier note if present. Caller holds mu.
-func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint string) (string, bool) {
+// nonAppealBarrierNoteLocked returns the barrier note when the request's policy still
+// matches the denial generation. A changed PolicyVersion/RulesetHash clears the barrier.
+// Caller holds mu.
+func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint, policyVersion, rulesetHash string) (string, bool) {
 	if s.nonAppealBarrier == nil {
 		return "", false
 	}
-	n, ok := s.nonAppealBarrier[barrierKey(sessionID, fingerprint)]
-	return n, ok
+	k := barrierKey(sessionID, fingerprint)
+	e, ok := s.nonAppealBarrier[k]
+	if !ok {
+		return "", false
+	}
+	if e.PolicyVersion != policyVersion || e.RulesetHash != rulesetHash {
+		// Policy generation changed — allow a new challenge under the new ruleset.
+		delete(s.nonAppealBarrier, k)
+		return "", false
+	}
+	return e.Note, true
 }
 
 // newID allocates a store-wide unique challenge/human-review id.

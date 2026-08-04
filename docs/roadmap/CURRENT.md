@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-04) — post-#142/PR #143 and PR #144 challenge/provider/cache follow-up  
+**Status:** current (2026-08-04) — post-#142/PR #143 and PR #144 challenge/provider/cache follow-up
 **Wins on conflict:** README (public status) > this file (executable queue) > `docs/specs/*` (normative model) > Epic #80 (tracker) > historical docs.
 
 Governance issue #142 and PR #143 completed the initial open-set sync; PR #144 removed #142 from the active set after closure. They are historical here, not active product work.
@@ -36,7 +36,7 @@ Governance issue #142 and PR #143 completed the initial open-set sync; PR #144 r
 
 | Issue | Pri | Scope | Boundary |
 |-------|-----|-------|----------|
-| **#131** | P1 | Appealable productivity BLOCK, justification, one-shot semantic retry | Host-neutral core; no live Claude claim |
+| **#131** | P1 | Appealable productivity BLOCK, justification, one-shot semantic retry | Host-neutral core in `pkg/challenge` ([docs](../policy/appealable_block_challenge.md)); no live Claude claim |
 | **#132** | P1 | Real classifier provider runtime, strict parser, normalized usage, cache-neutral generic adapter | No native provider/cache claim |
 
 ### Blocked by environment
@@ -114,18 +114,18 @@ Evaluation:
 
 ## Explicit non-claims
 
-- No calibrated classifier/detector hard-gate; #100 disposition is **MORE-DATA**  
-- No live challenge-response product  
-- No real production classifier provider beyond fakes until #132 and a provider adapter land  
-- No cross-provider cache API equivalence claim  
-- No measured token/cost savings before #141 evidence  
-- No silent global Claude/Codex install  
-- No dual-host production supervision claim  
-- FileActuator write or context transport ≠ explicit agent ACK  
-- Codex JSONL tail / codexctl ≠ bidirectional control  
-- #106 installer ≠ #120 live control-loop proof  
-- OS SIGSTOP ≠ native CapPause  
-- Managed worktree rollback ≠ primary checkout or external-side-effect rollback  
+- No calibrated classifier/detector hard-gate; #100 disposition is **MORE-DATA**
+- No live challenge-response product
+- No real production classifier provider beyond fakes until #132 and a provider adapter land
+- No cross-provider cache API equivalence claim
+- No measured token/cost savings before #141 evidence
+- No silent global Claude/Codex install
+- No dual-host production supervision claim
+- FileActuator write or context transport ≠ explicit agent ACK
+- Codex JSONL tail / codexctl ≠ bidirectional control
+- #106 installer ≠ #120 live control-loop proof
+- OS SIGSTOP ≠ native CapPause
+- Managed worktree rollback ≠ primary checkout or external-side-effect rollback
 
 ## Evaluation
 
@@ -140,5 +140,5 @@ Both require a separate promotion issue for any enforcement or default-enable de
 
 ## Historical sources (not executable backlog)
 
-- `docs/plans/2026-08-03-issue-queue.md` — superseded  
-- Closed Epic #1 — foundation archive  
+- `docs/plans/2026-08-03-issue-queue.md` — superseded
+- Closed Epic #1 — foundation archive

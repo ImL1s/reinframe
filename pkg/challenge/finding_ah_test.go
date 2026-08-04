@@ -1271,12 +1271,6 @@ func TestRecursiveRmWithoutForceIsDeleteTree(t *testing.T) {
 
 // Finding 3: GNU interactive aliases + last-wins table.
 func TestRmInteractiveAliasesTable(t *testing.T) {
-	type row struct {
-		cmd  string
-		want string // side class or "generic" if not privileged delete
-		// sameKey groups commands that must share fingerprint (non-empty)
-		sameKey string
-	}
 	// Group by effective prompt: all / once / none(default) within same targets+class.
 	cases := []struct {
 		cmd     string

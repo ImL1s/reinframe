@@ -36,11 +36,16 @@ type Store struct {
 // barrierEntry scopes a non-appeal mark to the denial's policy generation and
 // store sequence watermark (MarkSeq). Late Open tickets older than MarkSeq lose
 // the race to a harder policy and cannot clear the barrier.
+// Side/Targets/OpDigest bind RelBypass-equivalent deletes (tool-name variants)
+// so Bash vs Shell hard-denies cover the same semantic delete.
 type barrierEntry struct {
-	Note          string
-	PolicyVersion string
-	RulesetHash   string
-	MarkSeq       int64
+	Note            string
+	PolicyVersion   string
+	RulesetHash     string
+	MarkSeq         int64
+	SideEffectClass string
+	TargetResources []string
+	OperationDigest string
 }
 
 // NewStore creates an empty store.
@@ -61,16 +66,21 @@ func barrierKey(sessionID, fingerprint string) string {
 // markNonAppealBarrierLocked records that session|fp must not open a new appealable
 // challenge under the same policy generation. Caller holds mu.
 // Bumps seq so MarkSeq is strictly greater than any openTicket sampled earlier via Sequence().
-func (s *Store) markNonAppealBarrierLocked(sessionID, fingerprint, note, policyVersion, rulesetHash string) {
+// side/targets/opDigest enable RelBypass-equivalent barrier hits (delete tool-name variants).
+func (s *Store) markNonAppealBarrierLocked(sessionID, fingerprint, note, policyVersion, rulesetHash, side string, targets []string, opDigest string) {
 	if s.nonAppealBarrier == nil {
 		s.nonAppealBarrier = make(map[string]barrierEntry)
 	}
 	s.seq++ // watermark tick (no event required)
+	tg := append([]string(nil), targets...)
 	s.nonAppealBarrier[barrierKey(sessionID, fingerprint)] = barrierEntry{
-		Note:          note,
-		PolicyVersion: policyVersion,
-		RulesetHash:   rulesetHash,
-		MarkSeq:       s.seq,
+		Note:            note,
+		PolicyVersion:   policyVersion,
+		RulesetHash:     rulesetHash,
+		MarkSeq:         s.seq,
+		SideEffectClass: side,
+		TargetResources: tg,
+		OperationDigest: opDigest,
 	}
 }
 
@@ -82,17 +92,42 @@ func (s *Store) markNonAppealBarrierLocked(sessionID, fingerprint, note, policyV
 //   - different policy AND openTicket < MarkSeq → block (stale Open lost race to newer denial)
 //   - different policy AND openTicket >= MarkSeq → allow WITHOUT deleting the barrier
 //     (retain MarkSeq so other in-flight older tickets still observe the watermark)
+//   - exact fingerprint miss: still block when candidate is RelBypass-equivalent to a
+//     stored delete barrier (same side/targets/opDigest) under the same rules
 //
 // Caller holds mu.
-func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint, policyVersion, rulesetHash string, openTicket int64) (string, bool) {
+func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint, policyVersion, rulesetHash string, openTicket int64, side string, targets []string, opDigest string) (string, bool) {
 	if s.nonAppealBarrier == nil {
 		return "", false
 	}
 	k := barrierKey(sessionID, fingerprint)
-	e, ok := s.nonAppealBarrier[k]
-	if !ok {
-		return "", false
+	if e, ok := s.nonAppealBarrier[k]; ok {
+		if note, blocked := barrierPolicyHit(e, policyVersion, rulesetHash, openTicket); blocked {
+			return note, true
+		}
 	}
+	// RelBypass-equivalent: tool-name variants of the same privileged delete.
+	if rewriteEligible(side) && opDigest != "" && len(targets) > 0 {
+		prefix := sessionID + "|"
+		for key, e := range s.nonAppealBarrier {
+			if key == k || len(key) < len(prefix) || key[:len(prefix)] != prefix {
+				continue
+			}
+			if e.SideEffectClass != side || e.OperationDigest != opDigest {
+				continue
+			}
+			if !sameStringSet(e.TargetResources, targets) {
+				continue
+			}
+			if note, blocked := barrierPolicyHit(e, policyVersion, rulesetHash, openTicket); blocked {
+				return note, true
+			}
+		}
+	}
+	return "", false
+}
+
+func barrierPolicyHit(e barrierEntry, policyVersion, rulesetHash string, openTicket int64) (string, bool) {
 	samePolicy := e.PolicyVersion == policyVersion && e.RulesetHash == rulesetHash
 	if samePolicy {
 		return e.Note, true

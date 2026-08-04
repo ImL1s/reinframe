@@ -40,10 +40,10 @@ func TestStaleOpenCannotClearNewerBarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.mu.Lock()
-	note, blocked := st.nonAppealBarrierNoteLocked(pa.SessionID, fp.Fingerprint, "v1", "r1", ticket)
+	note, blocked := st.nonAppealBarrierNoteLocked(pa.SessionID, fp.Fingerprint, "v1", "r1", ticket, fp.SideEffectClass, fp.TargetResources, fp.OperationDigest)
 	// Watermark must still exist after a later policy would be admitted.
 	laterTicket := st.seq + 10
-	_, laterBlocked := st.nonAppealBarrierNoteLocked(pa.SessionID, fp.Fingerprint, "v9", "r9", laterTicket)
+	_, laterBlocked := st.nonAppealBarrierNoteLocked(pa.SessionID, fp.Fingerprint, "v9", "r9", laterTicket, fp.SideEffectClass, fp.TargetResources, fp.OperationDigest)
 	// Barrier entry must still be present for the stale ticket check.
 	_, stillThere := st.nonAppealBarrier[barrierKey(pa.SessionID, fp.Fingerprint)]
 	st.mu.Unlock()
@@ -58,7 +58,7 @@ func TestStaleOpenCannotClearNewerBarrier(t *testing.T) {
 	}
 	// Stale re-check after later admission still blocked
 	st.mu.Lock()
-	_, blocked2 := st.nonAppealBarrierNoteLocked(pa.SessionID, fp.Fingerprint, "v1", "r1", ticket)
+	_, blocked2 := st.nonAppealBarrierNoteLocked(pa.SessionID, fp.Fingerprint, "v1", "r1", ticket, fp.SideEffectClass, fp.TargetResources, fp.OperationDigest)
 	st.mu.Unlock()
 	if !blocked2 {
 		t.Fatal("stale open must remain blocked after later policy admission")

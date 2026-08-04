@@ -965,6 +965,74 @@ func TestQuotedWhitespaceInCommandDigestDiffers(t *testing.T) {
 	if a.Fingerprint != b.Fingerprint {
 		t.Fatal("unquoted horizontal whitespace should still collapse")
 	}
+	// Quoted CRLF vs LF must not collide (no CR rewrite before identity path).
+	crlf := mustFP(t, challenge.FingerprintInput{
+		Proposed: samplePA("python -c 'print(1)\r\nprint(2)'"), SessionID: "sess-1",
+	})
+	lf := mustFP(t, challenge.FingerprintInput{
+		Proposed: samplePA("python -c 'print(1)\nprint(2)'"), SessionID: "sess-1",
+	})
+	if crlf.Fingerprint == lf.Fingerprint {
+		t.Fatal("quoted CRLF vs LF must not share fingerprint")
+	}
+}
+
+// Codex: edit payload path alias must match FilePath.
+func TestEditPayloadPathConflictRejected(t *testing.T) {
+	payload, _ := json.Marshal(map[string]string{"new_string": "x", "file_path": "other.go"})
+	pa := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ActionID: "conflict-path", ToolName: "Edit", ToolClass: adapter.ToolClassEdit,
+		FilePath: "main.go", RedactedPayload: payload, ParseStatus: "ok",
+		WorkspaceRevision: "ws-1", ContractRevision: 3,
+	}
+	_, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa, SessionID: "sess-1"})
+	if err == nil {
+		t.Fatal("payload path != FilePath must fail closed")
+	}
+}
+
+// Codex: hard-deny on Shell must expire/block Bash RelBypass-equivalent delete.
+func TestHardDenyExpiresRelBypassToolVariant(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	bash := samplePA("rm -rf build")
+	bash.ToolName = "Bash"
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: bash.SessionID, Proposed: bash, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.State != challenge.StateOpen {
+		t.Fatalf("want OPEN, got %s", rec.State)
+	}
+	shell := bash
+	shell.ToolName = "Shell"
+	shell.ActionID = "pa-shell-deny"
+	_, err = svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: shell.SessionID, Proposed: shell, BlockClass: challenge.BlockClassSecretExfiltration,
+		PolicyVersion: "v1", RulesetHash: "r1",
+	})
+	if err == nil {
+		t.Fatal("expected hard deny")
+	}
+	got, ok := svc.Get(rec.ChallengeID)
+	if !ok {
+		t.Fatal("bash challenge missing")
+	}
+	if got.State != challenge.StateExpired {
+		t.Fatalf("hard deny on Shell must expire Bash RelBypass open, got %s", got.State)
+	}
+	// Fresh Bash open under same policy must hit semantic barrier.
+	bash2 := bash
+	bash2.ActionID = "pa-bash-2"
+	_, err = svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: bash2.SessionID, Proposed: bash2, BlockClass: challenge.BlockClassOverSOP,
+		PolicyVersion: "v1", RulesetHash: "r1",
+	})
+	if err == nil {
+		t.Fatal("Bash open after Shell hard-deny must hit RelBypass barrier")
+	}
 }
 
 // Codex: Justify rechecks ExpiresAtSequence under lock before OPEN→JUSTIFIED.

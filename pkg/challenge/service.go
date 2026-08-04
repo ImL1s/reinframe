@@ -123,8 +123,8 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 		// Expire under lock + durable barrier so a concurrent appealable Open cannot
 		// insert after this hard deny returns.
 		s.store.mu.Lock()
-		s.expireActiveByFingerprintLocked(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_hard_block", now)
-		s.store.markNonAppealBarrierLocked(req.SessionID, fp.Fingerprint, "hard_block", req.PolicyVersion, req.RulesetHash)
+		s.expireActiveBySemanticLocked(req.SessionID, fp, req.CorrelationID, req.Proposed.ActionID, "superseded_by_hard_block", now)
+		s.store.markNonAppealBarrierLocked(req.SessionID, fp.Fingerprint, "hard_block", req.PolicyVersion, req.RulesetHash, fp.SideEffectClass, fp.TargetResources, fp.OperationDigest)
 		s.store.mu.Unlock()
 		rec := ChallengeRecord{
 			SchemaVersion:     SchemaChallengeRecord,
@@ -183,8 +183,8 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 			UpdatedAt:         now,
 		}
 		s.store.mu.Lock()
-		s.expireActiveByFingerprintLocked(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_human_review", now)
-		s.store.markNonAppealBarrierLocked(req.SessionID, fp.Fingerprint, "human_review", req.PolicyVersion, req.RulesetHash)
+		s.expireActiveBySemanticLocked(req.SessionID, fp, req.CorrelationID, req.Proposed.ActionID, "superseded_by_human_review", now)
+		s.store.markNonAppealBarrierLocked(req.SessionID, fp.Fingerprint, "human_review", req.PolicyVersion, req.RulesetHash, fp.SideEffectClass, fp.TargetResources, fp.OperationDigest)
 		rec = s.store.appendTransition(rec, "", StateHumanReview, "human_review", req.CorrelationID, req.Proposed.ActionID, fp.Fingerprint, "open_human_review", now, nil)
 		s.store.mu.Unlock()
 		s.signalTerminal(rec.ChallengeID)
@@ -228,7 +228,7 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
 	// Hard-deny / human-review barrier: reject concurrent/stale weaker Open.
-	if note, blocked := s.store.nonAppealBarrierNoteLocked(req.SessionID, fp.Fingerprint, req.PolicyVersion, req.RulesetHash, openTicket); blocked {
+	if note, blocked := s.store.nonAppealBarrierNoteLocked(req.SessionID, fp.Fingerprint, req.PolicyVersion, req.RulesetHash, openTicket, fp.SideEffectClass, fp.TargetResources, fp.OperationDigest); blocked {
 		return ChallengeRecord{}, fmt.Errorf("challenge open: non-appealable barrier (%s) for fingerprint", note)
 	}
 	// Under lock: reclaim any active record with the same action fingerprint.
@@ -604,6 +604,15 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		return RetryResult{}, fmt.Errorf("retry: lost challenge")
 	}
 	rec = cloneRecord(*cur2)
+	// Recheck sequence expiry after re-eval: concurrent store advances during
+	// ReEvaluate must not still reach ALLOWED_ONCE past ExpiresAtSequence.
+	if rec.ExpiresAtSequence > 0 && s.store.seq >= rec.ExpiresAtSequence && !isTerminal(rec.State) {
+		from := rec.State
+		now := s.now()
+		rec = s.store.appendTransition(rec, from, StateExpired, "expired", req.CorrelationID, req.Proposed.ActionID, fpOwner.Fingerprint, "sequence_expiry_under_lock", now, nil)
+		s.signalTerminal(rec.ChallengeID)
+		return RetryResult{Record: cloneRecord(rec), Stage2Decision: DecisionBlock, Relationship: rel, RejectedReason: "expired"}, fmt.Errorf("retry: expired")
+	}
 	if rec.State == StateAllowedOnce || rec.State == StateRejected || rec.State == StateHumanReview {
 		s.signalTerminal(rec.ChallengeID)
 		if rec.State == StateAllowedOnce && rec.ConsumedRetryKey != "" && attemptKey == rec.ConsumedRetryKey {
@@ -790,15 +799,40 @@ func (s *Service) expireIfNeeded(rec *ChallengeRecord) error {
 // expireActiveByFingerprintLocked expires every non-terminal challenge for session|fp.
 // Caller must hold s.store.mu.
 func (s *Service) expireActiveByFingerprintLocked(sessionID, fingerprint, corr, cause, note string, now time.Time) {
+	s.expireActiveMatchingLocked(sessionID, FingerprintResult{Fingerprint: fingerprint}, corr, cause, note, now, false)
+}
+
+// expireActiveBySemanticLocked expires exact-fp matches and RelBypass-equivalent
+// delete challenges (same side/targets/opDigest, any tool name) for the session.
+// Caller must hold s.store.mu.
+func (s *Service) expireActiveBySemanticLocked(sessionID string, fp FingerprintResult, corr, cause, note string, now time.Time) {
+	s.expireActiveMatchingLocked(sessionID, fp, corr, cause, note, now, true)
+}
+
+func (s *Service) expireActiveMatchingLocked(sessionID string, fp FingerprintResult, corr, cause, note string, now time.Time, semantic bool) {
 	var ids []string
 	for id, existing := range s.store.byID {
-		if existing.SessionID != sessionID || existing.ActionFingerprint != fingerprint {
+		if existing.SessionID != sessionID {
 			continue
 		}
 		if isTerminal(existing.State) {
 			continue
 		}
-		ids = append(ids, id)
+		if existing.ActionFingerprint == fp.Fingerprint {
+			ids = append(ids, id)
+			continue
+		}
+		if !semantic || !rewriteEligible(fp.SideEffectClass) {
+			continue
+		}
+		// RelBypass-equivalent: same privileged delete, different tool surface.
+		if existing.SideEffectClass == fp.SideEffectClass &&
+			fp.OperationDigest != "" &&
+			existing.OperationDigest == fp.OperationDigest &&
+			len(fp.TargetResources) > 0 &&
+			sameStringSet(existing.TargetResources, fp.TargetResources) {
+			ids = append(ids, id)
+		}
 	}
 	for _, id := range ids {
 		cur, ok := s.store.byID[id]
@@ -806,7 +840,7 @@ func (s *Service) expireActiveByFingerprintLocked(sessionID, fingerprint, corr, 
 			continue
 		}
 		from := cur.State
-		_ = s.store.appendTransition(cloneRecord(*cur), from, StateExpired, "expired", corr, cause, fingerprint, note, now, nil)
+		_ = s.store.appendTransition(cloneRecord(*cur), from, StateExpired, "expired", corr, cause, fp.Fingerprint, note, now, nil)
 		// Signal without re-taking store.mu (termMu is separate).
 		s.store.signalTerminal(id)
 	}

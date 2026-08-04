@@ -360,6 +360,12 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 		if v, ok := m["replace_all"]; ok {
 			parts["replace_all"] = fmt.Sprintf("%v", v)
 		}
+		// Path aliases must not diverge from ProposedAction.FilePath (only FilePath binds).
+		if s := stringField(m, "file_path", "path"); s != "" {
+			if normalizeResource(s) != normalizeResource(pa.FilePath) {
+				return "", fmt.Errorf("proposed_action: edit payload path conflicts with FilePath")
+			}
+		}
 	}
 
 	if oldDig != "" {
@@ -368,9 +374,11 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 	if newDig != "" {
 		parts["new"] = newDig
 	}
+
 	if oldDig == "" && newDig == "" {
 		if strings.TrimSpace(pa.Command) != "" {
-			parts["cmd"] = normalizeCommandPreserveCase(pa.Command)
+			// Quote-preserving: same as shell digests (Fields must not collapse -c literals).
+			parts["cmd"] = normalizeCommandForDigest(pa.Command)
 		} else {
 			return "", fmt.Errorf("proposed_action: edit operation missing content (args/payload/command)")
 		}
@@ -749,17 +757,16 @@ func normalizeResource(s string) string {
 }
 
 // normalizeCommandForDigest is the identity encoding for shell command digests.
-//   - Quotes/escapes present: retain exact trimmed command (no Fields collapse inside
-//     quoted literals — e.g. python -c 'if "a  b"' vs 'if "a b"' must differ).
-//   - Otherwise: collapse horizontal whitespace; preserve newlines as separators.
+//   - Quotes/escapes present: retain exact trimmed command only (no CR/LF rewrite,
+//     no Fields collapse — e.g. python -c 'if "a  b"' vs 'if "a b"' must differ;
+//     quoted CRLF vs LF must also differ).
+//   - Otherwise: normalize CR/LF, collapse horizontal whitespace; preserve newlines.
 func normalizeCommandForDigest(cmd string) string {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return ""
 	}
-	cmd = strings.ReplaceAll(cmd, "\r\n", "\n")
-	cmd = strings.ReplaceAll(cmd, "\r", "\n")
-	// Quoted/escaped interiors: do not collapse spaces (semantic in -c literals).
+	// Quoted/escaped interiors: identity after TrimSpace only.
 	if strings.ContainsAny(cmd, `'"\\`) {
 		return cmd
 	}

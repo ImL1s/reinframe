@@ -216,6 +216,25 @@ func TestLoadCheckpoint(t *testing.T) {
 	}
 }
 
+func TestManagedWorktree_MarkerIDMismatchFailClosed(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	base := t.TempDir()
+	initRepo(t, base)
+	root := t.TempDir()
+	reg, _ := workspace.NewRegistry(root)
+	wt, err := reg.CreateWorktree("sess-ok", base, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tamper id on in-memory record while marker still has original id.
+	wt.ID = "not-the-marker-id"
+	if _, _, err := reg.Checkpoint(wt, "should fail"); err == nil {
+		t.Fatal("expected marker id mismatch")
+	}
+}
+
 func TestManagedWorktree_MarkerSessionMismatchFailClosed(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git required")

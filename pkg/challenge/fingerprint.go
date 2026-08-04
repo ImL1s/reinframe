@@ -403,15 +403,6 @@ func stringField(m map[string]any, keys ...string) string {
 	return s
 }
 
-// stringFieldPresent returns a string field even when empty (key present with "").
-func stringFieldPresent(m map[string]any, keys ...string) (string, bool) {
-	s, ok, err := stringFieldsAgree(m, keys...)
-	if err != nil {
-		return "", false
-	}
-	return s, ok
-}
-
 // stringFieldsAgree requires every present alias among keys to be a string and equal.
 // Conflicting aliases (e.g. new_string vs content) fail closed.
 func stringFieldsAgree(m map[string]any, keys ...string) (value string, present bool, err error) {

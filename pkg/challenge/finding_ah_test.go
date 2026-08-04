@@ -30,21 +30,31 @@ func TestEditDifferentContentNotSame(t *testing.T) {
 }
 
 func TestEditSameContentEquivalentSurfaces(t *testing.T) {
-	// Args vs redacted_payload with new_string
+	// Args vs redacted_payload new_string vs new_str — lossless equivalent surfaces share fingerprint.
 	a := sampleEdit("main.go", "same-content")
-	payload, _ := json.Marshal(map[string]string{"new_string": "same-content", "file_path": "main.go"})
+	payloadNS, _ := json.Marshal(map[string]string{"new_string": "same-content", "file_path": "main.go"})
 	b := adapter.ProposedAction{
 		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
 		ActionID: "pa-e2", ToolName: "Edit", ToolClass: adapter.ToolClassEdit,
-		FilePath: "main.go", RedactedPayload: payload, ParseStatus: "ok",
+		FilePath: "main.go", RedactedPayload: payloadNS, ParseStatus: "ok",
 		WorkspaceRevision: "ws-1", ContractRevision: 3,
 	}
-	// Digests may differ (args vs payload keys) — both must be computable losslessly.
-	if _, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: a, SessionID: "sess-1"}); err != nil {
-		t.Fatal(err)
+	payloadAlias, _ := json.Marshal(map[string]string{"new_str": "same-content"})
+	c := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ActionID: "pa-e3", ToolName: "Edit", ToolClass: adapter.ToolClassEdit,
+		FilePath: "main.go", RedactedPayload: payloadAlias, ParseStatus: "ok",
+		WorkspaceRevision: "ws-1", ContractRevision: 3,
 	}
-	if _, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: b, SessionID: "sess-1"}); err != nil {
-		t.Fatal(err)
+	fa := mustFP(t, challenge.FingerprintInput{Proposed: a, SessionID: "sess-1"})
+	fb := mustFP(t, challenge.FingerprintInput{Proposed: b, SessionID: "sess-1"})
+	fc := mustFP(t, challenge.FingerprintInput{Proposed: c, SessionID: "sess-1"})
+	if fa.Fingerprint != fb.Fingerprint || fa.Fingerprint != fc.Fingerprint {
+		t.Fatalf("equivalent edit surfaces must share FP: a=%s b=%s c=%s op=%s/%s/%s",
+			fa.Fingerprint, fb.Fingerprint, fc.Fingerprint, fa.OperationDigest, fb.OperationDigest, fc.OperationDigest)
+	}
+	if fa.OperationDigest != fb.OperationDigest {
+		t.Fatal("operation digests must match for equivalent surfaces")
 	}
 }
 
@@ -122,11 +132,30 @@ func TestRequiredClaimsUnknownRejected(t *testing.T) {
 	}
 }
 
-// D: wait cancel
+// gateReEval blocks until release so waiters observe RETRY_PENDING.
+type gateReEval struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gateReEval) ReEvaluate(ctx context.Context, rec challenge.ChallengeRecord, proposed adapter.ProposedAction, just *challenge.Justification, in *challenge.ReEvalContext) (challenge.ReEvalResult, error) {
+	select {
+	case <-g.entered:
+	default:
+		close(g.entered)
+	}
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return challenge.ReEvalResult{Stage2Decision: challenge.DecisionBlock, Reason: "ctx"}, ctx.Err()
+	}
+	return challenge.ReEvalResult{Stage2Decision: challenge.DecisionAllow, Reason: "gate_allow"}, nil
+}
+
+// D: wait cancel — hard asserts
 func TestWaitTerminalContextCanceled(t *testing.T) {
-	svc := challenge.NewService(challenge.ServiceConfig{
-		ReEval: slowAllowReEval{delay: 500 * time.Millisecond},
-	})
+	gate := &gateReEval{entered: make(chan struct{}), release: make(chan struct{})}
+	svc := challenge.NewService(challenge.ServiceConfig{ReEval: gate})
 	pa := samplePA("rm -rf build")
 	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
 		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
@@ -136,7 +165,6 @@ func TestWaitTerminalContextCanceled(t *testing.T) {
 	}
 	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 
-	// Start winner
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -146,27 +174,111 @@ func TestWaitTerminalContextCanceled(t *testing.T) {
 			CorrelationID: "winner",
 		})
 	}()
-	// Waiter with short deadline
-	time.Sleep(20 * time.Millisecond)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	// Wait until winner holds RETRY_PENDING / re-eval
+	select {
+	case <-gate.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("winner did not enter re-eval")
+	}
+
+	// Deadline exceeded while still pending
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	defer cancel()
-	// Force RETRY_PENDING by racing — waiter should get context error not nil success
 	res, err := svc.AttemptRetry(ctx, challenge.RetryRequest{
 		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
-		CorrelationID: "waiter",
+		CorrelationID: "waiter-deadline",
 	})
-	if err == nil && res.Record.State == challenge.StateRetryPending {
-		t.Fatal("must not return RETRY_PENDING as success")
+	if err == nil {
+		t.Fatalf("deadline waiter must error, got nil res=%+v", res)
 	}
-	// Either canceled or got terminal after wait — if error, must be context error
-	if err != nil && err != context.DeadlineExceeded && err != context.Canceled {
-		// may also be budget exhausted after winner finished
-		if res.RejectedReason != "context_canceled" && res.RejectedReason != "retry_budget_exhausted" && res.RejectedReason != "duplicate_retry" {
-			// acceptable if winner finished first
-			t.Logf("waiter result err=%v res=%+v", err, res)
+	if err != context.DeadlineExceeded && err != context.Canceled {
+		t.Fatalf("want DeadlineExceeded/Canceled, got %v", err)
+	}
+	if res.Record.State == challenge.StateRetryPending && err == nil {
+		t.Fatal("must never return RETRY_PENDING with nil error")
+	}
+	if res.RejectedReason != "context_canceled" && res.RejectedReason != "" {
+		// RejectedReason should be context_canceled when wait fails
+		if res.RejectedReason != "context_canceled" {
+			t.Logf("rejected_reason=%q (ok if empty on early return)", res.RejectedReason)
 		}
 	}
+
+	// Canceled context
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	cancel2()
+	res2, err2 := svc.AttemptRetry(ctx2, challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+		CorrelationID: "waiter-cancel",
+	})
+	if err2 == nil {
+		t.Fatalf("canceled waiter must error, got nil res=%+v", res2)
+	}
+	if err2 != context.Canceled && err2 != context.DeadlineExceeded {
+		t.Fatalf("want Canceled, got %v", err2)
+	}
+
+	close(gate.release)
 	wg.Wait()
+}
+
+func TestConcurrentOpenPolicyMismatchNoDualOpen(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	pa := samplePA("rm -rf build")
+	const n = 20
+	results := make([]challenge.ChallengeRecord, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			bc := challenge.BlockClassScopeDrift
+			rc := "SCOPE_DRIFT"
+			if i%2 == 1 {
+				bc = challenge.BlockClassEvidenceGap
+				rc = "EVIDENCE_GAP"
+			}
+			results[i], errs[i] = svc.Open(context.Background(), challenge.OpenRequest{
+				SessionID: pa.SessionID, Proposed: pa, BlockClass: bc, ReasonCode: rc,
+				RulesetHash: "rules-x", PolicyVersion: "v1",
+			})
+		}()
+	}
+	wg.Wait()
+	openByClass := map[string]int{}
+	ids := map[string]struct{}{}
+	for i, r := range results {
+		if errs[i] != nil {
+			continue
+		}
+		if r.State == challenge.StateOpen {
+			openByClass[r.BlockClass]++
+			ids[r.ChallengeID] = struct{}{}
+		}
+	}
+	// Unique OPEN challenge IDs for the shared action fingerprint must be ≤1.
+	// (Multiple Open() results may legitimately return the same id — do not double-count.)
+	liveOpenIDs := map[string]string{} // id -> block class
+	for _, r := range results {
+		if r.ChallengeID == "" {
+			continue
+		}
+		got, ok := svc.Get(r.ChallengeID)
+		if !ok {
+			continue
+		}
+		if got.State == challenge.StateOpen {
+			liveOpenIDs[got.ChallengeID] = got.BlockClass
+		}
+	}
+	if len(liveOpenIDs) > 1 {
+		t.Fatalf("dual OPEN zombies after concurrent policy-mismatched Open: ids=%v resultClasses=%v", liveOpenIDs, openByClass)
+	}
+	if len(liveOpenIDs) < 1 {
+		t.Fatal("expected at least one OPEN challenge")
+	}
 }
 
 // E: Justification hash collision-free

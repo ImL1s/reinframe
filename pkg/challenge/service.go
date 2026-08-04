@@ -175,22 +175,8 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 		return rec, nil
 	}
 
-	// Active reuse only when correctness-relevant identity matches.
-	if existing, ok := s.store.ActiveByFingerprint(req.SessionID, fp.Fingerprint); ok {
-		if policyIdentityMatch(existing, req, claims, policyHash) {
-			return existing, nil
-		}
-		// Supersede stale challenge — expire so it cannot be revived.
-		s.store.mu.Lock()
-		if cur, ok := s.store.byID[existing.ChallengeID]; ok && !isTerminal(cur.State) {
-			now := s.now()
-			_ = s.store.appendTransition(cloneRecord(*cur), cur.State, StateExpired, "expired", req.CorrelationID, existing.ChallengeID, fp.Fingerprint, "superseded_by_policy_change", now, nil)
-			s.store.mu.Unlock()
-			s.signalTerminal(existing.ChallengeID)
-		} else {
-			s.store.mu.Unlock()
-		}
-	}
+	// All active reuse / supersede for appealable opens happens under store.mu below
+	// (no lock-free ActiveByFingerprint path — avoids dual-OPEN races).
 
 	now := s.now()
 	id := s.newID("ch")
@@ -225,13 +211,43 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
-	key := req.SessionID + "|" + fp.Fingerprint
-	if id2, ok := s.store.openByFP[key]; ok {
-		if r, ok := s.store.byID[id2]; ok {
-			if policyIdentityMatch(*r, req, claims, policyHash) {
-				return cloneRecord(*r), nil
-			}
+	// Under lock: reclaim any active record with the same action fingerprint.
+	// Collect IDs first — do not range+mutate byID (map iteration skips on concurrent map writes).
+	// Always expire policy mismatches first; return a single policy match if any remains.
+	type hit struct {
+		id  string
+		rec ChallengeRecord
+	}
+	var hits []hit
+	for id, existing := range s.store.byID {
+		if existing.SessionID != req.SessionID || existing.ActionFingerprint != fp.Fingerprint {
+			continue
 		}
+		if isTerminal(existing.State) {
+			continue
+		}
+		hits = append(hits, hit{id: id, rec: cloneRecord(*existing)})
+	}
+	var match *ChallengeRecord
+	for _, h := range hits {
+		if policyIdentityMatch(h.rec, req, claims, policyHash) {
+			if match == nil {
+				m := h.rec
+				match = &m
+			} else {
+				// Duplicate same-policy OPEN (should not happen) — expire extras.
+				from := h.rec.State
+				_ = s.store.appendTransition(h.rec, from, StateExpired, "expired", req.CorrelationID, h.id, fp.Fingerprint, "superseded_duplicate_open", now, nil)
+				s.signalTerminal(h.id)
+			}
+			continue
+		}
+		from := h.rec.State
+		_ = s.store.appendTransition(h.rec, from, StateExpired, "expired", req.CorrelationID, h.id, fp.Fingerprint, "superseded_by_policy_change", now, nil)
+		s.signalTerminal(h.id)
+	}
+	if match != nil {
+		return cloneRecord(*match), nil
 	}
 	seq := s.store.nextSeqLocked()
 	rec.CreatedSequence = seq

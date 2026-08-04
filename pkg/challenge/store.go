@@ -113,6 +113,32 @@ func (s *Store) putLocked(rec ChallengeRecord, ev ChallengeEvent, just *Justific
 	key := rec.SessionID + "|" + rec.ActionFingerprint
 	switch rec.State {
 	case StateOpen, StateJustified, StateRetryPending:
+		// Hard single-active invariant: expire any other non-terminal with same key.
+		// Collect IDs first — never mutate byID while ranging over it.
+		var toExpire []string
+		for id, existing := range s.byID {
+			if id == rec.ChallengeID {
+				continue
+			}
+			if existing.SessionID != rec.SessionID || existing.ActionFingerprint != rec.ActionFingerprint {
+				continue
+			}
+			if isTerminal(existing.State) {
+				continue
+			}
+			toExpire = append(toExpire, id)
+		}
+		for _, id := range toExpire {
+			existing := s.byID[id]
+			if existing == nil || isTerminal(existing.State) {
+				continue
+			}
+			exp := cloneRecord(*existing)
+			exp.State = StateExpired
+			exp.UpdatedSequence = rec.UpdatedSequence
+			exp.UpdatedAt = rec.UpdatedAt
+			s.byID[id] = &exp
+		}
 		s.openByFP[key] = rec.ChallengeID
 	default:
 		if s.openByFP[key] == rec.ChallengeID {

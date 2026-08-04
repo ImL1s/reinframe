@@ -250,47 +250,63 @@ func operationDigest(pa adapter.ProposedAction, side string) (string, error) {
 }
 
 // editOperationDigest binds write fingerprints to the actual edit operation, not only FilePath.
+// Equivalent lossless surfaces (Arguments content vs RedactedPayload new_string/new_str/content)
+// normalize to the same content digests so fingerprints match.
 func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 	parts := map[string]string{
-		"tool": pa.ToolName,
+		// ToolName intentionally omitted from op identity so Edit/StrReplace equivalents can match
+		// when path+content digests are the same; ToolClass still in outer fingerprint.
 		"path": normalizeResource(pa.FilePath),
 	}
-	// Prefer Arguments (old_string/new_string surfaces often land as args).
-	if len(pa.Arguments) > 0 {
-		parts["args"] = encodeStringList(pa.Arguments)
+	var oldDig, newDig string
+
+	// Arguments: common shapes [new], [old,new], or freeform content tokens.
+	if len(pa.Arguments) == 1 {
+		newDig = digestBytes([]byte(pa.Arguments[0]))
+	} else if len(pa.Arguments) >= 2 {
+		oldDig = digestBytes([]byte(pa.Arguments[0]))
+		newDig = digestBytes([]byte(pa.Arguments[1]))
 	}
-	// RedactedPayload when valid JSON object with closed content keys.
+
+	// RedactedPayload closed content keys (aliases map to the same slots).
 	if len(pa.RedactedPayload) > 0 && string(pa.RedactedPayload) != "{}" && string(pa.RedactedPayload) != "null" {
 		var m map[string]any
 		if err := json.Unmarshal(pa.RedactedPayload, &m); err != nil {
 			return "", fmt.Errorf("proposed_action: edit redacted_payload is not valid JSON object")
 		}
-		// Extract only known content keys; never dump arbitrary secrets beyond redacted form.
-		for _, k := range []string{"old_string", "new_string", "content", "old_str", "new_str", "contents"} {
-			if v, ok := m[k]; ok {
-				if s, ok := v.(string); ok {
-					parts["k:"+k] = digestBytes([]byte(s))
-				}
-			}
+		if s := stringField(m, "old_string", "old_str"); s != "" {
+			oldDig = digestBytes([]byte(s))
 		}
-		// If payload present but no content keys and no args — fail closed.
-		hasContent := false
-		for k := range parts {
-			if strings.HasPrefix(k, "k:") {
-				hasContent = true
-				break
-			}
+		if s := stringField(m, "new_string", "new_str", "content", "contents"); s != "" {
+			newDig = digestBytes([]byte(s))
 		}
-		if !hasContent && len(pa.Arguments) == 0 {
-			return "", fmt.Errorf("proposed_action: edit operation has no bound content fields")
+	}
+
+	if oldDig != "" {
+		parts["old"] = oldDig
+	}
+	if newDig != "" {
+		parts["new"] = newDig
+	}
+	if oldDig == "" && newDig == "" {
+		if strings.TrimSpace(pa.Command) != "" {
+			parts["cmd"] = normalizeCommandPreserveCase(pa.Command)
+		} else {
+			return "", fmt.Errorf("proposed_action: edit operation missing content (args/payload/command)")
 		}
-	} else if len(pa.Arguments) == 0 && strings.TrimSpace(pa.Command) == "" {
-		// Path-only edit without content — fail closed (cannot prove same operation).
-		return "", fmt.Errorf("proposed_action: edit operation missing content (args/payload/command)")
-	} else if strings.TrimSpace(pa.Command) != "" {
-		parts["cmd"] = normalizeCommandPreserveCase(pa.Command)
 	}
 	return digestBytes([]byte(encodeFingerprintCanon(parts))), nil
+}
+
+func stringField(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 func digestBytes(b []byte) string {

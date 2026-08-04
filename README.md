@@ -12,7 +12,7 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 
 > **Phase: M1 + M2 library + experimental host bridges + shadow classifier + offline eval**
 >
-> **Still open (actual `gh` set):** epic [#80](https://github.com/ImL1s/reinframe/issues/80); **ready** [#131](https://github.com/ImL1s/reinframe/issues/131) appealable BLOCK challenges, [#132](https://github.com/ImL1s/reinframe/issues/132) classifier provider runtime, [#142](https://github.com/ImL1s/reinframe/issues/142) docs/open-set governance (this PR); **blocked** [#120](https://github.com/ImL1s/reinframe/issues/120) live Claude smoke (`BLOCKED_BY_ENVIRONMENT`) → [#108](https://github.com/ImL1s/reinframe/issues/108) advice consumer; **blocked** [#134](https://github.com/ImL1s/reinframe/issues/134)–[#139](https://github.com/ImL1s/reinframe/issues/139) native providers / exact-cache / Claude appeal; **blocked** eval follow-ups [#140](https://github.com/ImL1s/reinframe/issues/140)–[#141](https://github.com/ImL1s/reinframe/issues/141).
+> **Still open (actual `gh` set):** epic [#80](https://github.com/ImL1s/reinframe/issues/80); **ready** [#131](https://github.com/ImL1s/reinframe/issues/131) appealable BLOCK challenges, [#132](https://github.com/ImL1s/reinframe/issues/132) classifier provider runtime; **blocked** [#120](https://github.com/ImL1s/reinframe/issues/120) live Claude smoke (`BLOCKED_BY_ENVIRONMENT`) → [#108](https://github.com/ImL1s/reinframe/issues/108) advice consumer; **blocked** [#134](https://github.com/ImL1s/reinframe/issues/134)–[#139](https://github.com/ImL1s/reinframe/issues/139) native providers / exact-cache / Claude appeal; **blocked** eval follow-ups [#140](https://github.com/ImL1s/reinframe/issues/140)–[#141](https://github.com/ImL1s/reinframe/issues/141). Open-set governance [#142](https://github.com/ImL1s/reinframe/issues/142) closed via PR #143.
 >
 > **Closed residual library slices (narrow DoD):** ProposedAction [#115](https://github.com/ImL1s/reinframe/issues/115), PreTool semantics [#116](https://github.com/ImL1s/reinframe/issues/116), settings harden [#117](https://github.com/ImL1s/reinframe/issues/117), Codex identity [#118](https://github.com/ImL1s/reinframe/issues/118), classifier contract [#119](https://github.com/ImL1s/reinframe/issues/119), shadow classifier [#105](https://github.com/ImL1s/reinframe/issues/105), M3 benches [#100](https://github.com/ImL1s/reinframe/issues/100) (MORE-DATA, no hard-gate), managed worktree [#99](https://github.com/ImL1s/reinframe/issues/99), post-merge hygiene [#133](https://github.com/ImL1s/reinframe/pull/133).
 >
@@ -57,7 +57,7 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 | Claude appeal delivery (#139) | 🔲 Open — blocked on #131 **and** #120 |
 | Challenge appeal evaluation (#140) | 🔲 Open — blocked on #131 (Lane A); #139/#132 for later lanes |
 | Provider/cache economics evaluation (#141) | 🔲 Open — blocked on #132 (+ #138 / native adapters for full lanes) |
-| Open-set docs governance (#142) | 🔲 Open — `status:ready` (docs PR) |
+| Open-set docs governance (#142) | ✅ Closed — PR #143 |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Project Objective
@@ -209,7 +209,7 @@ Intervention escalation after detection is a **separate axis** (B0–B3). See `d
 
 Contributions welcome! Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md) for open work (epic **#80**; ready **#131**/**#132**/**#142**; blocked **#120**→**#108**, **#134**–**#141**)
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md) for open work (epic **#80**; ready **#131**/**#132**; blocked **#120**→**#108**, **#134**–**#141**)
 2. Follow existing code style and test patterns; keep honesty boundaries (no false product claims)
 3. Run `go test -race ./...` before submitting PRs
 4. All PRs require CI green on all three platforms + AI review comment before merge (project standard)

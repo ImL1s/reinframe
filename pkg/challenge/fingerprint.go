@@ -551,16 +551,24 @@ func extractDeleteScopeFlags(cmd string) []string {
 		// effectivePrompt: "all" | "once" | "none" | "" (default). Only all/once bind
 		// so prompt_none/default can still rewrite-match find -delete.
 		effectivePrompt := ""
+		// preserve-root last-wins (do not accumulate+sort --preserve-root with --no-preserve-root).
+		effectivePreserveRoot := ""
 		dirRemoval := false
+		oneFileSystem := false
 		for ; i < len(fields); i++ {
 			f := fields[i]
 			if f == "--" {
 				break
 			}
 			switch {
-			case f == "--one-file-system" || f == "--preserve-root" || strings.HasPrefix(f, "--preserve-root=") ||
-				f == "--no-preserve-root":
-				out = append(out, f)
+			case f == "--one-file-system":
+				oneFileSystem = true
+			case f == "--preserve-root":
+				effectivePreserveRoot = "--preserve-root"
+			case strings.HasPrefix(f, "--preserve-root="):
+				effectivePreserveRoot = f // retain exact form e.g. --preserve-root=all
+			case f == "--no-preserve-root":
+				effectivePreserveRoot = "--no-preserve-root"
 			case f == "--dir" || f == "-d":
 				dirRemoval = true
 			case f == "--force":
@@ -594,6 +602,12 @@ func extractDeleteScopeFlags(cmd string) []string {
 					}
 				}
 			}
+		}
+		if oneFileSystem {
+			out = append(out, "--one-file-system")
+		}
+		if effectivePreserveRoot != "" {
+			out = append(out, effectivePreserveRoot)
 		}
 		if dirRemoval {
 			out = append(out, "dir_removal")

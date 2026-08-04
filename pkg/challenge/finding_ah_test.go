@@ -1445,6 +1445,43 @@ func TestRmPreserveRootAllChangesFingerprint(t *testing.T) {
 	}
 }
 
+// Codex: preserve-root last-wins — order of --preserve-root vs --no-preserve-root matters.
+func TestRmPreserveRootLastWins(t *testing.T) {
+	// Last flag wins; sorted multi-flag accumulation would wrongly collide these.
+	a := mustFP(t, challenge.FingerprintInput{
+		Proposed: samplePA("rm -rf --preserve-root --no-preserve-root mount"), SessionID: "sess-1",
+	})
+	b := mustFP(t, challenge.FingerprintInput{
+		Proposed: samplePA("rm -rf --no-preserve-root --preserve-root mount"), SessionID: "sess-1",
+	})
+	if a.SideEffectClass != challenge.SideEffectDeleteTree || b.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("want delete_tree a=%s b=%s", a.SideEffectClass, b.SideEffectClass)
+	}
+	if a.Fingerprint == b.Fingerprint {
+		t.Fatal("--preserve-root then --no-preserve-root must not share FP with reverse order")
+	}
+	// Same last mode deterministic.
+	c := mustFP(t, challenge.FingerprintInput{
+		Proposed: samplePA("rm -rf --preserve-root --preserve-root mount"), SessionID: "sess-1",
+	})
+	d := mustFP(t, challenge.FingerprintInput{
+		Proposed: samplePA("rm -rf --preserve-root mount"), SessionID: "sess-1",
+	})
+	if c.Fingerprint != d.Fingerprint {
+		t.Fatal("identical effective preserve-root should be deterministic")
+	}
+	// Last no-preserve matches single no-preserve.
+	e := mustFP(t, challenge.FingerprintInput{
+		Proposed: samplePA("rm -rf --preserve-root --no-preserve-root mount"), SessionID: "sess-1",
+	})
+	f := mustFP(t, challenge.FingerprintInput{
+		Proposed: samplePA("rm -rf --no-preserve-root mount"), SessionID: "sess-1",
+	})
+	if e.Fingerprint != f.Fingerprint {
+		t.Fatal("last --no-preserve-root should match bare --no-preserve-root")
+	}
+}
+
 // Codex: after rm `--`, dashed names are operands not options.
 func TestRmDoubleDashOperandNotOption(t *testing.T) {
 	// `rm -rf -- -v normal` deletes files named -v and normal.

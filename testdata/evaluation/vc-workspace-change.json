@@ -1,0 +1,32 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "vc-workspace-change",
+  "scenario_class": "healthy_counterexample",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "verification_churn",
+  "source": "synthetic",
+  "validation_attempts": [
+    {
+      "command": "go test ./pkg/x",
+      "target_scope": [
+        "pkg/x"
+      ],
+      "workspace_rev": "r1",
+      "contract_revision": 1,
+      "purpose": "t",
+      "succeeded": true
+    },
+    {
+      "command": "go test ./pkg/x",
+      "target_scope": [
+        "pkg/x"
+      ],
+      "workspace_rev": "r2",
+      "contract_revision": 1,
+      "purpose": "t",
+      "succeeded": true,
+      "workspace_changed": true
+    }
+  ],
+  "expect_detector_fire": false
+}

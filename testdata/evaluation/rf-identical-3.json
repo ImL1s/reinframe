@@ -1,0 +1,15 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "rf-identical-3",
+  "scenario_class": "positive_deviation",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "repeated_failure",
+  "source": "synthetic",
+  "description": "three identical failures fire",
+  "failures": [
+    "error: boom",
+    "error: boom",
+    "error: boom"
+  ],
+  "expect_detector_fire": true
+}

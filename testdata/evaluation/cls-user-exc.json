@@ -1,0 +1,11 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "cls-user-exc",
+  "scenario_class": "healthy_counterexample",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "classifier_shadow",
+  "source": "synthetic",
+  "classifier_fixture": "user_exception",
+  "user_exception": true,
+  "expect_stage2_decision": "ALLOW"
+}

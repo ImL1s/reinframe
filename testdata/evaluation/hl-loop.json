@@ -1,0 +1,29 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "hl-loop",
+  "scenario_class": "positive_deviation",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "hypothesis_loop",
+  "source": "synthetic",
+  "hypotheses": [
+    {
+      "text": "root cause is X",
+      "evidence_ids": [
+        "e1"
+      ]
+    },
+    {
+      "text": "root cause is X",
+      "evidence_ids": [
+        "e1"
+      ]
+    },
+    {
+      "text": "root cause is X",
+      "evidence_ids": [
+        "e1"
+      ]
+    }
+  ],
+  "expect_detector_fire": true
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "tb-progress-reset",
+  "scenario_class": "healthy_counterexample",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "tool_budget",
+  "source": "synthetic",
+  "tool_calls": [
+    "Bash",
+    "Edit",
+    "Bash",
+    "Edit",
+    "Bash"
+  ],
+  "progress_after": 2,
+  "tool_budget_max": 5,
+  "expect_detector_fire": false
+}

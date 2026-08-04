@@ -1,0 +1,11 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "cls-clear-block",
+  "scenario_class": "positive_deviation",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "classifier_shadow",
+  "source": "synthetic",
+  "classifier_fixture": "clear_block",
+  "expect_stage2_decision": "BLOCK",
+  "hook_gate_action": "allow"
+}

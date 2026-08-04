@@ -1,0 +1,29 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "hl-new-evidence",
+  "scenario_class": "healthy_counterexample",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "hypothesis_loop",
+  "source": "synthetic",
+  "hypotheses": [
+    {
+      "text": "root cause is X",
+      "evidence_ids": [
+        "e1"
+      ]
+    },
+    {
+      "text": "root cause is X",
+      "evidence_ids": [
+        "e2"
+      ]
+    },
+    {
+      "text": "root cause is X",
+      "evidence_ids": [
+        "e3"
+      ]
+    }
+  ],
+  "expect_detector_fire": false
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "cls-clear-allow",
+  "scenario_class": "healthy_counterexample",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "classifier_shadow",
+  "source": "synthetic",
+  "classifier_fixture": "clear_allow",
+  "expect_stage2_decision": "ALLOW"
+}

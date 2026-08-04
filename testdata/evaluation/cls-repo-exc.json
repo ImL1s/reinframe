@@ -1,0 +1,11 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "cls-repo-exc",
+  "scenario_class": "healthy_counterexample",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "classifier_shadow",
+  "source": "synthetic",
+  "classifier_fixture": "repo_policy_exception",
+  "repo_policy_exception": true,
+  "expect_stage2_decision": "ALLOW"
+}

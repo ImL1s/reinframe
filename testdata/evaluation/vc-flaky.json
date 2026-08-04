@@ -1,0 +1,32 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "vc-flaky",
+  "scenario_class": "healthy_counterexample",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "verification_churn",
+  "source": "synthetic",
+  "validation_attempts": [
+    {
+      "command": "go test -count=1",
+      "target_scope": [
+        "."
+      ],
+      "workspace_rev": "r1",
+      "contract_revision": 1,
+      "purpose": "flaky",
+      "succeeded": true
+    },
+    {
+      "command": "go test -count=1",
+      "target_scope": [
+        "."
+      ],
+      "workspace_rev": "r1",
+      "contract_revision": 1,
+      "purpose": "flaky",
+      "succeeded": true,
+      "flaky_investigation": true
+    }
+  ],
+  "expect_detector_fire": false
+}

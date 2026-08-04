@@ -1,0 +1,13 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "rf-two-no-fire",
+  "scenario_class": "healthy_counterexample",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "repeated_failure",
+  "source": "synthetic",
+  "failures": [
+    "error: a",
+    "error: b"
+  ],
+  "expect_detector_fire": false
+}

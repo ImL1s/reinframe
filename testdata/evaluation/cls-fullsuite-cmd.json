@@ -1,0 +1,11 @@
+{
+  "schema_version": "reinframe.benchmark_case.v1",
+  "case_id": "cls-fullsuite-cmd",
+  "scenario_class": "positive_deviation",
+  "policy_class": "PRODUCTIVITY",
+  "kind": "classifier_shadow",
+  "source": "synthetic",
+  "proposed_tool_name": "Bash",
+  "proposed_command": "go test -race ./...",
+  "expect_stage2_decision": "BLOCK"
+}

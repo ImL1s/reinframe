@@ -1,6 +1,6 @@
 {
   "schema_version": "reinframe.benchmark_report.v1",
-  "reinframe_commit": "9b681dc5140e2b59244be6d2c208aed2643d8c2c",
+  "reinframe_commit": "ee9cc6b25697a9bd9b986bcee2c7f6013e0847c3",
   "dataset_version": "synthetic-m3-v1",
   "dataset_hash": "9fa0dccd30a7ff366c17aaa54de6cfa470c9551c591a2a526cf42a1783b7bfa9",
   "classifier_model_id": "fake",
@@ -86,6 +86,7 @@
       "false_allow": false,
       "raw_severity": 10,
       "resolver_reason": "stage1_applied",
+      "reason_code": "below_threshold",
       "enforced": false
     },
     {
@@ -104,6 +105,7 @@
       "false_allow": false,
       "raw_severity": 90,
       "resolver_reason": "stage1_applied",
+      "reason_code": "above_threshold",
       "enforced": false
     },
     {
@@ -122,6 +124,7 @@
       "false_allow": false,
       "raw_severity": 90,
       "resolver_reason": "stage1_applied",
+      "reason_code": "above_threshold",
       "enforced": false
     },
     {
@@ -139,6 +142,7 @@
       "false_block": false,
       "false_allow": false,
       "resolver_reason": "fail_open_productivity",
+      "reason_code": "parse_invalid",
       "enforced": false
     },
     {
@@ -157,6 +161,7 @@
       "false_allow": false,
       "raw_severity": 85,
       "resolver_reason": "repo_policy_exception",
+      "reason_code": "repo_policy_exception",
       "enforced": false
     },
     {
@@ -175,6 +180,7 @@
       "false_allow": false,
       "raw_severity": 85,
       "resolver_reason": "user_exception",
+      "reason_code": "user_exception",
       "enforced": false
     },
     {

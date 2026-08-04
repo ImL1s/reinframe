@@ -100,6 +100,7 @@ type CaseResult struct {
 	FalseAllow         bool   `json:"false_allow"`
 	RawSeverity        int    `json:"raw_severity,omitempty"`
 	ResolverReason     string `json:"resolver_reason,omitempty"`
+	ReasonCode         string `json:"reason_code,omitempty"`
 	Enforced           bool   `json:"enforced"` // must always be false for classifier
 	Error              string `json:"error,omitempty"`
 }

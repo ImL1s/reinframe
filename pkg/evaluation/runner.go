@@ -234,6 +234,7 @@ func (r *Runner) runCase(ctx context.Context, c Case) CaseResult {
 		cr.Stage2Decision = res.Resolved.Decision
 		cr.RawSeverity = res.Resolved.RawSeverity
 		cr.ResolverReason = res.Resolved.ResolverReason
+		cr.ReasonCode = res.Resolved.ReasonCode
 		cr.Enforced = res.Resolved.Enforced
 		if cr.Enforced {
 			cr.Error = "shadow enforced=true (forbidden)"
@@ -249,9 +250,7 @@ func (r *Runner) runCase(ctx context.Context, c Case) CaseResult {
 				cr.FalseAllow = true
 			}
 		}
-		if res.Raw.ParseStatus != "" && res.Raw.ParseStatus != "ok" {
-			// counted at aggregate
-		}
+		_ = res.Raw.ParseStatus // aggregate uses ReasonCode/ResolverReason
 	default:
 		cr.Error = "unknown kind: " + c.Kind
 	}
@@ -310,10 +309,10 @@ func aggregate(cases []CaseResult) AggregateMetrics {
 					}
 				}
 			}
-			if cr.ResolverReason == "parse_invalid" || cr.ResolverReason == "fail_open_productivity" {
+			if cr.ResolverReason == "parse_invalid" || cr.ReasonCode == "parse_invalid" {
 				m.ParseFailCount++
 			}
-			if cr.ResolverReason == "provider_unavailable" {
+			if cr.ReasonCode == "provider_unavailable" || strings.Contains(cr.Error, "unknown fixture") {
 				m.ProviderErrCount++
 			}
 			continue

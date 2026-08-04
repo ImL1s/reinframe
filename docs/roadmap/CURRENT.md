@@ -83,4 +83,8 @@ Parallel recovery:
 - `docs/research/2026-08-03-m21-open-issues-order.md` — completed M2.1 pass record  
 - `docs/plans/2026-08-03-issue-queue.md` — superseded snapshot  
 - Closed Epic #1 — foundation archive  
-- Old DAG snapshots — historical phase map; prefer this file for queue  
+- Old DAG snapshots — historical phase map; prefer this file for queue
+
+## Evaluation (#100)
+
+Offline synthetic benchmarks: [`docs/evaluation/m3_benchmarks.md`](../evaluation/m3_benchmarks.md). Hard-gates not enabled.

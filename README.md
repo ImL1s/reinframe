@@ -11,8 +11,8 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 ## Project Status
 
 > **Phase: M1 + M2.0 + M2.1 library + M2.2 residual adapters (library / experimental)**  
-> Landed through PR [#101](https://github.com/ImL1s/reinframe/pull/101) / [#102](https://github.com/ImL1s/reinframe/pull/102): street-wire demo, Codex offline+tail EventSource, Claude bridge, FileActuator, #98 detectors + thin policy wiring.  
-> **Still open:** epic [#80](https://github.com/ImL1s/reinframe/issues/80); productization [#104](https://github.com/ImL1s/reinframe/issues/104)–[#108](https://github.com/ImL1s/reinframe/issues/108); [#99](https://github.com/ImL1s/reinframe/issues/99); [#100](https://github.com/ImL1s/reinframe/issues/100).  
+> Landed (narrow DoD): street-wire + Codex offline/tail ([#95](https://github.com/ImL1s/reinframe/issues/95)–[#102](https://github.com/ImL1s/reinframe/pull/102)), Claude bridge ([#96](https://github.com/ImL1s/reinframe/issues/96)), FileActuator ([#97](https://github.com/ImL1s/reinframe/issues/97)), #98 detectors, optional LLM reviewer (PR [#103](https://github.com/ImL1s/reinframe/pull/103)), classifier **design** ([#104](https://github.com/ImL1s/reinframe/issues/104)/PR [#111](https://github.com/ImL1s/reinframe/pull/111) — not wire contract), Claude **installer unit** ([#106](https://github.com/ImL1s/reinframe/issues/106)/PR [#112](https://github.com/ImL1s/reinframe/pull/112) — **no live smoke**), Codex **observe-only** product surface ([#107](https://github.com/ImL1s/reinframe/issues/107)/PR [#113](https://github.com/ImL1s/reinframe/pull/113)–[#114](https://github.com/ImL1s/reinframe/pull/114)).  
+> **Still open (actual):** epic [#80](https://github.com/ImL1s/reinframe/issues/80); ready [#115](https://github.com/ImL1s/reinframe/issues/115) ProposedAction · [#117](https://github.com/ImL1s/reinframe/issues/117) Claude settings harden · [#118](https://github.com/ImL1s/reinframe/issues/118) Codex identity/tail · [#119](https://github.com/ImL1s/reinframe/issues/119) classifier contract (merge after #115) · [#121](https://github.com/ImL1s/reinframe/issues/121) governance · [#99](https://github.com/ImL1s/reinframe/issues/99) git worktree rollback; blocked [#116](https://github.com/ImL1s/reinframe/issues/116) (by #115) · [#120](https://github.com/ImL1s/reinframe/issues/120) live smoke (by #115/#116/#117) · [#105](https://github.com/ImL1s/reinframe/issues/105) shadow classifier (by #119+#115) · [#108](https://github.com/ImL1s/reinframe/issues/108) advice consumer (by #120) · [#100](https://github.com/ImL1s/reinframe/issues/100) M3 benchmarks (by #105).  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
 
 | Component | Status |
@@ -32,12 +32,23 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 | Supervisor Orchestrator (#70/#71) | ✅ Complete (composition root + vertical-slice tests) |
 | TaskSubmitted intake mappers (#84) | ✅ Fixture/host mappers (no protocol host type names) |
 | Codex EventSource offline + near-live tail (#95) | ✅ `CodexRolloutSource` / `CodexTailSource` (not process attach) |
-| Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` (no global settings install) |
-| FileActuator advice channel (#97) | ✅ JSONL `reinframe.advice.v1`; pending ACK (host must consume file) |
+| Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |
+| Claude project-local install/doctor (#106) | ✅ Installer unit path; **not** live smoke (#120 open) |
+| Codex observe product surface (#107) | ✅ Discovery/cursor/codexctl; observe-only L0 (#118 harden open) |
+| Action Alignment **design** (#104) | ✅ Concept doc only; wire contract → #119 |
+| FileActuator advice channel (#97) | ✅ JSONL `reinframe.advice.v1`; write ≠ agent receipt |
 | Street-wire demo (`cmd/streetwire`) | ✅ Offline Codex + M2 loops + bridge + FileActuator demos |
 | Optional LLM Reviewer (OpenAI-compatible, ADR 003 local-only default) | ✅ Uncertain path only; high-confidence never calls LLM (`cmd/reviewerdemo`) |
+| Typed ProposedAction (#115) | 🔲 Open |
+| Claude PreTool response semantics (#116) | 🔲 Open (blocked by #115) |
+| Claude settings ownership harden (#117) | 🔲 Open |
+| Codex collision-safe identity/tail (#118) | 🔲 Open |
+| Classifier wire contract (#119) | 🔲 Open (merge after #115) |
+| Live Claude ALLOW/BLOCK smoke (#120) | 🔲 Open (blocked by #115/#116/#117) |
+| Real advice consumer / ACK (#108) | 🔲 Open (blocked by #120) |
+| Shadow classifier runtime (#105) | 🔲 Open (blocked by #119+#115) |
 | Git Checkpoint/Rollback runtime (#99) | 🔲 Open |
-| M3 synthetic + FP benchmarks / hard-gates (#100) | 🔲 Open |
+| M3 synthetic + FP benchmarks (#100) | 🔲 Open (blocked by #105 for classifier layer) |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Project Objective
@@ -62,15 +73,18 @@ reinframe/
 ├── cmd/
 │   ├── streetwire/            # A–F street demo (offline Codex, loops, bridge, FileActuator)
 │   ├── claudebridge/          # Claude PreTool / prompt stdin→JSON (#96 experimental)
+│   ├── claudeinstall/         # Project-local Claude hooks install/doctor (#106)
+│   ├── codexctl/              # Codex observe-only operator surface (#107)
 │   └── reviewerdemo/          # Optional LLM: fixed ZOOM_OUT vs SuggestedAdvice
 ├── docs/
 │   ├── adapter/               # Host bridge + intake + FileActuator docs
 │   ├── reviewer/              # Optional LLM advice honesty
 │   ├── detector/              # #98 fingerprint rules
 │   ├── dev/                   # STREET_WIRE.md street map
+│   ├── roadmap/               # CURRENT.md executable queue
 │   ├── adr/                   # Architecture Decision Records
 │   ├── research/              # Threat model, capability matrix, level axes
-│   ├── specs/                 # Adaptive Task Supervisor model
+│   ├── specs/                 # Adaptive Task Supervisor + Action Alignment design
 │   └── architecture/          # Execution DAG
 ├── pkg/
 │   ├── protocol/              # Schemas, ValidateEvent, capability negotiation (25 flags)
@@ -80,7 +94,7 @@ reinframe/
 │   ├── policy/                # Fast/slow + before_tool
 │   ├── supervisor/            # Orchestrator composition + vertical-slice tests
 │   ├── config/                # Versioned configuration schema
-│   └── reviewer/              # ReviewerProvider interface + FakeProvider
+│   └── reviewer/              # ReviewerProvider + OpenAI-compatible optional path
 ├── tests/
 │   └── integration/           # Protocol/store/scenario-persistence tests
 ├── .github/workflows/ci.yml
@@ -97,16 +111,21 @@ reinframe/
 - **`pkg/supervisor`**: Composition root: detect → policy → queue → deliver → ACK.
 - **`cmd/streetwire`**: End-to-end **library** demo of residual paths (see `docs/dev/STREET_WIRE.md`).
 - **`cmd/claudebridge`**: Stdin PreTool/prompt bridge for optional Claude Code hooks (experimental).
+- **`cmd/claudeinstall`**: Project-local settings install/doctor (#106 unit path; live smoke is #120).
+- **`cmd/codexctl`**: Codex observe-only discovery/tail helper (#107; not control).
 - **`pkg/config`**: Versioned config schema (loader still thin).
-- **`pkg/reviewer`**: Provider interface + FakeProvider (no live cloud/local HTTP yet).
+- **`pkg/reviewer`**: Provider interface + optional OpenAI-compatible path (uncertain only).
 - **`tests/integration`**: Foundation integration tests (not full Anti-Tunnel E2E).
 
 ### Control-plane reality check
 ```text
 Available:  Detectors → Policy → Orchestrator → HookGate / queue / FileActuator|Fake
             Codex JSONL offline + tail EventSource; Claude PreTool fixture/CLI bridge
-Not claimed: global ~/.claude or Codex product install, process-attach daemon,
-             live dual-host supervision, calibrated hard-gates (#100), git rollback (#99)
+            Claude project-local installer (unit); codexctl observe helpers
+Not claimed: global ~/.claude silent install, process-attach daemon,
+             live dual-host supervision, calibrated hard-gates (#100),
+             live Claude smoke (#120), advice agent receipt (#108),
+             classifier wire/runtime (#119/#105), git rollback (#99)
 ```
 Vertical-slice and street-wire tests prove the **library and channel** paths. Host consumers of FileActuator / optional hook install remain operator-owned.
 
@@ -180,7 +199,7 @@ Intervention escalation after detection is a **separate axis** (B0–B3). See `d
 
 Contributions welcome! Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) for open work (epic **#80**, **#99**, **#100**)
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md) for open work (epic **#80**; ready **#115/#117/#118/#119/#121/#99**; blocked **#116/#120/#105/#108/#100**)
 2. Follow existing code style and test patterns; keep honesty boundaries (no false product claims)
 3. Run `go test -race ./...` before submitting PRs
 4. All PRs require CI green on all three platforms + AI review comment before merge (project standard)

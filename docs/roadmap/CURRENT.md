@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-04) — backlog repair pass  
+**Status:** current (2026-08-04) — #121 governance sync PR  
 **Wins on conflict:** README (public status) > this file (executable queue) > `docs/specs/*` (normative model) > Epic #80 (tracker) > historical docs.
 
 ## Implemented (narrow DoD — do not reopen for same scope)
@@ -29,7 +29,7 @@
 | **#115** | P0 | Typed `ProposedAction` projection (ToolName ≠ Command) |
 | **#117** | P0 | Claude hook ownership / doctor / atomic settings harden |
 | **#118** | P0 | Codex EventID + collision-safe durable tail |
-| **#119** | P0 | Classifier closed schemas / provider ADR / fixtures (pre-shadow) |
+| **#119** | P0 | Classifier closed schemas / provider ADR / fixtures; **research OK, merge only after #115** |
 | **#121** | P1 | README / CURRENT / Epic / label sync (docs) |
 | **#99** | P1 | Managed-worktree checkpoint/rollback runtime |
 

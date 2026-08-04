@@ -3,6 +3,8 @@
 **Status:** current (2026-08-04) — challenge/provider/cache backlog sync (#142)  
 **Wins on conflict:** README (public status) > this file (executable queue) > `docs/specs/*` (normative model) > Epic #80 (tracker) > historical docs.
 
+Issue #142 tracks this docs synchronization and is not a product work item in the post-merge queue below.
+
 ## Implemented (narrow DoD — do not reopen for the same scope)
 
 | Track | Issues/PRs | Honesty boundary |
@@ -28,13 +30,12 @@
 | Managed worktree rollback | #99 / PR #130 | Clean-only; not primary checkout |
 | Post-merge hygiene | PR #133 | Evaluation denominator, workspace fail-closed, docs |
 
-## Active backlog (open only)
+## Active backlog (product/research issues after this governance change)
 
 ### Ready — no open code dependency
 
 | Issue | Pri | Scope | Boundary |
 |-------|-----|-------|----------|
-| **#142** | P1 | Governance sync for this backlog | Docs/issues only |
 | **#131** | P1 | Appealable productivity BLOCK, justification, one-shot semantic retry | Host-neutral core; no live Claude claim |
 | **#132** | P1 | Real classifier provider runtime, strict parser, normalized usage, cache-neutral generic adapter | No native provider/cache claim |
 
@@ -86,9 +87,6 @@ The generic OpenAI-compatible adapter defaults to no vendor-specific cache capab
 ## Execution order
 
 ```text
-Governance now:
-  #142
-
 Ready in parallel:
   #131 challenge core
   #132 provider runtime

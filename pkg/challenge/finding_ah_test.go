@@ -430,3 +430,152 @@ func TestFingerprintSpecialCharNoCollision(t *testing.T) {
 		t.Fatal("special char target collision")
 	}
 }
+
+// Codex: Open rejects explicit request vs proposed session mismatch.
+func TestOpenSessionMismatchRejected(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	pa := samplePA("rm -rf build") // SessionID=sess-1
+	_, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "other-sess", Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err == nil {
+		t.Fatal("expected session mismatch error")
+	}
+}
+
+// Codex: hard non-appealable open expires stale active productivity challenge.
+func TestHardBlockExpiresActiveChallenge(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	pa := samplePA("rm -rf build")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.State != challenge.StateOpen {
+		t.Fatal(rec.State)
+	}
+	// Same action, hard deny class — must supersede/expire the active challenge.
+	_, err = svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassSecretExfiltration,
+	})
+	if err == nil {
+		t.Fatal("expected non-appealable")
+	}
+	got, ok := svc.Get(rec.ChallengeID)
+	if !ok {
+		t.Fatal("missing record")
+	}
+	if got.State != challenge.StateExpired {
+		t.Fatalf("want EXPIRED after hard block, got %s", got.State)
+	}
+}
+
+// Codex: compound/quoted delete must not share delete_tree fingerprint with simple rm.
+func TestCompoundAndQuotedDeleteNotDeleteTree(t *testing.T) {
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	compound := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -delete;id"), SessionID: "sess-1"})
+	quoted := mustFP(t, challenge.FingerprintInput{Proposed: samplePA(`rm -rf "my dir"`), SessionID: "sess-1"})
+	if plain.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("plain want delete_tree got %s", plain.SideEffectClass)
+	}
+	if compound.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatal("compound find -delete;id must not classify as delete_tree")
+	}
+	if quoted.SideEffectClass == challenge.SideEffectDeleteTree || quoted.SideEffectClass == challenge.SideEffectDeleteFile {
+		t.Fatal("quoted rm must not classify as delete_*")
+	}
+	if plain.Fingerprint == compound.Fingerprint || plain.Fingerprint == quoted.Fingerprint {
+		t.Fatal("unsafe shell must not share fingerprint with plain delete")
+	}
+	if challenge.ClassifyRelationship(plain, compound) == challenge.RelBypass ||
+		challenge.ClassifyRelationship(plain, compound) == challenge.RelSame {
+		t.Fatal("compound must not inherit delete allowance")
+	}
+}
+
+// Codex: multi-Service shared Store waiters observe terminal via store-scoped signal.
+func TestSharedStoreTerminalWakesOtherService(t *testing.T) {
+	const delay = 250 * time.Millisecond
+	st := challenge.NewStore()
+	// Both services share Store and the same slow re-eval (Service-local reeval is fine).
+	svcA := challenge.NewService(challenge.ServiceConfig{Store: st, ReEval: slowAllowReEval{delay: delay}})
+	svcB := challenge.NewService(challenge.ServiceConfig{Store: st, ReEval: slowAllowReEval{delay: delay}})
+	pa := samplePA("rm -rf build")
+	rec, err := svcA.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svcA.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	type pair struct {
+		res challenge.RetryResult
+		err error
+	}
+	chA := make(chan pair, 1)
+	chB := make(chan pair, 1)
+	req := challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+		CorrelationID: "shared-store-attempt",
+	}
+	go func() {
+		r, e := svcA.AttemptRetry(context.Background(), req)
+		chA <- pair{r, e}
+	}()
+	// Ensure A has a chance to enter RETRY_PENDING before B waits.
+	time.Sleep(30 * time.Millisecond)
+	go func() {
+		r, e := svcB.AttemptRetry(context.Background(), req)
+		chB <- pair{r, e}
+	}()
+
+	var a, b pair
+	select {
+	case a = <-chA:
+	case <-time.After(3 * time.Second):
+		t.Fatal("svcA AttemptRetry hung — store signal broken?")
+	}
+	select {
+	case b = <-chB:
+	case <-time.After(3 * time.Second):
+		t.Fatal("svcB AttemptRetry hung — cross-service terminal wake broken")
+	}
+	if a.err != nil && b.err != nil {
+		t.Fatalf("both failed: a=%v b=%v", a.err, b.err)
+	}
+	final, _ := svcB.Get(rec.ChallengeID)
+	if final.State != challenge.StateAllowedOnce {
+		t.Fatalf("want ALLOWED_ONCE got %s", final.State)
+	}
+	// Waiter on the non-owning service must observe the same terminal decision.
+	for _, p := range []pair{a, b} {
+		if p.res.Record.State != final.State || p.res.Stage2Decision != final.Stage2Decision {
+			t.Fatalf("result %+v final state=%s stage2=%s", p.res, final.State, final.Stage2Decision)
+		}
+	}
+}
+
+// Codex: cache key length-prefix avoids pipe field collisions.
+func TestCacheKeyPipeCollisionFree(t *testing.T) {
+	base := challenge.ChallengeRecord{
+		SchemaVersion: challenge.SchemaChallengeRecord, ChallengeID: "c1", SessionID: "s",
+		State: challenge.StateJustified, ActionFingerprint: "fp", JustificationHash: "jh",
+		ContractRevision: 1, RulesetHash: "r", PolicyHash: "p",
+	}
+	a := base
+	a.WorkspaceRevision = "a|b"
+	a.RulesetHash = "c"
+	b := base
+	b.WorkspaceRevision = "a"
+	b.RulesetHash = "b|c"
+	ka := challenge.BuildCacheKeyInputs(a, nil, "m", "ph")
+	kb := challenge.BuildCacheKeyInputs(b, nil, "m", "ph")
+	if ka.CanonicalKey == kb.CanonicalKey {
+		t.Fatal("cache key pipe collision")
+	}
+}

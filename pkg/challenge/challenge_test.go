@@ -604,19 +604,10 @@ func TestExpandRetryAllows(t *testing.T) {
 }
 
 func TestForeignSessionRetry(t *testing.T) {
-	svc := challenge.NewService(challenge.ServiceConfig{})
-	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
-		SessionID: "owner-sess", Proposed: samplePA("rm -rf build"), BlockClass: challenge.BlockClassOverSOP,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Fix proposed session on open action
 	ownerPA := samplePA("rm -rf build")
 	ownerPA.SessionID = "owner-sess"
-	// Re-open with correct session for clean budget path
 	svc2 := challenge.NewService(challenge.ServiceConfig{})
-	rec, err = svc2.Open(context.Background(), challenge.OpenRequest{
+	rec, err := svc2.Open(context.Background(), challenge.OpenRequest{
 		SessionID: "owner-sess", Proposed: ownerPA, BlockClass: challenge.BlockClassOverSOP,
 	})
 	if err != nil {
@@ -781,9 +772,11 @@ func TestExpiredCannotRevive(t *testing.T) {
 		SessionID: "sess-1", Proposed: samplePA("rm -rf build"), BlockClass: challenge.BlockClassOverSOP,
 		ExpiresAfterSequences: 1,
 	})
-	// Advance sequence by opening another challenge
+	// Advance sequence by opening another challenge (session must match Proposed.SessionID)
+	other := samplePA("rm -rf other")
+	other.SessionID = "sess-2"
 	_, _ = svc.Open(context.Background(), challenge.OpenRequest{
-		SessionID: "sess-2", Proposed: samplePA("rm -rf other"), BlockClass: challenge.BlockClassOverSOP,
+		SessionID: "sess-2", Proposed: other, BlockClass: challenge.BlockClassOverSOP,
 	})
 	svc.ExpireDue(context.Background())
 	got, _ := svc.Get(rec.ChallengeID)

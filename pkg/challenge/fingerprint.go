@@ -177,7 +177,13 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 	if reCurl.MatchString(cmd) {
 		return SideEffectNetwork, nil, nil
 	}
+	// Compound commands / quoting break Fields-based delete target extraction.
+	// Fail closed: do not classify as delete_tree/delete_file (avoids fingerprint inheritance).
+	unsafeShell := shellHasCompoundOrQuoting(cmd)
 	if isRecursiveForceRm(cmd) {
+		if unsafeShell {
+			return SideEffectShellGeneric, extractPaths(cmd), nil
+		}
 		targets := extractRmTargets(cmd)
 		if len(targets) > 0 {
 			return SideEffectDeleteTree, targets, nil
@@ -185,6 +191,9 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 		return "", nil, fmt.Errorf("fingerprint: ambiguous recursive rm with no targets")
 	}
 	if m := reFindDelete.FindStringSubmatch(cmd); len(m) >= 2 {
+		if unsafeShell {
+			return SideEffectShellGeneric, extractPaths(cmd), nil
+		}
 		targets := extractFindDeleteTargets(cmd)
 		if len(targets) == 0 {
 			targets = []string{normalizeResource(m[1])}
@@ -192,6 +201,9 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 		return SideEffectDeleteTree, targets, nil
 	}
 	if isPlainRm(cmd) {
+		if unsafeShell {
+			return SideEffectShellGeneric, extractPaths(cmd), nil
+		}
 		targets := extractRmTargets(cmd)
 		if len(targets) > 0 {
 			return SideEffectDeleteFile, targets, nil
@@ -359,6 +371,24 @@ func encodeFingerprintCanon(fields map[string]string) string {
 		_, _ = fmt.Fprintf(&b, ";k=%d:%s;v=%d:%s", len(k), k, len(v), v)
 	}
 	return b.String()
+}
+
+// shellHasCompoundOrQuoting reports shell metacharacters that make Fields-based
+// delete parsing unsafe (compound ops, quoting, escapes).
+func shellHasCompoundOrQuoting(cmd string) bool {
+	if strings.ContainsAny(cmd, ";|&\n\r`'\"\\") {
+		return true
+	}
+	if strings.Contains(cmd, "&&") || strings.Contains(cmd, "||") {
+		return true
+	}
+	// Token glued to flag after compound was split poorly: e.g. -delete;id
+	for _, f := range strings.Fields(cmd) {
+		if strings.ContainsAny(f, ";|&") {
+			return true
+		}
+	}
+	return false
 }
 
 func isRecursiveForceRm(cmd string) bool {

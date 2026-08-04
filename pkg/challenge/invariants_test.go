@@ -57,6 +57,7 @@ func TestChallengeInvariants(t *testing.T) {
 				ReEval: failProvider{},
 			})
 			pa := samplePA("echo hi")
+			pa.SessionID = "s"
 			rec, err := svc.Open(context.Background(), challenge.OpenRequest{
 				SessionID: "s", Proposed: pa, BlockClass: challenge.BlockClassOverSOP, PolicyClass: pc,
 			})
@@ -144,14 +145,19 @@ func TestChallengeInvariants(t *testing.T) {
 
 	t.Run("branch_mismatch_reject", func(t *testing.T) {
 		svc := challenge.NewService(challenge.ServiceConfig{})
-		rec, _ := svc.Open(context.Background(), challenge.OpenRequest{
-			SessionID: "s", Proposed: samplePA("rm -rf build"), BlockClass: challenge.BlockClassOverSOP, Branch: "main",
+		pa := samplePA("rm -rf build")
+		pa.SessionID = "s"
+		rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+			SessionID: "s", Proposed: pa, BlockClass: challenge.BlockClassOverSOP, Branch: "main",
 		})
+		if err != nil {
+			t.Fatal(err)
+		}
 		_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
 		res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 			ChallengeID: rec.ChallengeID, SessionID: "s", Branch: "feature",
 			CorrelationID: "test-attempt",
-			Proposed:      samplePA("rm -rf build"),
+			Proposed:      pa,
 			ReEval:        &challenge.ReEvalContext{UserException: true},
 		})
 		if err == nil || res.RejectedReason != "ownership_mismatch" {
@@ -180,8 +186,10 @@ func TestChallengeInvariants(t *testing.T) {
 
 	t.Run("hard_deny_non_appealable", func(t *testing.T) {
 		svc := challenge.NewService(challenge.ServiceConfig{})
+		pa := samplePA("cat secret.pem")
+		pa.SessionID = "s"
 		_, err := svc.Open(context.Background(), challenge.OpenRequest{
-			SessionID: "s", Proposed: samplePA("cat secret.pem"), BlockClass: challenge.BlockClassSecretExfiltration,
+			SessionID: "s", Proposed: pa, BlockClass: challenge.BlockClassSecretExfiltration,
 		})
 		if err == nil {
 			t.Fatal("expected non-appealable")
@@ -190,8 +198,10 @@ func TestChallengeInvariants(t *testing.T) {
 
 	t.Run("irreversible_human_review", func(t *testing.T) {
 		svc := challenge.NewService(challenge.ServiceConfig{})
+		pa := samplePA("kubectl apply -f p.yaml")
+		pa.SessionID = "s"
 		rec, err := svc.Open(context.Background(), challenge.OpenRequest{
-			SessionID: "s", Proposed: samplePA("kubectl apply -f p.yaml"), BlockClass: challenge.BlockClassProductionDeploy,
+			SessionID: "s", Proposed: pa, BlockClass: challenge.BlockClassProductionDeploy,
 		})
 		if err != nil {
 			t.Fatal(err)

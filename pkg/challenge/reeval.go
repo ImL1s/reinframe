@@ -2,6 +2,7 @@ package challenge
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
@@ -125,6 +126,10 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 		}
 		raw, err := in.Provider.Assess(ctx, cin)
 		if err != nil {
+			// Never fail-open on owner cancellation — AttemptRetry must not persist ALLOWED_ONCE.
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_context_canceled"}, err
+			}
 			if in.PolicyClass == PolicyClassSecurity {
 				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_fail_closed"}, nil
 			}

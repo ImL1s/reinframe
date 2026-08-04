@@ -39,12 +39,27 @@ func CacheKeyChanges(a, b CacheKeyInputs) bool {
 }
 
 func hashCacheKey(in CacheKeyInputs) string {
+	// Length-prefixed fields — never join raw caller strings with '|' (collision risk).
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s|%s|%s|%s|%s|%s|%s|%d|%s|%s|%s|%s|%s",
-		in.SchemaVersion, in.SessionID, in.ChallengeID, in.ChallengeState,
-		in.ActionFingerprint, in.JustificationHash, in.EvidenceIDsHash,
-		in.ContractRevision, in.WorkspaceRevision, in.RulesetHash, in.PolicyHash,
-		in.ModelID, in.PromptHash)
+	fields := []struct{ k, v string }{
+		{"schema", in.SchemaVersion},
+		{"session", in.SessionID},
+		{"challenge", in.ChallengeID},
+		{"state", in.ChallengeState},
+		{"fp", in.ActionFingerprint},
+		{"just", in.JustificationHash},
+		{"evidence", in.EvidenceIDsHash},
+		{"contract", fmt.Sprintf("%d", in.ContractRevision)},
+		{"ws", in.WorkspaceRevision},
+		{"ruleset", in.RulesetHash},
+		{"policy", in.PolicyHash},
+		{"model", in.ModelID},
+		{"prompt", in.PromptHash},
+	}
+	_, _ = fmt.Fprintf(h, "n=%d", len(fields))
+	for _, f := range fields {
+		_, _ = fmt.Fprintf(h, ";k=%d:%s;v=%d:%s", len(f.k), f.k, len(f.v), f.v)
+	}
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 

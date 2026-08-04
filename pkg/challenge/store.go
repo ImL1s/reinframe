@@ -17,6 +17,10 @@ type Store struct {
 	justifications map[string]Justification
 	// openByFingerprint session|fingerprint → challenge id (active only)
 	openByFP map[string]string
+	// terminalCh is store-scoped so multiple Service instances sharing a Store
+	// all observe terminal transitions (not service-local).
+	termMu     sync.Mutex
+	terminalCh map[string]chan struct{}
 }
 
 // NewStore creates an empty store.
@@ -25,6 +29,48 @@ func NewStore() *Store {
 		byID:           make(map[string]*ChallengeRecord),
 		justifications: make(map[string]Justification),
 		openByFP:       make(map[string]string),
+		terminalCh:     make(map[string]chan struct{}),
+	}
+}
+
+// terminalWaitCh returns a channel closed when the challenge becomes terminal.
+func (s *Store) terminalWaitCh(id string) <-chan struct{} {
+	s.termMu.Lock()
+	defer s.termMu.Unlock()
+	if s.terminalCh == nil {
+		s.terminalCh = make(map[string]chan struct{})
+	}
+	ch, ok := s.terminalCh[id]
+	if !ok {
+		ch = make(chan struct{})
+		s.terminalCh[id] = ch
+	}
+	return ch
+}
+
+// signalTerminal unblocks all waiters for id across every Service sharing this Store.
+func (s *Store) signalTerminal(id string) {
+	if id == "" {
+		return
+	}
+	s.termMu.Lock()
+	defer s.termMu.Unlock()
+	if s.terminalCh == nil {
+		s.terminalCh = make(map[string]chan struct{})
+	}
+	ch, ok := s.terminalCh[id]
+	if !ok {
+		// Already-closed channel so late waiters observe terminal immediately.
+		ch = make(chan struct{})
+		close(ch)
+		s.terminalCh[id] = ch
+		return
+	}
+	select {
+	case <-ch:
+		// already closed
+	default:
+		close(ch)
 	}
 }
 

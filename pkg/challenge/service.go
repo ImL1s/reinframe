@@ -20,10 +20,6 @@ type Service struct {
 	// idMu serializes Open id generation only; store has its own lock.
 	idSeq uint64
 	idMu  sync.Mutex
-	// terminalCh maps challenge ID → closed when the challenge reaches a terminal state.
-	// Concurrent AttemptRetry waiters block on this instead of a fixed poll budget.
-	termMu     sync.Mutex
-	terminalCh map[string]chan struct{}
 }
 
 // ServiceConfig configures Service.
@@ -48,10 +44,9 @@ func NewService(cfg ServiceConfig) *Service {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Service{
-		store:      st,
-		reeval:     re,
-		now:        now,
-		terminalCh: make(map[string]chan struct{}),
+		store:  st,
+		reeval: re,
+		now:    now,
 	}
 }
 
@@ -65,9 +60,16 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 	if ctx != nil && ctx.Err() != nil {
 		return ChallengeRecord{}, ctx.Err()
 	}
-	if strings.TrimSpace(req.SessionID) == "" {
-		req.SessionID = req.Proposed.SessionID
+	reqSID := strings.TrimSpace(req.SessionID)
+	paSID := strings.TrimSpace(req.Proposed.SessionID)
+	if reqSID == "" {
+		reqSID = paSID
 	}
+	// Explicit session mismatch is rejected — never fingerprint a foreign action under another session.
+	if reqSID != "" && paSID != "" && reqSID != paSID {
+		return ChallengeRecord{}, fmt.Errorf("challenge open: session_id mismatch (request=%s proposed=%s)", reqSID, paSID)
+	}
+	req.SessionID = reqSID
 	if strings.TrimSpace(req.SessionID) == "" {
 		return ChallengeRecord{}, fmt.Errorf("challenge open: session_id required")
 	}
@@ -112,8 +114,11 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 	policyHash := hashPolicy(req.PolicyVersion, req.RulesetHash, req.BlockClass)
 
 	// Non-appealable: no durable appeal challenge.
+	// Expire any active challenge for the same session|fingerprint first so a later
+	// hard deny cannot be bypassed via a stale productivity challenge retry.
 	if appeal == AppealNonAppealable {
 		now := s.now()
+		s.expireActiveByFingerprint(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_hard_block", now)
 		rec := ChallengeRecord{
 			SchemaVersion:     SchemaChallengeRecord,
 			SessionID:         req.SessionID,
@@ -743,8 +748,34 @@ func (s *Service) expireIfNeeded(rec *ChallengeRecord) error {
 	return fmt.Errorf("challenge expired")
 }
 
+// expireActiveByFingerprint expires every non-terminal challenge for session|fp.
+func (s *Service) expireActiveByFingerprint(sessionID, fingerprint, corr, cause, note string, now time.Time) {
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+	var ids []string
+	for id, existing := range s.store.byID {
+		if existing.SessionID != sessionID || existing.ActionFingerprint != fingerprint {
+			continue
+		}
+		if isTerminal(existing.State) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	for _, id := range ids {
+		cur, ok := s.store.byID[id]
+		if !ok || isTerminal(cur.State) {
+			continue
+		}
+		from := cur.State
+		_ = s.store.appendTransition(cloneRecord(*cur), from, StateExpired, "expired", corr, cause, fingerprint, note, now, nil)
+		s.store.signalTerminal(id)
+	}
+}
+
 // waitTerminal blocks until the challenge reaches a terminal state.
 // On ctx cancel/deadline returns the context error — never nil with RETRY_PENDING.
+// Uses store-scoped terminal channels so multi-Service shared-Store waiters wake.
 func (s *Service) waitTerminal(ctx context.Context, id string) (ChallengeRecord, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -754,7 +785,7 @@ func (s *Service) waitTerminal(ctx context.Context, id string) (ChallengeRecord,
 		if ok && isTerminal(rec.State) {
 			return rec, nil
 		}
-		ch := s.terminalWaitCh(id)
+		ch := s.store.terminalWaitCh(id)
 		rec, ok = s.store.Get(id)
 		if ok && isTerminal(rec.State) {
 			return rec, nil
@@ -767,45 +798,9 @@ func (s *Service) waitTerminal(ctx context.Context, id string) (ChallengeRecord,
 	}
 }
 
-// terminalWaitCh returns a channel that is closed when the challenge becomes terminal.
-func (s *Service) terminalWaitCh(id string) <-chan struct{} {
-	s.termMu.Lock()
-	defer s.termMu.Unlock()
-	if s.terminalCh == nil {
-		s.terminalCh = make(map[string]chan struct{})
-	}
-	ch, ok := s.terminalCh[id]
-	if !ok {
-		ch = make(chan struct{})
-		s.terminalCh[id] = ch
-	}
-	return ch
-}
-
-// signalTerminal unblocks all waitTerminal callers for id.
+// signalTerminal unblocks all waitTerminal callers for id (store-scoped).
 func (s *Service) signalTerminal(id string) {
-	if id == "" {
-		return
-	}
-	s.termMu.Lock()
-	defer s.termMu.Unlock()
-	if s.terminalCh == nil {
-		s.terminalCh = make(map[string]chan struct{})
-	}
-	ch, ok := s.terminalCh[id]
-	if !ok {
-		// Create already-closed so late waiters observe terminal immediately.
-		ch = make(chan struct{})
-		close(ch)
-		s.terminalCh[id] = ch
-		return
-	}
-	select {
-	case <-ch:
-		// already closed
-	default:
-		close(ch)
-	}
+	s.store.signalTerminal(id)
 }
 
 func hashPolicy(ver, ruleset, block string) string {

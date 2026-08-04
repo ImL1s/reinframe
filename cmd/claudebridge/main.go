@@ -93,10 +93,14 @@ func runPretool(args []string) int {
 		return 1
 	}
 	_ = dec
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(resp); err != nil {
+	// Closed-schema encode (#116): rejects continue:false and unknown enums.
+	b, err := adapter.MarshalClaudeHookResponseJSON(resp)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "encode: %v\n", err)
+		return 1
+	}
+	if _, err := os.Stdout.Write(append(b, '\n')); err != nil {
+		fmt.Fprintf(os.Stderr, "write: %v\n", err)
 		return 1
 	}
 	return 0

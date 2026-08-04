@@ -33,8 +33,12 @@ type ClaudePreToolInput struct {
 
 // ClaudeHookResponse is the JSON shape written back to Claude Code hooks.
 // Uses documented permissionDecision fields; see docs/adapter/claude_bridge.md.
+//
+// #116: do not set Continue=false for ordinary tool deny — that is treated as a
+// whole-session stop. Tool block uses decision/permissionDecision only.
 type ClaudeHookResponse struct {
-	// Continue when false stops the tool (Claude continue flag).
+	// Continue is intentionally unused for tool-level deny (#116). omitempty.
+	// Setting false is rejected by ValidateClaudeHookResponseClosedSchema.
 	Continue *bool `json:"continue,omitempty"`
 	// Decision is "approve" | "block" (legacy-compatible).
 	Decision string `json:"decision,omitempty"`
@@ -149,6 +153,8 @@ type ClaudeBridgeConfig struct {
 	Policy HookPolicy
 	// Evaluate when non-nil replaces EvaluateHook (e.g. policy.EvaluateBeforeTool wrapper).
 	Evaluate func(ctx context.Context, req HookRequest) HookDecision
+	// Response options for host-versioned ALLOW/BLOCK/defer mapping (#116).
+	Response ClaudeResponseOptions
 }
 
 // EvaluateClaudePreTool maps host PreTool input through core EvaluateHook (or
@@ -164,7 +170,7 @@ func EvaluateClaudePreTool(ctx context.Context, in ClaudePreToolInput, cfg Claud
 	} else {
 		dec = EvaluateHook(ctx, req, cfg.Policy)
 	}
-	return ClaudeHookResponseFromDecision(in, dec), dec, nil
+	return ClaudeHookResponseFromDecisionOpts(in, dec, cfg.Response), dec, nil
 }
 
 // EvaluateClaudePreToolJSON is the stdin/fixture entry: raw PreToolUse JSON → response JSON.
@@ -177,49 +183,8 @@ func EvaluateClaudePreToolJSON(ctx context.Context, raw []byte, cfg ClaudeBridge
 }
 
 // ClaudeHookResponseFromDecision maps core HookDecision → host response JSON shape.
-func ClaudeHookResponseFromDecision(in ClaudePreToolInput, dec HookDecision) ClaudeHookResponse {
-	meta := &ClaudeReinframeMeta{
-		Action:         dec.Action,
-		ReasonCode:     dec.ReasonCode,
-		InterventionID: dec.InterventionID,
-		SessionID:      in.SessionID,
-		ToolName:       in.ToolName,
-	}
-	resp := ClaudeHookResponse{Reinframe: meta, Reason: dec.ReasonCode}
-	switch dec.Action {
-	case HookActionAllow:
-		resp.Decision = "approve"
-		perm := "allow"
-		resp.HookSpecificOutput = &ClaudeHookSpecificOutput{
-			HookEventName:            "PreToolUse",
-			PermissionDecision:       perm,
-			PermissionDecisionReason: dec.ReasonCode,
-		}
-	case HookActionDeny, HookActionDefer:
-		// Defer blocks the tool until advisory is delivered/acked (CapToolGate).
-		cont := false
-		resp.Continue = &cont
-		resp.Decision = "block"
-		perm := "deny"
-		reason := dec.ReasonCode
-		if dec.Action == HookActionDefer {
-			reason = "defer:" + dec.ReasonCode
-		}
-		resp.Reason = reason
-		resp.HookSpecificOutput = &ClaudeHookSpecificOutput{
-			HookEventName:            "PreToolUse",
-			PermissionDecision:       perm,
-			PermissionDecisionReason: reason,
-		}
-	default:
-		resp.Decision = "approve"
-		resp.HookSpecificOutput = &ClaudeHookSpecificOutput{
-			HookEventName:      "PreToolUse",
-			PermissionDecision: "allow",
-		}
-	}
-	return resp
-}
+// Implementation lives in claude_hook_response.go (#116): ordinary deny must not
+// set continue:false (session stop).
 
 // MapClaudeUserPromptBridge reuses #84 mapper and labels the experimental bridge path.
 func MapClaudeUserPromptBridge(raw []byte, opts TaskIntakeOptions) (TaskIntakeResult, error) {

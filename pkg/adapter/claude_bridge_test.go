@@ -81,8 +81,15 @@ func TestEvaluateClaudePreTool_DeferPending(t *testing.T) {
 	if dec.Action != adapter.HookActionDefer {
 		t.Fatalf("dec=%+v", dec)
 	}
-	if resp.Decision != "block" || resp.Continue == nil || *resp.Continue {
+	// #116: tool block without continue:false (session stop). Headless defer → deny degrade.
+	if resp.Decision != "block" {
 		t.Fatalf("resp=%+v", resp)
+	}
+	if resp.Continue != nil && !*resp.Continue {
+		t.Fatalf("must not set continue:false: %+v", resp)
+	}
+	if resp.HookSpecificOutput == nil || resp.HookSpecificOutput.PermissionDecision != "deny" {
+		t.Fatalf("headless defer degrades to deny: %+v", resp)
 	}
 	if resp.Reinframe.InterventionID != "iv-1" {
 		t.Fatalf("iv=%s", resp.Reinframe.InterventionID)

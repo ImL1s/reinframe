@@ -84,9 +84,10 @@ func ComputeFingerprint(in FingerprintInput) FingerprintResult {
 		cmdPart = "test_suite"
 	}
 
+	// Length-prefixed targets — never strings.Join with commas (a,b + c collides with a + b,c).
 	canon := fmt.Sprintf(
 		"tool_class=%s|side=%s|targets=%s|cmd=%s|session=%s|branch=%s|ws=%s|contract=%d",
-		pa.ToolClass, side, strings.Join(targets, ","), cmdPart, session, in.Branch, ws, cr,
+		pa.ToolClass, side, encodeStringList(targets), cmdPart, session, in.Branch, ws, cr,
 	)
 	sum := sha256.Sum256([]byte(canon))
 	fp := "af-" + hex.EncodeToString(sum[:16])
@@ -345,6 +346,20 @@ func normalizeCommand(cmd string) string {
 	// Collapse whitespace only — do not invent semantic equality for arbitrary shell.
 	fields := strings.Fields(cmd)
 	return strings.Join(fields, " ")
+}
+
+// encodeStringList is a collision-free stable encoding for multi-value fingerprint fields.
+// Format: count; then for each item len:value (value is raw bytes of the string).
+func encodeStringList(items []string) string {
+	if len(items) == 0 {
+		return "0"
+	}
+	var b strings.Builder
+	_, _ = fmt.Fprintf(&b, "%d", len(items))
+	for _, s := range items {
+		_, _ = fmt.Fprintf(&b, ";%d:%s", len(s), s)
+	}
+	return b.String()
 }
 
 func rewriteEligible(side string) bool {

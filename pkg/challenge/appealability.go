@@ -7,11 +7,26 @@ import (
 	"github.com/ImL1s/reinframe/pkg/classifier"
 )
 
+// NormalizePolicyClass trims and uppercases policy class at API boundaries.
+// Empty defaults to PRODUCTIVITY (library default for appealable workflow).
+func NormalizePolicyClass(s string) string {
+	s = strings.ToUpper(strings.TrimSpace(s))
+	if s == "" {
+		return PolicyClassProductivity
+	}
+	return s
+}
+
+// NormalizeBlockClass trims and uppercases block class codes.
+func NormalizeBlockClass(s string) string {
+	return strings.ToUpper(strings.TrimSpace(s))
+}
+
 // ClassifyAppealability maps a block class (+ optional action) to appeal behavior.
 // Hard security denials are never self-appealable. Irreversible/high-impact route to HUMAN_REVIEW.
 // Unknown block classes fail closed to HUMAN_REVIEW (no self-appeal).
 func ClassifyAppealability(blockClass string, pa adapter.ProposedAction) (appeal string, intervention string) {
-	bc := strings.ToUpper(strings.TrimSpace(blockClass))
+	bc := NormalizeBlockClass(blockClass)
 	// Infer from action when block class empty/unknown.
 	if bc == "" || bc == BlockClassUnknownSecurity {
 		if LooksLikeSecretExfil(pa) {

@@ -74,9 +74,8 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 	if strings.TrimSpace(req.Proposed.ActionID) == "" {
 		req.Proposed.ActionID = "pa-unknown"
 	}
-	if req.PolicyClass == "" {
-		req.PolicyClass = PolicyClassProductivity
-	}
+	req.PolicyClass = NormalizePolicyClass(req.PolicyClass)
+	req.BlockClass = NormalizeBlockClass(req.BlockClass)
 	if req.BlockClass == "" {
 		req.BlockClass = BlockClassProductivityGeneric
 	}
@@ -760,6 +759,9 @@ func checkOwnership(rec ChallengeRecord, req RetryRequest) error {
 	}
 	if sid := strings.TrimSpace(req.Proposed.SessionID); sid != "" && sid != rec.SessionID {
 		return fmt.Errorf("retry: proposed session_id mismatch (challenge=%s proposed=%s)", rec.SessionID, sid)
+	}
+	if b := strings.TrimSpace(req.Branch); b != "" && rec.Branch != "" && b != rec.Branch {
+		return fmt.Errorf("retry: branch mismatch (challenge=%s request=%s)", rec.Branch, b)
 	}
 	return nil
 }

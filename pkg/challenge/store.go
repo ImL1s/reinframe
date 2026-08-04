@@ -220,77 +220,42 @@ func (s *Store) ReplayFromStore(challengeID string) (ChallengeRecord, error) {
 		rec.RetryBudget = InitialRetryBudget
 	}
 	for _, ev := range evs {
-		switch ev.Type {
-		case "opened":
-			rec.State = StateOpen
-			rec.Stage2Decision = DecisionBlock
-			rec.Intervention = InterventionAppealableChallenge
-			rec.CreatedSequence = ev.Sequence
-			rec.CreatedAt = ev.At
-			if ok {
-				rec.ActionFingerprint = snap.ActionFingerprint
-				rec.OriginalActionID = snap.OriginalActionID
-				rec.BlockClass = snap.BlockClass
-				rec.ReasonCode = snap.ReasonCode
-				rec.Appealability = snap.Appealability
-				rec.PolicyClass = snap.PolicyClass
-				rec.RequiredClaims = append([]string(nil), snap.RequiredClaims...)
-				rec.SideEffectClass = snap.SideEffectClass
-				rec.TargetResources = append([]string(nil), snap.TargetResources...)
-				rec.WorkspaceRevision = snap.WorkspaceRevision
-				rec.ContractRevision = snap.ContractRevision
-				rec.Branch = snap.Branch
-				rec.PolicyVersion = snap.PolicyVersion
-				rec.RulesetHash = snap.RulesetHash
-				rec.PolicyHash = snap.PolicyHash
-				rec.ExpiresAtSequence = snap.ExpiresAtSequence
-				rec.RetryBudgetInitial = snap.RetryBudgetInitial
-				rec.RetryBudget = snap.RetryBudgetInitial
+		// Seed immutable metadata from snapshot once at open.
+		if ev.Type == "opened" && ok {
+			rec.ActionFingerprint = snap.ActionFingerprint
+			rec.OriginalActionID = snap.OriginalActionID
+			rec.BlockClass = snap.BlockClass
+			rec.ReasonCode = snap.ReasonCode
+			rec.Appealability = snap.Appealability
+			rec.PolicyClass = snap.PolicyClass
+			rec.RequiredClaims = append([]string(nil), snap.RequiredClaims...)
+			rec.SideEffectClass = snap.SideEffectClass
+			rec.TargetResources = append([]string(nil), snap.TargetResources...)
+			rec.WorkspaceRevision = snap.WorkspaceRevision
+			rec.ContractRevision = snap.ContractRevision
+			rec.Branch = snap.Branch
+			rec.PolicyVersion = snap.PolicyVersion
+			rec.RulesetHash = snap.RulesetHash
+			rec.PolicyHash = snap.PolicyHash
+			rec.ExpiresAtSequence = snap.ExpiresAtSequence
+			rec.RetryBudgetInitial = snap.RetryBudgetInitial
+			rec.RetryBudget = snap.RetryBudgetInitial
+			rec.Intervention = snap.Intervention
+			if rec.Intervention == "" && snap.Appealability == AppealHumanReview {
+				rec.Intervention = InterventionHumanReview
 			}
-		case "justified":
-			rec.State = StateJustified
-			if ok {
-				rec.JustificationHash = snap.JustificationHash
-			}
-		case "budget_consumed":
-			if rec.RetryBudget > 0 {
-				rec.RetryBudget--
-			}
-			if ev.ToState != "" {
-				rec.State = ev.ToState
-			}
-		case "retry_pending":
-			if ev.ToState != "" {
-				rec.State = ev.ToState
-			}
-		case "allowed_once":
-			rec.State = StateAllowedOnce
-			rec.Stage2Decision = DecisionAllow
-		case "rejected":
-			rec.State = StateRejected
-			rec.Stage2Decision = DecisionBlock
-		case "human_review":
-			rec.State = StateHumanReview
-			rec.Stage2Decision = DecisionBlock
-			rec.Intervention = InterventionHumanReview
-			if ok {
-				rec.RetryBudgetInitial = snap.RetryBudgetInitial
-				rec.RetryBudget = 0
-			} else {
-				rec.RetryBudget = 0
-				rec.RetryBudgetInitial = 0
-			}
-		case "abandoned":
-			rec.State = StateAbandoned
-		case "expired":
-			rec.State = StateExpired
-		default:
-			if ev.ToState != "" {
-				rec.State = ev.ToState
+			if rec.Intervention == "" {
+				rec.Intervention = InterventionAppealableChallenge
 			}
 		}
-		rec.UpdatedSequence = ev.Sequence
-		rec.UpdatedAt = ev.At
+		if ev.Type == "justified" && ok {
+			rec.JustificationHash = snap.JustificationHash
+		}
+		var err error
+		rec, err = ApplyEvent(rec, ev)
+		if err != nil {
+			return ChallengeRecord{}, err
+		}
 	}
 	return rec, nil
 }

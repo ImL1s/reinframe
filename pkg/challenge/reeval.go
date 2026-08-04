@@ -64,9 +64,7 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 	if in.PolicyClass == "" {
 		in.PolicyClass = rec.PolicyClass
 	}
-	if in.PolicyClass == "" {
-		in.PolicyClass = PolicyClassProductivity
-	}
+	in.PolicyClass = NormalizePolicyClass(in.PolicyClass)
 	if in.Threshold <= 0 {
 		in.Threshold = 50
 	}

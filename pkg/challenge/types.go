@@ -188,8 +188,10 @@ type OpenRequest struct {
 
 // RetryRequest attempts one semantically equivalent retry.
 type RetryRequest struct {
-	ChallengeID   string
-	SessionID     string
+	ChallengeID string
+	SessionID   string
+	// Branch when non-empty must match the challenge binding (ownership).
+	Branch        string
 	Proposed      adapter.ProposedAction
 	CorrelationID string
 	// ReEval carries optional stage inputs; if nil, DefaultReEvaluator is used.

@@ -15,12 +15,6 @@ func ApplyEvent(rec ChallengeRecord, ev ChallengeEvent) (ChallengeRecord, error)
 		rec.UpdatedAt = ev.At
 		return rec, nil
 	}
-	if rec.State != "" && ev.FromState != "" && rec.State != ev.FromState {
-		// Allow replaying from empty intermediate seeds
-		if !isTerminal(rec.State) || ev.ToState != rec.State {
-			// still apply if type is authoritative terminal
-		}
-	}
 
 	switch ev.Type {
 	case "opened":

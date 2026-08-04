@@ -796,20 +796,10 @@ func (s *Service) expireIfNeeded(rec *ChallengeRecord) error {
 	return fmt.Errorf("challenge expired")
 }
 
-// expireActiveByFingerprintLocked expires every non-terminal challenge for session|fp.
-// Caller must hold s.store.mu.
-func (s *Service) expireActiveByFingerprintLocked(sessionID, fingerprint, corr, cause, note string, now time.Time) {
-	s.expireActiveMatchingLocked(sessionID, FingerprintResult{Fingerprint: fingerprint}, corr, cause, note, now, false)
-}
-
 // expireActiveBySemanticLocked expires exact-fp matches and RelBypass-equivalent
 // delete challenges (same side/targets/opDigest, any tool name) for the session.
 // Caller must hold s.store.mu.
 func (s *Service) expireActiveBySemanticLocked(sessionID string, fp FingerprintResult, corr, cause, note string, now time.Time) {
-	s.expireActiveMatchingLocked(sessionID, fp, corr, cause, note, now, true)
-}
-
-func (s *Service) expireActiveMatchingLocked(sessionID string, fp FingerprintResult, corr, cause, note string, now time.Time, semantic bool) {
 	var ids []string
 	for id, existing := range s.store.byID {
 		if existing.SessionID != sessionID {
@@ -822,7 +812,7 @@ func (s *Service) expireActiveMatchingLocked(sessionID string, fp FingerprintRes
 			ids = append(ids, id)
 			continue
 		}
-		if !semantic || !rewriteEligible(fp.SideEffectClass) {
+		if !rewriteEligible(fp.SideEffectClass) {
 			continue
 		}
 		// RelBypass-equivalent: same privileged delete, different tool surface.

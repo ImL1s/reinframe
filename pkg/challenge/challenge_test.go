@@ -22,6 +22,33 @@ func samplePA(cmd string) adapter.ProposedAction {
 		WorkspaceRevision: "ws-1",
 		ContractRevision:  3,
 		Source:            "synthetic",
+		ParseStatus:       "ok",
+		Truncated:         false,
+	}
+}
+
+func mustFP(t *testing.T, in challenge.FingerprintInput) challenge.FingerprintResult {
+	t.Helper()
+	fp, err := challenge.ComputeFingerprint(in)
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+	return fp
+}
+
+func sampleEdit(path, content string) adapter.ProposedAction {
+	return adapter.ProposedAction{
+		SchemaVersion:     adapter.ProposedActionSchemaVersion,
+		SessionID:         "sess-1",
+		ActionID:          "pa-edit-1",
+		ToolName:          "Edit",
+		ToolClass:         adapter.ToolClassEdit,
+		FilePath:          path,
+		Arguments:         []string{content},
+		WorkspaceRevision: "ws-1",
+		ContractRevision:  3,
+		Source:            "synthetic",
+		ParseStatus:       "ok",
 	}
 }
 
@@ -168,10 +195,10 @@ func TestSecondRetryBudgetExhausted(t *testing.T) {
 }
 
 func TestSyntaxRewriteSameChallenge(t *testing.T) {
-	a := challenge.ComputeFingerprint(challenge.FingerprintInput{
+	a := mustFP(t, challenge.FingerprintInput{
 		Proposed: samplePA("rm -rf build"), SessionID: "sess-1", Branch: "main",
 	})
-	b := challenge.ComputeFingerprint(challenge.FingerprintInput{
+	b := mustFP(t, challenge.FingerprintInput{
 		Proposed: samplePA("find build -delete"), SessionID: "sess-1", Branch: "main",
 	})
 	if a.Fingerprint != b.Fingerprint {
@@ -202,18 +229,18 @@ func TestReducedScopeSeparate(t *testing.T) {
 	// Original multi-target delete vs reduced single target.
 	orig := adapter.ProposedAction{
 		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
-		ToolName: "Bash", ToolClass: adapter.ToolClassShell,
+		ActionID: "pa-orig", ToolName: "Bash", ToolClass: adapter.ToolClassShell,
 		Command: "rm -rf build", TargetScope: []string{"build", "dist"},
-		WorkspaceRevision: "ws", ContractRevision: 1,
+		WorkspaceRevision: "ws", ContractRevision: 1, ParseStatus: "ok",
 	}
 	reduced := adapter.ProposedAction{
 		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
-		ToolName: "Bash", ToolClass: adapter.ToolClassShell,
+		ActionID: "pa-red", ToolName: "Bash", ToolClass: adapter.ToolClassShell,
 		Command: "rm -rf build", TargetScope: []string{"build"},
-		WorkspaceRevision: "ws", ContractRevision: 1,
+		WorkspaceRevision: "ws", ContractRevision: 1, ParseStatus: "ok",
 	}
-	fa := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: orig, SessionID: "sess-1"})
-	fb := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: reduced, SessionID: "sess-1"})
+	fa := mustFP(t, challenge.FingerprintInput{Proposed: orig, SessionID: "sess-1"})
+	fb := mustFP(t, challenge.FingerprintInput{Proposed: reduced, SessionID: "sess-1"})
 	rel := challenge.ClassifyRelationship(fa, fb)
 	if rel != challenge.RelReducedScope {
 		// If fingerprint targets merge command path only, still ensure not RelSame with multi-scope.
@@ -464,10 +491,10 @@ func TestConcurrentDuplicateRetriesSlowReEvalOneOutcome(t *testing.T) {
 }
 
 func TestFingerprintDoesNotCollapseUnrelatedShell(t *testing.T) {
-	a := challenge.ComputeFingerprint(challenge.FingerprintInput{
+	a := mustFP(t, challenge.FingerprintInput{
 		Proposed: samplePA("echo hi"), SessionID: "sess-1",
 	})
-	b := challenge.ComputeFingerprint(challenge.FingerprintInput{
+	b := mustFP(t, challenge.FingerprintInput{
 		Proposed: samplePA("sleep 1"), SessionID: "sess-1",
 	})
 	if a.Fingerprint == b.Fingerprint {
@@ -527,10 +554,10 @@ func TestExpandRetryAllows(t *testing.T) {
 		t.Fatalf("orig targets %v", rec.TargetResources)
 	}
 	// Multi-target fingerprint differs from single-target
-	multi := challenge.ComputeFingerprint(challenge.FingerprintInput{
+	multi := mustFP(t, challenge.FingerprintInput{
 		Proposed: samplePA("rm -rf build /tmp/secrets"), SessionID: "sess-1", Branch: "main",
 	})
-	single := challenge.ComputeFingerprint(challenge.FingerprintInput{
+	single := mustFP(t, challenge.FingerprintInput{
 		Proposed: samplePA("rm -rf build"), SessionID: "sess-1", Branch: "main",
 	})
 	if multi.Fingerprint == single.Fingerprint {
@@ -630,18 +657,18 @@ func TestSharedTargetScopeDifferentShellNotBound(t *testing.T) {
 	// cmd-bearing shell with identical TargetScope must not bind via RelBypass.
 	a := adapter.ProposedAction{
 		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
-		ToolName: "Bash", ToolClass: adapter.ToolClassShell,
+		ActionID: "pa-a", ToolName: "Bash", ToolClass: adapter.ToolClassShell,
 		Command: "echo build", TargetScope: []string{"build"},
-		WorkspaceRevision: "ws", ContractRevision: 1,
+		WorkspaceRevision: "ws", ContractRevision: 1, ParseStatus: "ok",
 	}
 	b := adapter.ProposedAction{
 		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
-		ToolName: "Bash", ToolClass: adapter.ToolClassShell,
+		ActionID: "pa-b", ToolName: "Bash", ToolClass: adapter.ToolClassShell,
 		Command: "sleep build", TargetScope: []string{"build"},
-		WorkspaceRevision: "ws", ContractRevision: 1,
+		WorkspaceRevision: "ws", ContractRevision: 1, ParseStatus: "ok",
 	}
-	fa := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: a, SessionID: "sess-1"})
-	fb := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: b, SessionID: "sess-1"})
+	fa := mustFP(t, challenge.FingerprintInput{Proposed: a, SessionID: "sess-1"})
+	fb := mustFP(t, challenge.FingerprintInput{Proposed: b, SessionID: "sess-1"})
 	if fa.Fingerprint == fb.Fingerprint {
 		t.Fatal("fingerprints must differ")
 	}

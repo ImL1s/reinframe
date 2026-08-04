@@ -3,6 +3,7 @@ package challenge
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
@@ -23,14 +24,15 @@ type FingerprintInput struct {
 
 // FingerprintResult is the deterministic semantic identity of an action.
 type FingerprintResult struct {
-	// Fingerprint is the closed hash used for challenge binding.
-	Fingerprint string
-	// SideEffectClass is the canonical side-effect bucket.
+	Fingerprint     string
 	SideEffectClass string
-	// TargetResources are normalized resource identities (sorted unique).
 	TargetResources []string
-	// CanonicalForm is a stable human-auditable form (no secrets).
-	CanonicalForm string
+	// OperationDigest is a secret-safe digest of the canonical operation
+	// (edit content / shell command / tool args). Empty only for pure side-effect classes.
+	OperationDigest string
+	ToolClass       string
+	ToolName        string
+	CanonicalForm   string
 }
 
 var (
@@ -47,8 +49,8 @@ var (
 )
 
 // ComputeFingerprint builds semantic identity from ProposedAction + ownership.
-// Syntax-only rewrites that share side-effect class + targets produce the same fingerprint.
-func ComputeFingerprint(in FingerprintInput) FingerprintResult {
+// Caller must ValidateProposedForChallenge first.
+func ComputeFingerprint(in FingerprintInput) (FingerprintResult, error) {
 	pa := in.Proposed
 	session := in.SessionID
 	if session == "" {
@@ -63,8 +65,10 @@ func ComputeFingerprint(in FingerprintInput) FingerprintResult {
 		cr = pa.ContractRevision
 	}
 
-	side, targets := classifySideEffect(pa)
-	// Merge explicit TargetScope / FilePath.
+	side, targets, err := classifySideEffect(pa)
+	if err != nil {
+		return FingerprintResult{}, err
+	}
 	for _, t := range pa.TargetScope {
 		targets = append(targets, normalizeResource(t))
 	}
@@ -73,30 +77,34 @@ func ComputeFingerprint(in FingerprintInput) FingerprintResult {
 	}
 	targets = uniqueSorted(targets)
 
-	// Strong side-effect classes bind on class+targets so syntax rewrites match.
-	// Pathless/generic shells include a normalized command so unrelated actions
-	// (e.g. echo vs sleep) do not collapse into one challenge.
-	cmdPart := ""
-	switch side {
-	case SideEffectShellGeneric, SideEffectNetwork, SideEffectGitMutate, SideEffectUnknown, SideEffectNone:
-		cmdPart = normalizeCommand(pa.Command)
-	case SideEffectTestSuite:
-		cmdPart = "test_suite"
+	opDigest, err := operationDigest(pa, side)
+	if err != nil {
+		return FingerprintResult{}, err
 	}
 
-	// Length-prefixed targets — never strings.Join with commas (a,b + c collides with a + b,c).
-	canon := fmt.Sprintf(
-		"tool_class=%s|side=%s|targets=%s|cmd=%s|session=%s|branch=%s|ws=%s|contract=%d",
-		pa.ToolClass, side, encodeStringList(targets), cmdPart, session, in.Branch, ws, cr,
-	)
+	// Structured closed encoding — length-prefixed fields, no ad-hoc | join of raw values.
+	canon := encodeFingerprintCanon(map[string]string{
+		"tool_class": pa.ToolClass,
+		"tool_name":  pa.ToolName,
+		"side":       side,
+		"targets":    encodeStringList(targets),
+		"op":         opDigest,
+		"session":    session,
+		"branch":     in.Branch,
+		"ws":         ws,
+		"contract":   fmt.Sprintf("%d", cr),
+	})
 	sum := sha256.Sum256([]byte(canon))
 	fp := "af-" + hex.EncodeToString(sum[:16])
 	return FingerprintResult{
 		Fingerprint:     fp,
 		SideEffectClass: side,
 		TargetResources: targets,
+		OperationDigest: opDigest,
+		ToolClass:       pa.ToolClass,
+		ToolName:        pa.ToolName,
 		CanonicalForm:   canon,
-	}
+	}, nil
 }
 
 // ClassifyRelationship compares a candidate action to the challenge original fingerprint.
@@ -104,16 +112,21 @@ func ClassifyRelationship(original FingerprintResult, candidate FingerprintResul
 	if original.Fingerprint == candidate.Fingerprint {
 		return RelSame
 	}
-	// Syntax-rewrite bypass only for rewrite-eligible classes (delete/write), where
-	// command surface varies but targets+side-effect define identity.
-	// shell_generic/network/git_mutate use cmd-bearing fingerprints; never RelBypass.
+	// Syntax-rewrite bypass only for delete classes with matching targets.
+	// Write/edit requires identical operation digest — never path-only bypass.
 	if rewriteEligible(original.SideEffectClass) &&
 		original.SideEffectClass == candidate.SideEffectClass &&
 		len(original.TargetResources) > 0 &&
 		sameStringSet(original.TargetResources, candidate.TargetResources) {
 		return RelBypass
 	}
-	// Reduced scope: same side-effect class, candidate targets strict subset of original.
+	// Write with same path but different op digest → different (not bypass).
+	if original.SideEffectClass == SideEffectWriteFile &&
+		candidate.SideEffectClass == SideEffectWriteFile &&
+		sameStringSet(original.TargetResources, candidate.TargetResources) &&
+		original.OperationDigest != candidate.OperationDigest {
+		return RelDifferent
+	}
 	if original.SideEffectClass == candidate.SideEffectClass &&
 		len(candidate.TargetResources) > 0 &&
 		strictSubset(candidate.TargetResources, original.TargetResources) {
@@ -122,78 +135,72 @@ func ClassifyRelationship(original FingerprintResult, candidate FingerprintResul
 	return RelDifferent
 }
 
-func classifySideEffect(pa adapter.ProposedAction) (side string, targets []string) {
+func classifySideEffect(pa adapter.ProposedAction) (side string, targets []string, err error) {
 	cmd := strings.TrimSpace(pa.Command)
 	switch pa.ToolClass {
 	case adapter.ToolClassRead:
-		return SideEffectRead, nil
+		return SideEffectRead, nil, nil
 	case adapter.ToolClassSearch:
-		return SideEffectSearch, nil
+		return SideEffectSearch, nil, nil
 	case adapter.ToolClassEdit:
 		if pa.FilePath != "" {
-			return SideEffectWriteFile, []string{normalizeResource(pa.FilePath)}
+			return SideEffectWriteFile, []string{normalizeResource(pa.FilePath)}, nil
 		}
-		return SideEffectWriteFile, nil
+		return SideEffectWriteFile, nil, nil
 	}
 
 	if cmd == "" {
 		if pa.ToolClass == adapter.ToolClassShell {
-			return SideEffectShellGeneric, nil
+			return SideEffectShellGeneric, nil, nil
 		}
-		return SideEffectUnknown, nil
+		return SideEffectUnknown, nil, nil
 	}
 
 	if adapter.FullSuiteCommand(pa) {
-		return SideEffectTestSuite, []string{"./..."}
+		return SideEffectTestSuite, []string{"./..."}, nil
 	}
 	if reSecretOut.MatchString(cmd) {
-		return SideEffectUnknown, extractPaths(cmd)
+		return SideEffectUnknown, extractPaths(cmd), nil
 	}
 	if reDeploy.MatchString(cmd) {
-		return SideEffectDeploy, extractPaths(cmd)
+		return SideEffectDeploy, extractPaths(cmd), nil
 	}
 	if rePayment.MatchString(cmd) {
-		return SideEffectPayment, nil
+		return SideEffectPayment, nil, nil
 	}
 	if reChmod.MatchString(cmd) {
-		return SideEffectPermission, extractPaths(cmd)
+		return SideEffectPermission, extractPaths(cmd), nil
 	}
 	if reGitMut.MatchString(cmd) {
-		return SideEffectGitMutate, nil
+		return SideEffectGitMutate, nil, nil
 	}
 	if reCurl.MatchString(cmd) {
-		return SideEffectNetwork, nil
+		return SideEffectNetwork, nil, nil
 	}
-	// Multi-target rm -rf / rm --recursive --force: capture ALL path operands.
 	if isRecursiveForceRm(cmd) {
 		targets := extractRmTargets(cmd)
 		if len(targets) > 0 {
-			return SideEffectDeleteTree, targets
+			return SideEffectDeleteTree, targets, nil
 		}
+		return "", nil, fmt.Errorf("fingerprint: ambiguous recursive rm with no targets")
 	}
 	if m := reFindDelete.FindStringSubmatch(cmd); len(m) >= 2 {
-		// find PATH ... -delete may have only one root; still extract all non-flag args after find.
 		targets := extractFindDeleteTargets(cmd)
 		if len(targets) == 0 {
 			targets = []string{normalizeResource(m[1])}
 		}
-		return SideEffectDeleteTree, targets
+		return SideEffectDeleteTree, targets, nil
 	}
-	// Plain rm file (not recursive) — all path operands.
 	if isPlainRm(cmd) {
 		targets := extractRmTargets(cmd)
 		if len(targets) > 0 {
-			if len(targets) == 1 {
-				return SideEffectDeleteFile, targets
-			}
-			// Multi-file non-recursive rm still binds on full target set.
-			return SideEffectDeleteFile, targets
+			return SideEffectDeleteFile, targets, nil
 		}
+		return "", nil, fmt.Errorf("fingerprint: ambiguous rm with no targets")
 	}
 	if pa.ToolClass == adapter.ToolClassShell {
-		return SideEffectShellGeneric, extractPaths(cmd)
+		return SideEffectShellGeneric, extractPaths(cmd), nil
 	}
-	// Non-shell tools: include arguments in path extraction when present.
 	if len(pa.Arguments) > 0 {
 		extra := make([]string, 0, len(pa.Arguments))
 		for _, a := range pa.Arguments {
@@ -201,9 +208,110 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 				extra = append(extra, normalizeResource(a))
 			}
 		}
-		return SideEffectUnknown, extra
+		return SideEffectUnknown, extra, nil
 	}
-	return SideEffectUnknown, extractPaths(cmd)
+	return SideEffectUnknown, extractPaths(cmd), nil
+}
+
+// operationDigest returns a secret-safe digest of the operation identity.
+func operationDigest(pa adapter.ProposedAction, side string) (string, error) {
+	switch side {
+	case SideEffectWriteFile:
+		return editOperationDigest(pa)
+	case SideEffectDeleteTree, SideEffectDeleteFile:
+		// Target list carries identity; command surface is rewrite-eligible.
+		return "delete_op", nil
+	case SideEffectTestSuite:
+		return "test_suite", nil
+	case SideEffectRead, SideEffectSearch:
+		// ToolName + targets distinguish empty-target collapses.
+		return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
+			"tool": pa.ToolName,
+			"path": pa.FilePath,
+			"args": encodeStringList(pa.Arguments),
+		}))), nil
+	default:
+		// Shell / unknown / network: whitespace-collapsed command only (preserve case).
+		cmd := normalizeCommandPreserveCase(pa.Command)
+		if cmd == "" && len(pa.Arguments) == 0 && len(pa.RedactedPayload) == 0 {
+			// Commandless non-read/search: bind tool name so empty targets do not collapse.
+			return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
+				"tool":  pa.ToolName,
+				"class": pa.ToolClass,
+				"args":  encodeStringList(pa.Arguments),
+			}))), nil
+		}
+		return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
+			"cmd":  cmd,
+			"args": encodeStringList(pa.Arguments),
+			"tool": pa.ToolName,
+		}))), nil
+	}
+}
+
+// editOperationDigest binds write fingerprints to the actual edit operation, not only FilePath.
+func editOperationDigest(pa adapter.ProposedAction) (string, error) {
+	parts := map[string]string{
+		"tool": pa.ToolName,
+		"path": normalizeResource(pa.FilePath),
+	}
+	// Prefer Arguments (old_string/new_string surfaces often land as args).
+	if len(pa.Arguments) > 0 {
+		parts["args"] = encodeStringList(pa.Arguments)
+	}
+	// RedactedPayload when valid JSON object with closed content keys.
+	if len(pa.RedactedPayload) > 0 && string(pa.RedactedPayload) != "{}" && string(pa.RedactedPayload) != "null" {
+		var m map[string]any
+		if err := json.Unmarshal(pa.RedactedPayload, &m); err != nil {
+			return "", fmt.Errorf("proposed_action: edit redacted_payload is not valid JSON object")
+		}
+		// Extract only known content keys; never dump arbitrary secrets beyond redacted form.
+		for _, k := range []string{"old_string", "new_string", "content", "old_str", "new_str", "contents"} {
+			if v, ok := m[k]; ok {
+				if s, ok := v.(string); ok {
+					parts["k:"+k] = digestBytes([]byte(s))
+				}
+			}
+		}
+		// If payload present but no content keys and no args — fail closed.
+		hasContent := false
+		for k := range parts {
+			if strings.HasPrefix(k, "k:") {
+				hasContent = true
+				break
+			}
+		}
+		if !hasContent && len(pa.Arguments) == 0 {
+			return "", fmt.Errorf("proposed_action: edit operation has no bound content fields")
+		}
+	} else if len(pa.Arguments) == 0 && strings.TrimSpace(pa.Command) == "" {
+		// Path-only edit without content — fail closed (cannot prove same operation).
+		return "", fmt.Errorf("proposed_action: edit operation missing content (args/payload/command)")
+	} else if strings.TrimSpace(pa.Command) != "" {
+		parts["cmd"] = normalizeCommandPreserveCase(pa.Command)
+	}
+	return digestBytes([]byte(encodeFingerprintCanon(parts))), nil
+}
+
+func digestBytes(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:16])
+}
+
+// encodeFingerprintCanon encodes key→value with sorted keys and length-prefixed values.
+func encodeFingerprintCanon(fields map[string]string) string {
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	_, _ = fmt.Fprintf(&b, "n=%d", len(keys))
+	for _, k := range keys {
+		v := fields[k]
+		_, _ = fmt.Fprintf(&b, ";k=%d:%s;v=%d:%s", len(k), k, len(v), v)
+	}
+	return b.String()
 }
 
 func isRecursiveForceRm(cmd string) bool {
@@ -211,24 +319,19 @@ func isRecursiveForceRm(cmd string) bool {
 	if !strings.Contains(low, "rm") {
 		return false
 	}
-	// rm -rf / -fr / --recursive --force (any order of short flags)
 	if reRmRF.MatchString(cmd) || reRmRF2.MatchString(cmd) {
 		return true
 	}
-	// also: rm -r -f path, rm -f -r path
 	fields := strings.Fields(low)
-	if len(fields) == 0 || fields[0] != "rm" {
-		// allow leading env: env rm -rf ...
-		hasRm := false
-		for _, f := range fields {
-			if f == "rm" {
-				hasRm = true
-				break
-			}
+	hasRm := false
+	for _, f := range fields {
+		if f == "rm" {
+			hasRm = true
+			break
 		}
-		if !hasRm {
-			return false
-		}
+	}
+	if !hasRm {
+		return false
 	}
 	hasR, hasF := false, false
 	for _, f := range fields {
@@ -252,13 +355,12 @@ func isRecursiveForceRm(cmd string) bool {
 
 func isPlainRm(cmd string) bool {
 	low := strings.ToLower(strings.TrimSpace(cmd))
-	if !strings.Contains(low, "rm ") && !strings.HasPrefix(low, "rm ") {
+	if !strings.Contains(low, "rm ") && !strings.HasPrefix(low, "rm ") && low != "rm" {
 		return false
 	}
 	if isRecursiveForceRm(cmd) {
 		return false
 	}
-	// exclude rmdir
 	fields := strings.Fields(low)
 	for _, f := range fields {
 		if f == "rm" {
@@ -268,7 +370,6 @@ func isPlainRm(cmd string) bool {
 	return false
 }
 
-// extractRmTargets returns every non-flag operand after the rm binary.
 func extractRmTargets(cmd string) []string {
 	fields := strings.Fields(cmd)
 	var out []string
@@ -302,7 +403,6 @@ func extractFindDeleteTargets(cmd string) []string {
 		if strings.HasPrefix(f, "-") {
 			continue
 		}
-		// first non-flag after find is the root path (and any extras)
 		out = append(out, normalizeResource(f))
 	}
 	return out
@@ -315,7 +415,6 @@ func extractPaths(cmd string) []string {
 		if strings.HasPrefix(f, "-") {
 			continue
 		}
-		// skip common binaries
 		low := strings.ToLower(f)
 		if low == "rm" || low == "find" || low == "go" || low == "git" || low == "curl" || low == "wget" {
 			continue
@@ -331,25 +430,20 @@ func normalizeResource(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, `"'`)
 	s = path.Clean(s)
-	// collapse ./prefix — preserve case for case-sensitive filesystems.
 	s = strings.TrimPrefix(s, "./")
 	return s
 }
 
-// normalizeCommand is a closed, deterministic shell surface for fingerprinting
-// generic commands (not used for delete_tree rewrite equivalence).
-func normalizeCommand(cmd string) string {
-	cmd = strings.TrimSpace(strings.ToLower(cmd))
+// normalizeCommandPreserveCase collapses whitespace only; does not lowercase paths/args.
+func normalizeCommandPreserveCase(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return ""
 	}
-	// Collapse whitespace only — do not invent semantic equality for arbitrary shell.
-	fields := strings.Fields(cmd)
-	return strings.Join(fields, " ")
+	return strings.Join(strings.Fields(cmd), " ")
 }
 
-// encodeStringList is a collision-free stable encoding for multi-value fingerprint fields.
-// Format: count; then for each item len:value (value is raw bytes of the string).
+// encodeStringList is a collision-free stable encoding for multi-value fields.
 func encodeStringList(items []string) string {
 	if len(items) == 0 {
 		return "0"
@@ -363,8 +457,9 @@ func encodeStringList(items []string) string {
 }
 
 func rewriteEligible(side string) bool {
+	// Write/edit is NOT rewrite-eligible without matching operation digest.
 	switch side {
-	case SideEffectDeleteTree, SideEffectDeleteFile, SideEffectWriteFile:
+	case SideEffectDeleteTree, SideEffectDeleteFile:
 		return true
 	default:
 		return false

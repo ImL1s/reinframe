@@ -93,7 +93,7 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			Reason:         "human_review_required",
 		}, nil
 	}
-	side, _ := classifySideEffect(proposed)
+	side, _, _ := classifySideEffect(proposed)
 	switch side {
 	case SideEffectDeploy, SideEffectPayment, SideEffectPermission:
 		return ReEvalResult{

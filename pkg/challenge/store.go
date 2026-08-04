@@ -256,6 +256,16 @@ func (s *Store) ReplayFromStore(challengeID string) (ChallengeRecord, error) {
 		if err != nil {
 			return ChallengeRecord{}, err
 		}
+		// Persist consumed retry identity from terminal event payload or snapshot.
+		if (ev.Type == "allowed_once" || ev.Type == "rejected" || ev.Type == "human_review") && ev.PayloadHash != "" {
+			rec.ConsumedRetryKey = ev.PayloadHash
+		}
+		if ok && snap.ConsumedRetryKey != "" && rec.ConsumedRetryKey == "" && isTerminal(rec.State) {
+			rec.ConsumedRetryKey = snap.ConsumedRetryKey
+		}
+		if ok && snap.OperationDigest != "" {
+			rec.OperationDigest = snap.OperationDigest
+		}
 	}
 	return rec, nil
 }

@@ -39,9 +39,7 @@ var injectionMarkers = []string{
 }
 
 // ValidateJustification checks closed schema + bounds + evidence IDs + injection resistance.
-// knownEvidence must contain every referenced ID; duplicates are rejected.
-// Returns sanitized justification (fields trimmed/bounded) or error.
-// Justification never auto-grants permission; this only validates form.
+// requiredClaims must already be validated via ValidateRequiredClaims (allowlist).
 func ValidateJustification(j Justification, knownEvidence []string, requiredClaims []string) (Justification, error) {
 	if strings.TrimSpace(j.SchemaVersion) == "" {
 		j.SchemaVersion = SchemaJustification
@@ -53,17 +51,14 @@ func ValidateJustification(j Justification, knownEvidence []string, requiredClai
 		return Justification{}, fmt.Errorf("justification: challenge_id required")
 	}
 
-	// Reject private CoT field names if smuggled via unknown JSON — we only accept closed fields.
-	// (Unmarshal into struct already drops unknown JSON keys when using encoding/json into struct.)
-
 	fields := map[string]string{
-		"concrete_value":              j.ConcreteValue,
-		"prevented_failure_or_threat": j.PreventedFailureOrThreat,
-		"estimated_cost":              j.EstimatedCost,
-		"alternatives_considered":     j.AlternativesConsidered,
-		"scope_limit":                 j.ScopeLimit,
-		"verification_plan":           j.VerificationPlan,
-		"rollback_plan":               j.RollbackPlan,
+		ClaimConcreteValue:            j.ConcreteValue,
+		ClaimPreventedFailureOrThreat: j.PreventedFailureOrThreat,
+		ClaimEstimatedCost:            j.EstimatedCost,
+		ClaimAlternativesConsidered:   j.AlternativesConsidered,
+		ClaimScopeLimit:               j.ScopeLimit,
+		ClaimVerificationPlan:         j.VerificationPlan,
+		ClaimRollbackPlan:             j.RollbackPlan,
 	}
 	for name, v := range fields {
 		if err := checkField(name, v); err != nil {
@@ -71,45 +66,51 @@ func ValidateJustification(j Justification, knownEvidence []string, requiredClai
 		}
 	}
 
-	// Required claims (non-empty after trim).
+	// Required claims — every name must be allowlisted; default error branch for unknown.
 	for _, claim := range requiredClaims {
+		claim = strings.TrimSpace(claim)
+		if !IsValidClaim(claim) {
+			return Justification{}, fmt.Errorf("justification: unsupported required claim %q", claim)
+		}
 		switch claim {
-		case "concrete_value":
+		case ClaimConcreteValue:
 			if strings.TrimSpace(j.ConcreteValue) == "" {
-				return Justification{}, fmt.Errorf("justification: missing required claim concrete_value")
+				return Justification{}, fmt.Errorf("justification: missing required claim %s", claim)
 			}
-		case "prevented_failure_or_threat":
+		case ClaimPreventedFailureOrThreat:
 			if strings.TrimSpace(j.PreventedFailureOrThreat) == "" {
-				return Justification{}, fmt.Errorf("justification: missing required claim prevented_failure_or_threat")
+				return Justification{}, fmt.Errorf("justification: missing required claim %s", claim)
 			}
-		case "estimated_cost":
+		case ClaimEstimatedCost:
 			if strings.TrimSpace(j.EstimatedCost) == "" {
-				return Justification{}, fmt.Errorf("justification: missing required claim estimated_cost")
+				return Justification{}, fmt.Errorf("justification: missing required claim %s", claim)
 			}
-		case "scope_limit":
+		case ClaimScopeLimit:
 			if strings.TrimSpace(j.ScopeLimit) == "" {
-				return Justification{}, fmt.Errorf("justification: missing required claim scope_limit")
+				return Justification{}, fmt.Errorf("justification: missing required claim %s", claim)
 			}
-		case "verification_plan":
+		case ClaimVerificationPlan:
 			if strings.TrimSpace(j.VerificationPlan) == "" {
-				return Justification{}, fmt.Errorf("justification: missing required claim verification_plan")
+				return Justification{}, fmt.Errorf("justification: missing required claim %s", claim)
 			}
-		case "rollback_plan":
+		case ClaimRollbackPlan:
 			if strings.TrimSpace(j.RollbackPlan) == "" {
-				return Justification{}, fmt.Errorf("justification: missing required claim rollback_plan")
+				return Justification{}, fmt.Errorf("justification: missing required claim %s", claim)
 			}
-		case "supporting_evidence_event_ids":
+		case ClaimSupportingEvidenceIDs:
 			if len(j.SupportingEvidenceEventIDs) == 0 {
-				return Justification{}, fmt.Errorf("justification: missing required claim supporting_evidence_event_ids")
+				return Justification{}, fmt.Errorf("justification: missing required claim %s", claim)
 			}
-		case "alternatives_considered":
+		case ClaimAlternativesConsidered:
 			if strings.TrimSpace(j.AlternativesConsidered) == "" {
-				return Justification{}, fmt.Errorf("justification: missing required claim alternatives_considered")
+				return Justification{}, fmt.Errorf("justification: missing required claim %s", claim)
 			}
+		default:
+			// Explicit default — never silently drop a policy-required field.
+			return Justification{}, fmt.Errorf("justification: unhandled required claim %q", claim)
 		}
 	}
 
-	// Evidence IDs: known, unique, bounded.
 	known := map[string]struct{}{}
 	for _, id := range knownEvidence {
 		known[id] = struct{}{}
@@ -131,7 +132,6 @@ func ValidateJustification(j Justification, knownEvidence []string, requiredClai
 			return Justification{}, fmt.Errorf("justification: duplicate evidence id %q", id)
 		}
 		seen[id] = struct{}{}
-		// Always validate against the known set (empty known ⇒ any ID is unknown).
 		if _, ok := known[id]; !ok {
 			return Justification{}, fmt.Errorf("justification: unknown evidence id %q", id)
 		}
@@ -167,8 +167,6 @@ func checkInjection(name, v string) error {
 	low := strings.ToLower(v)
 	for _, m := range injectionMarkers {
 		if strings.Contains(low, strings.ToLower(m)) {
-			// Injection text is rejected as invalid justification content.
-			// It never alters policy; we refuse the submission.
 			return fmt.Errorf("justification: field %s contains disallowed control text", name)
 		}
 	}
@@ -184,12 +182,27 @@ func boundField(s string) string {
 	return string(r[:MaxJustificationFieldRunes])
 }
 
-// HashJustification returns a stable content hash (no secrets expected in schema).
+// HashJustification returns a collision-free content hash (length-prefixed fields).
+// Distinguishes | in values, empty vs absent, evidence delimiter/order.
 func HashJustification(j Justification) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s|%s|%s|%s|%s|%s|%s|%s|%s|%v",
-		j.SchemaVersion, j.ChallengeID, j.ConcreteValue, j.PreventedFailureOrThreat,
-		j.EstimatedCost, j.AlternativesConsidered, j.ScopeLimit, j.VerificationPlan,
-		j.RollbackPlan, j.SupportingEvidenceEventIDs)
+	fields := []struct {
+		k, v string
+	}{
+		{"schema", j.SchemaVersion},
+		{"challenge_id", j.ChallengeID},
+		{"concrete_value", j.ConcreteValue},
+		{"prevented_failure_or_threat", j.PreventedFailureOrThreat},
+		{"estimated_cost", j.EstimatedCost},
+		{"alternatives_considered", j.AlternativesConsidered},
+		{"scope_limit", j.ScopeLimit},
+		{"verification_plan", j.VerificationPlan},
+		{"rollback_plan", j.RollbackPlan},
+		{"evidence", encodeStringList(j.SupportingEvidenceEventIDs)},
+	}
+	_, _ = fmt.Fprintf(h, "n=%d", len(fields))
+	for _, f := range fields {
+		_, _ = fmt.Fprintf(h, ";k=%d:%s;v=%d:%s", len(f.k), f.k, len(f.v), f.v)
+	}
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }

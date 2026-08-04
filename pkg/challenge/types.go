@@ -128,6 +128,11 @@ type ChallengeRecord struct {
 	PolicyHash    string `json:"policy_hash,omitempty"`
 
 	JustificationHash string `json:"justification_hash,omitempty"`
+	// ConsumedRetryKey is the durable identity of the one-shot retry that was processed.
+	// Empty means no retry has been finalized. Exact key match may idempotently replay.
+	ConsumedRetryKey string `json:"consumed_retry_key,omitempty"`
+	// OperationDigest is stored for relationship comparison across restarts.
+	OperationDigest   string `json:"operation_digest,omitempty"`
 	ExpiresAtSequence int64  `json:"expires_at_sequence,omitempty"`
 	CreatedSequence   int64  `json:"created_sequence"`
 	UpdatedSequence   int64  `json:"updated_sequence"`
@@ -191,9 +196,11 @@ type RetryRequest struct {
 	ChallengeID string
 	SessionID   string
 	// Branch when non-empty must match the challenge binding (ownership).
-	Branch        string
-	Proposed      adapter.ProposedAction
-	CorrelationID string
+	Branch string
+	// RetryRequestID optional dedicated id for attempt identity (bounded).
+	RetryRequestID string
+	Proposed       adapter.ProposedAction
+	CorrelationID  string
 	// ReEval carries optional stage inputs; if nil, DefaultReEvaluator is used.
 	ReEval *ReEvalContext
 }

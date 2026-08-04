@@ -34,7 +34,7 @@ func ClassifyAppealability(blockClass string, pa adapter.ProposedAction) (appeal
 		} else if LooksLikeCrossWorkspace(pa) {
 			bc = BlockClassCrossWorkspace
 		} else {
-			side, _ := classifySideEffect(pa)
+			side, _, _ := classifySideEffect(pa)
 			switch side {
 			case SideEffectDeploy:
 				bc = BlockClassProductionDeploy
@@ -97,18 +97,18 @@ func IsIrreversibleClass(blockClass string) bool {
 	}
 }
 
-// DefaultRequiredClaims for appealable productivity blocks.
+// DefaultRequiredClaims for appealable productivity blocks (allowlisted names only).
 func DefaultRequiredClaims(blockClass string) []string {
 	base := []string{
-		"concrete_value",
-		"prevented_failure_or_threat",
-		"estimated_cost",
-		"scope_limit",
-		"verification_plan",
-		"rollback_plan",
+		ClaimConcreteValue,
+		ClaimPreventedFailureOrThreat,
+		ClaimEstimatedCost,
+		ClaimScopeLimit,
+		ClaimVerificationPlan,
+		ClaimRollbackPlan,
 	}
 	if strings.EqualFold(blockClass, BlockClassEvidenceGap) {
-		return append(base, "supporting_evidence_event_ids")
+		return append(base, ClaimSupportingEvidenceIDs)
 	}
 	return base
 }

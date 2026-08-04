@@ -21,8 +21,8 @@ func TestChallengeInvariants(t *testing.T) {
 		pa1.TargetScope = []string{"a,b", "c"}
 		pa2 := samplePA("rm -rf x")
 		pa2.TargetScope = []string{"a", "b,c"}
-		f1 := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa1, SessionID: "s"})
-		f2 := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa2, SessionID: "s"})
+		f1 := mustFP(t, challenge.FingerprintInput{Proposed: pa1, SessionID: "s"})
+		f2 := mustFP(t, challenge.FingerprintInput{Proposed: pa2, SessionID: "s"})
 		if f1.Fingerprint == f2.Fingerprint {
 			t.Fatalf("delimiter collision: same FP %s canon=%s vs %s", f1.Fingerprint, f1.CanonicalForm, f2.CanonicalForm)
 		}

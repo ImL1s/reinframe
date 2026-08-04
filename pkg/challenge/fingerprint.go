@@ -275,10 +275,12 @@ func operationDigest(pa adapter.ProposedAction, side string) (string, error) {
 				"args":  encodeStringList(pa.Arguments),
 			}))), nil
 		}
+		// ToolName stays in the outer fingerprint only so Bash/Shell variants of the
+		// same command share OperationDigest and can be superseded by hard-deny barriers.
 		return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
 			"cmd":     cmd,
 			"args":    encodeStringList(pa.Arguments),
-			"tool":    pa.ToolName,
+			"class":   pa.ToolClass,
 			"payload": boundedPayloadDigest(pa.RedactedPayload),
 		}))), nil
 	}
@@ -537,10 +539,16 @@ func extractDeleteScopeFlags(cmd string) []string {
 	if argv0 == "rm" {
 		for ; i < len(fields); i++ {
 			f := fields[i]
+			if f == "--" {
+				// operands follow; stop option parsing
+				break
+			}
 			low := strings.ToLower(f)
 			switch {
-			case low == "--one-file-system" || low == "--preserve-root" || low == "--no-preserve-root" ||
+			case low == "--one-file-system" || low == "--preserve-root" || strings.HasPrefix(low, "--preserve-root=") ||
+				low == "--no-preserve-root" ||
 				low == "-i" || low == "-I" || low == "--interactive" || strings.HasPrefix(low, "--interactive="):
+				// Bind full form so --preserve-root=all ≠ bare --preserve-root / plain rm.
 				out = append(out, low)
 			case strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--"):
 				// short clusters: ignore r/f/v; any other letter is scope-altering (e.g. -i)
@@ -667,10 +675,19 @@ func extractRmTargets(cmd string) []string {
 		return nil
 	}
 	i++ // skip argv0 (rm)
+	// After `--`, every token is an operand (including names starting with `-`).
+	// GNU rm: `rm -- -foo` deletes the file named -foo.
+	afterDashDash := false
 	for ; i < len(fields); i++ {
 		f := fields[i]
-		if strings.HasPrefix(f, "-") {
-			continue
+		if !afterDashDash {
+			if f == "--" {
+				afterDashDash = true
+				continue
+			}
+			if strings.HasPrefix(f, "-") {
+				continue // option
+			}
 		}
 		out = append(out, normalizeResource(f))
 	}

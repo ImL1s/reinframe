@@ -106,17 +106,14 @@ func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint, policyVersion
 			return note, true
 		}
 	}
-	// RelBypass-equivalent: tool-name variants of the same privileged delete.
-	if rewriteEligible(side) && opDigest != "" && len(targets) > 0 {
+	// Tool-name variants (Bash vs Shell): same side/targets/opDigest under any class.
+	if opDigest != "" {
 		prefix := sessionID + "|"
 		for key, e := range s.nonAppealBarrier {
 			if key == k || len(key) < len(prefix) || key[:len(prefix)] != prefix {
 				continue
 			}
-			if e.SideEffectClass != side || e.OperationDigest != opDigest {
-				continue
-			}
-			if !sameStringSet(e.TargetResources, targets) {
+			if !semanticActionMatch(e.SideEffectClass, e.TargetResources, e.OperationDigest, side, targets, opDigest) {
 				continue
 			}
 			if note, blocked := barrierPolicyHit(e, policyVersion, rulesetHash, openTicket); blocked {
@@ -125,6 +122,18 @@ func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint, policyVersion
 		}
 	}
 	return "", false
+}
+
+// semanticActionMatch is true when two actions share side effect, targets, and
+// non-empty operation digest — the identity surface below ToolName in the outer FP.
+func semanticActionMatch(sideA string, targetsA []string, opA, sideB string, targetsB []string, opB string) bool {
+	if sideA != sideB || opA == "" || opA != opB {
+		return false
+	}
+	if len(targetsA) == 0 && len(targetsB) == 0 {
+		return true
+	}
+	return sameStringSet(targetsA, targetsB)
 }
 
 func barrierPolicyHit(e barrierEntry, policyVersion, rulesetHash string, openTicket int64) (string, bool) {

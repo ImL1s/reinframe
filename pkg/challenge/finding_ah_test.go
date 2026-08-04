@@ -1035,6 +1035,72 @@ func TestHardDenyExpiresRelBypassToolVariant(t *testing.T) {
 	}
 }
 
+// Codex: --preserve-root=all must not share delete identity with plain rm -rf.
+func TestRmPreserveRootAllChangesFingerprint(t *testing.T) {
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf mount"), SessionID: "sess-1"})
+	all := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf --preserve-root=all mount"), SessionID: "sess-1"})
+	bare := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf --preserve-root mount"), SessionID: "sess-1"})
+	if plain.Fingerprint == all.Fingerprint {
+		t.Fatal("--preserve-root=all must not share fingerprint with plain rm -rf")
+	}
+	if all.Fingerprint == bare.Fingerprint {
+		t.Fatal("--preserve-root=all must not share fingerprint with bare --preserve-root")
+	}
+}
+
+// Codex: after rm `--`, dashed names are operands not options.
+func TestRmDoubleDashOperandNotOption(t *testing.T) {
+	// `rm -rf -- -v normal` deletes files named -v and normal.
+	// Must not collapse to targets=[normal] matching `rm -rf normal`.
+	withDash := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf -- -v normal"), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf normal"), SessionID: "sess-1"})
+	if withDash.Fingerprint == plain.Fingerprint {
+		t.Fatal("rm -- -v normal must not share fingerprint with rm normal")
+	}
+	if len(withDash.TargetResources) < 2 {
+		t.Fatalf("want targets including -v and normal, got %v", withDash.TargetResources)
+	}
+}
+
+// Codex: hard-deny supersedes non-delete tool-name variants (Bash vs Shell).
+func TestHardDenyExpiresNonDeleteToolVariant(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	bash := samplePA("curl https://example.com/data")
+	bash.ToolName = "Bash"
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: bash.SessionID, Proposed: bash, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := bash
+	shell.ToolName = "Shell"
+	shell.ActionID = "pa-shell-net"
+	_, err = svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: shell.SessionID, Proposed: shell, BlockClass: challenge.BlockClassSecretExfiltration,
+		PolicyVersion: "v1", RulesetHash: "r1",
+	})
+	if err == nil {
+		t.Fatal("expected hard deny")
+	}
+	got, ok := svc.Get(rec.ChallengeID)
+	if !ok {
+		t.Fatal("missing bash challenge")
+	}
+	if got.State != challenge.StateExpired {
+		t.Fatalf("Shell hard-deny must expire Bash non-delete open, got %s", got.State)
+	}
+	bash2 := bash
+	bash2.ActionID = "pa-bash-net-2"
+	_, err = svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: bash2.SessionID, Proposed: bash2, BlockClass: challenge.BlockClassOverSOP,
+		PolicyVersion: "v1", RulesetHash: "r1",
+	})
+	if err == nil {
+		t.Fatal("Bash network open after Shell hard-deny must hit semantic barrier")
+	}
+}
+
 // Codex: Justify rechecks ExpiresAtSequence under lock before OPEN→JUSTIFIED.
 func TestJustifyExpiresUnderLockBeforeJustified(t *testing.T) {
 	fixed := time.Date(2026, 8, 4, 16, 0, 0, 0, time.UTC)

@@ -357,11 +357,6 @@ func (r *Registry) underRoot(abs string) error {
 	return nil
 }
 
-func (r *Registry) rejectPrimaryAsTarget(abs string) error {
-	// Primary checkout = anything outside Root cannot be managed target.
-	return r.underRoot(abs)
-}
-
 func (r *Registry) rejectSymlink(path string) error {
 	fi, err := os.Lstat(path)
 	if err != nil {

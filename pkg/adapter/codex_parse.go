@@ -12,6 +12,7 @@ import (
 func parseCodexRolloutLine(p *rolloutParser, line []byte) (protocol.AgentEvent, bool) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(line, &raw); err != nil {
+		p.malformed++
 		return protocol.AgentEvent{}, false
 	}
 	var typ string

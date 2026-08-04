@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
 )
@@ -175,24 +174,6 @@ func TestClaudeSettings_ConcurrentChangeNotClobber(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &adapter.ClaudeSettingsManager{SettingsPath: path, BridgeCommand: "/bin/bridge"}
-	// Simulate race: touch file after manager would have read — inject by rewriting between Plan and write.
-	// Install reads then writes; we race by changing mtime/content using a second writer in a tight loop is hard.
-	// Instead call write path by Install after we change file under the hood with a delayed replace:
-	// Read state by starting Install in a way we can't intercept — use Uninstall after external rewrite mid-flight.
-	// Practical unit approach: install once, then manually set older-style concurrent: rewrite content with new mtime
-	// immediately before a second Install that already... we expose by: Install, then external write, then
-	// open+sleep not needed — re-read Install always re-reads. Concurrent detection is between read and write
-	// of same call: we test by writing a peer change using a short sleep after partial ops is not accessible.
-	// Use Install which reads then backup then write — change file after backup by racing another process:
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		_ = os.WriteFile(path, []byte(`{"hooks":{"PreToolUse":[{"matcher":"peer"}]}}`), 0o600)
-	}()
-	// May or may not hit race depending on timing; if Install succeeds, peer may still be lost on slow systems.
-	// Stronger test: force detection by editing through exported behavior — call Install twice where first
-	// leaves file, second reads, we need mid-call mutation. For determinism, mutate after readState via
-	// replacing file between Doctor and Install is insufficient.
-	// Deterministic approach: Install, then write peer, then verify Uninstall only removes owned if present.
 	if err := m.Install(); err != nil {
 		t.Fatal(err)
 	}

@@ -66,6 +66,7 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 
 	var offset int64
 	var gen int
+	var lastFP FileFingerprint
 	if c.CursorPath != "" {
 		cur, err := LoadCodexTailCursor(c.CursorPath)
 		if err != nil {
@@ -83,6 +84,9 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 			if cur.FileIdentity != "" {
 				parser.fileIdentity = cur.FileIdentity
 			}
+			if cur.LastFingerprint != nil {
+				lastFP = *cur.LastFingerprint
+			}
 		}
 	}
 	parser.generation = gen
@@ -97,35 +101,35 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 
 	for {
 		if ctx.Err() != nil {
-			_ = c.persistCursor(offset, gen, parser.sessionID)
+			_ = c.persistCursor(offset, gen, parser.sessionID, lastFP)
 			return
 		}
 		if fi, err := os.Stat(c.Path); err == nil {
 			fp := FileFingerprint{Size: fi.Size(), ModNano: fi.ModTime().UnixNano()}
-			prev := FileFingerprint{Size: offset}
-			if RotationDetected(offset, prev, fp) {
+			if RotationDetected(offset, lastFP, fp) {
 				offset = 0
 				gen++
 				parser.generation = gen
 			}
+			lastFP = fp
 		}
 		n, err := c.readNew(ctx, ch, parser, &offset, gen)
 		if err != nil && !os.IsNotExist(err) {
 			select {
 			case <-ctx.Done():
-				_ = c.persistCursor(offset, gen, parser.sessionID)
+				_ = c.persistCursor(offset, gen, parser.sessionID, lastFP)
 				return
 			case <-ticker.C:
 				continue
 			}
 		}
 		if c.CursorPath != "" && n > 0 {
-			if err := c.persistCursor(offset, gen, parser.sessionID); err != nil && c.FailClosedCursor {
+			if err := c.persistCursor(offset, gen, parser.sessionID, lastFP); err != nil && c.FailClosedCursor {
 				return
 			}
 		}
 		if c.MaxEvents > 0 && parser.emitted >= c.MaxEvents {
-			_ = c.persistCursor(offset, gen, parser.sessionID)
+			_ = c.persistCursor(offset, gen, parser.sessionID, lastFP)
 			return
 		}
 		c.ToolCalls = parser.toolCalls
@@ -135,20 +139,22 @@ func (c *CodexTailSource) follow(ctx context.Context, ch chan<- protocol.AgentEv
 
 		select {
 		case <-ctx.Done():
-			_ = c.persistCursor(offset, gen, parser.sessionID)
+			_ = c.persistCursor(offset, gen, parser.sessionID, lastFP)
 			return
 		case <-ticker.C:
 		}
 	}
 }
 
-func (c *CodexTailSource) persistCursor(offset int64, gen int, sessionID string) error {
+func (c *CodexTailSource) persistCursor(offset int64, gen int, sessionID string, fp FileFingerprint) error {
 	if c.CursorPath == "" {
 		return nil
 	}
+	fpCopy := fp
 	err := SaveCodexTailCursor(c.CursorPath, CodexTailCursor{
 		Path: c.Path, Offset: offset, Generation: gen, SessionID: sessionID,
 		FileIdentity: FileIdentityFromPath(c.Path), SchemaVersion: codexCursorSchemaVersion,
+		LastFingerprint: &fpCopy,
 	})
 	if err != nil {
 		c.LastCursorError = err
@@ -194,6 +200,12 @@ func (c *CodexTailSource) readNew(ctx context.Context, ch chan<- protocol.AgentE
 			}
 		}
 		if last < 0 {
+			// No complete line. If we filled the poll budget, skip as oversized/malformed to avoid stall.
+			if len(buf) >= maxPoll {
+				c.AuditMalformed++
+				*offset += int64(len(buf))
+				return 0, nil
+			}
 			return 0, nil
 		}
 		complete = buf[:last+1]

@@ -72,7 +72,19 @@ func RotationDetected(curOffset int64, prev, now FileFingerprint) bool {
 	if prev.Inode != 0 && now.Inode != 0 && prev.Inode != now.Inode {
 		return true
 	}
-	if prev.Size > 0 && now.Size < prev.Size && curOffset > now.Size {
+	// Same path replaced with equal-or-larger content: mod time rewind or jump with size shrink history.
+	if prev.Size > 0 && now.Size < prev.Size {
+		return true
+	}
+	// Replacement where size grew past old file but identity/mod changed while offset still valid:
+	// if we had a prior fingerprint and mod went backward, treat as rotation.
+	if prev.ModNano != 0 && now.ModNano != 0 && now.ModNano < prev.ModNano && curOffset > 0 {
+		return true
+	}
+	// FileIdentity-style: size >= offset but content truncated then rewritten larger with different mod
+	// and prev.Size was set from last observed size (not offset).
+	if prev.Size > 0 && now.Size >= curOffset && prev.ModNano != 0 && now.ModNano != prev.ModNano && now.Size != prev.Size && curOffset > prev.Size {
+		// offset past previous end means we thought file was longer — rewritten
 		return true
 	}
 	return false

@@ -79,11 +79,20 @@ func NewRegistry(managedRoot string) (*Registry, error) {
 	if fi, err := os.Lstat(abs); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("workspace: managed root is symlink (fail closed)")
 	}
+	// Canonicalize after confirming path itself is not a symlink entry.
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
 	return &Registry{
 		Root:  abs,
 		Now:   func() time.Time { return time.Now().UTC() },
 		trees: make(map[string]*ManagedWorktree),
 	}, nil
+}
+
+// privateCheckpointDir is supervisor-owned storage outside the agent worktree.
+func (r *Registry) privateCheckpointDir(wtID string) string {
+	return filepath.Join(r.Root, ".reinframe-private", "checkpoints", wtID)
 }
 
 // CreateWorktree creates a new git worktree under Root for sessionID from basePath repo.
@@ -219,8 +228,8 @@ func (r *Registry) Checkpoint(wt *ManagedWorktree, reason string) (*CheckpointRe
 		RollbackCapability:    "hard-reset-clean",
 		PrimaryCheckoutDenied: true,
 	}
-	// Persist next to worktree
-	if err := writeJSON(filepath.Join(wt.Path, ".reinframe-checkpoints", id+".json"), rec); err != nil {
+	// Persist outside agent-writable worktree (private under managed root).
+	if err := writeJSON(filepath.Join(r.privateCheckpointDir(wt.ID), id+".json"), rec); err != nil {
 		return nil, nil, err
 	}
 	pc := &protocol.Checkpoint{
@@ -316,10 +325,26 @@ func (r *Registry) Rollback(wt *ManagedWorktree, rec *CheckpointRecord) (*protoc
 	return res, nil
 }
 
-// LoadCheckpoint reads a checkpoint JSON from the worktree store.
-func LoadCheckpoint(wtPath, checkpointID string) (*CheckpointRecord, error) {
-	p := filepath.Join(wtPath, ".reinframe-checkpoints", checkpointID+".json")
+// LoadCheckpoint reads a checkpoint JSON from the private registry store.
+func (r *Registry) LoadCheckpoint(wtID, checkpointID string) (*CheckpointRecord, error) {
+	p := filepath.Join(r.privateCheckpointDir(wtID), checkpointID+".json")
 	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, err
+	}
+	var rec CheckpointRecord
+	if err := json.Unmarshal(b, &rec); err != nil {
+		return nil, err
+	}
+	if rec.SchemaVersion != CheckpointRecordSchema {
+		return nil, fmt.Errorf("workspace: checkpoint schema %q", rec.SchemaVersion)
+	}
+	return &rec, nil
+}
+
+// LoadCheckpointFromPath is retained for tests that only have a path under private store.
+func LoadCheckpointFromPath(storePath string) (*CheckpointRecord, error) {
+	b, err := os.ReadFile(storePath)
 	if err != nil {
 		return nil, err
 	}
@@ -337,20 +362,45 @@ func (r *Registry) validateOwned(wt *ManagedWorktree) error {
 	if wt == nil {
 		return fmt.Errorf("workspace: nil worktree")
 	}
-	if err := r.underRoot(wt.Path); err != nil {
+	// Canonicalize path for symlink escape checks.
+	abs, err := filepath.Abs(wt.Path)
+	if err != nil {
 		return err
 	}
-	if err := r.rejectSymlink(wt.Path); err != nil {
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+		wt.Path = abs
+	}
+	if err := r.underRoot(abs); err != nil {
 		return err
 	}
-	if _, err := readMarker(wt.Path); err != nil {
+	if err := r.rejectSymlink(abs); err != nil {
+		return err
+	}
+	m, err := readMarker(abs)
+	if err != nil {
 		return fmt.Errorf("workspace: ownership marker missing: %w", err)
+	}
+	if m.ID == "" || wt.ID == "" || m.ID != wt.ID {
+		return fmt.Errorf("workspace: marker id mismatch (fail closed)")
+	}
+	if m.SessionID == "" || wt.SessionID == "" || m.SessionID != wt.SessionID {
+		return fmt.Errorf("workspace: marker session mismatch (fail closed)")
 	}
 	return nil
 }
 
 func (r *Registry) underRoot(abs string) error {
-	rel, err := filepath.Rel(r.Root, abs)
+	// Canonicalize both sides (lexical alone is insufficient against symlink escapes).
+	root := r.Root
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	path := abs
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	rel, err := filepath.Rel(root, path)
 	if err != nil || strings.HasPrefix(rel, "..") || rel == "." {
 		return fmt.Errorf("workspace: path outside managed root (fail closed)")
 	}
@@ -409,7 +459,8 @@ func requireGitRepo(path string) error {
 }
 
 func requireClean(path string) error {
-	out, err := gitOutput(path, "status", "--porcelain")
+	// --untracked-files=all so nested untracked dirs are not summarized away.
+	out, err := gitOutput(path, "status", "--porcelain", "--untracked-files=all")
 	if err != nil {
 		return err
 	}

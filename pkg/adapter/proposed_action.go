@@ -267,12 +267,12 @@ func isShellIdent(s string) bool {
 	}
 	for j, r := range s {
 		if j == 0 {
-			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_') {
+			if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && r != '_' {
 				return false
 			}
 			continue
 		}
-		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
 			return false
 		}
 	}

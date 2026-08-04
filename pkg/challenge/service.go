@@ -615,19 +615,23 @@ func (s *Service) expireIfNeeded(rec *ChallengeRecord) error {
 		return nil
 	}
 	s.store.mu.Lock()
-	defer s.store.mu.Unlock()
 	cur, ok := s.store.byID[rec.ChallengeID]
 	if !ok {
+		s.store.mu.Unlock()
 		return nil
 	}
 	if isTerminal(cur.State) {
 		*rec = cloneRecord(*cur)
+		s.store.mu.Unlock()
 		return nil
 	}
 	from := cur.State
 	now := s.now()
 	updated := s.store.appendTransition(cloneRecord(*cur), from, StateExpired, "expired", "", rec.ChallengeID, "", "sequence_expiry", now, nil)
 	*rec = cloneRecord(updated)
+	id := rec.ChallengeID
+	s.store.mu.Unlock()
+	s.signalTerminal(id)
 	return fmt.Errorf("challenge expired")
 }
 

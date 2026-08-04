@@ -11,9 +11,9 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 ## Project Status
 
 > **Phase: M1 + M2 library + experimental host bridges + shadow classifier + offline evaluation**  
-> **Ready:** [#131](https://github.com/ImL1s/reinframe/issues/131) appealable BLOCK challenge core; [#132](https://github.com/ImL1s/reinframe/issues/132) classifier provider runtime; [#142](https://github.com/ImL1s/reinframe/issues/142) governance sync.  
+> **Ready:** [#131](https://github.com/ImL1s/reinframe/issues/131) appealable BLOCK challenge core; [#132](https://github.com/ImL1s/reinframe/issues/132) classifier provider runtime.  
 > **Environment-blocked:** [#120](https://github.com/ImL1s/reinframe/issues/120) pinned live Claude ALLOW/BLOCK/context smoke (`BLOCKED_BY_ENVIRONMENT`).  
-> **Dependency-blocked:** [#108](https://github.com/ImL1s/reinframe/issues/108), [#134](https://github.com/ImL1s/reinframe/issues/134)–[#141](https://github.com/ImL1s/reinframe/issues/141). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) remains open.  
+> **Dependency-blocked:** [#108](https://github.com/ImL1s/reinframe/issues/108), [#134](https://github.com/ImL1s/reinframe/issues/134)–[#141](https://github.com/ImL1s/reinframe/issues/141). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) remains open. Governance sync is tracked by [#142](https://github.com/ImL1s/reinframe/issues/142).  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
 
 ### Current dependency shape
@@ -282,7 +282,7 @@ Intervention escalation after detection is a **separate axis**. See `docs/resear
 
 Contributions are welcome. Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Ready work is currently #131 and #132; #142 is the governance sync for this queue.
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Ready product work is currently #131 and #132.
 2. Follow the dependency graph. Do not start #134–#138 before #132, #139 before #131+#120, or treat #120 as code-ready while its interactive evidence is unavailable.
 3. Preserve honesty boundaries: no false provider/cache/live-host/hard-gate claims.
 4. Run `go test -race ./...` before submitting PRs.

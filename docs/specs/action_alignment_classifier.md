@@ -131,3 +131,7 @@ Only `ALLOW` and `BLOCK` are public. Advice / replan / escalation remain separat
 ## Next
 
 #105 — shadow-mode implementation recording Stage1/Stage2 without blocking.  
+
+## Wire contract (#119)
+
+Implementation contract: [`action_alignment_wire_contract.md`](action_alignment_wire_contract.md) and ADR [`005-classifier-provider.md`](../adr/005-classifier-provider.md).

@@ -6,202 +6,287 @@
 
 Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go.
 
-**Today (M1 → M2.2 library + experimental host bridges):** control plane (detect→defer→deliver→ACK), effort-calibration library slices, offline/near-live Codex observation, Claude PreTool **fixture/CLI bridge**, FileActuator JSONL advice channel, tool-budget / hypothesis-loop detectors — **not** dual-host production install, **not** calibrated hard-gates (M3), **not** git checkpoint product runtime.
+**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, offline/near-live Codex observation, a FileActuator advice channel, a non-enforcing Action Alignment classifier, offline benchmark tooling, and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** a calibrated hard-gate, **not** a live challenge-response product, and **not** a measured multi-provider cache product.
 
 ## Project Status
 
-> **Phase: M1 + M2 library + experimental host bridges + shadow classifier + offline eval**  
-> **Still open (actual `gh` set):** epic [#80](https://github.com/ImL1s/reinframe/issues/80); blocked [#120](https://github.com/ImL1s/reinframe/issues/120) live Claude smoke (`BLOCKED_BY_ENVIRONMENT`); blocked [#108](https://github.com/ImL1s/reinframe/issues/108) advice consumer (depends on #120).  
-> **No `status:ready` product issues.** Landed library slices: ProposedAction [#115](https://github.com/ImL1s/reinframe/issues/115), PreTool semantics [#116](https://github.com/ImL1s/reinframe/issues/116), settings harden [#117](https://github.com/ImL1s/reinframe/issues/117), Codex identity [#118](https://github.com/ImL1s/reinframe/issues/118), classifier contract [#119](https://github.com/ImL1s/reinframe/issues/119), shadow classifier [#105](https://github.com/ImL1s/reinframe/issues/105), M3 benches [#100](https://github.com/ImL1s/reinframe/issues/100) (MORE-DATA, no hard-gate), managed worktree [#99](https://github.com/ImL1s/reinframe/issues/99).  
+> **Phase: M1 + M2 library + experimental host bridges + shadow classifier + offline evaluation**  
+> **Ready:** [#131](https://github.com/ImL1s/reinframe/issues/131) appealable BLOCK challenge core; [#132](https://github.com/ImL1s/reinframe/issues/132) classifier provider runtime; [#142](https://github.com/ImL1s/reinframe/issues/142) governance sync.  
+> **Environment-blocked:** [#120](https://github.com/ImL1s/reinframe/issues/120) pinned live Claude ALLOW/BLOCK/context smoke (`BLOCKED_BY_ENVIRONMENT`).  
+> **Dependency-blocked:** [#108](https://github.com/ImL1s/reinframe/issues/108), [#134](https://github.com/ImL1s/reinframe/issues/134)–[#141](https://github.com/ImL1s/reinframe/issues/141). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) remains open.  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
+
+### Current dependency shape
+
+```text
+Ready in parallel:
+  #131 challenge core
+  #132 provider runtime
+
+Interactive environment:
+  #120 live Claude smoke
+    → #108 generic advice consumer
+
+#131 + #120
+  → #139 Claude challenge delivery / structured appeal / one-shot retry
+
+#132
+  → #134 OpenAI native provider/cache
+  → #135 Anthropic native provider/cache
+  → #136 Gemini native provider/cache
+  → #137 xAI native provider/cache
+  → #138 exact assessment cache + singleflight
+
+Evaluation:
+  #140 challenge safety/recovery
+  #141 provider/cache correctness and economics
+```
 
 | Component | Status |
 |-----------|--------|
 | Canonical Schema (25+ types incl. TaskSubmitted/Contract/Ledger) | ✅ Complete |
 | Capability Negotiation (**25 flags**, Level 0–3) | ✅ Complete (L1 requires **CapAdviceDelivery**) |
 | SQLite WAL Event Store (persistence invariants) | ✅ Complete |
-| JSON Schema Validation (1MB limit, UseNumber) | ✅ Complete |
+| JSON Schema Validation (1MB limit, `UseNumber`) | ✅ Complete |
 | Cross-platform CI (Linux/macOS/Windows + golangci-lint) | ✅ Complete |
 | Adapter contracts (`EventSource`, `InterventionActuator`, HookGate, PendingQueue) | ✅ Complete (interfaces + fakes + FileActuator) |
 | LogObserverAdapter (L0 inbound) | ✅ Complete |
-| Config schema + ReviewerProvider interface | ✅ Complete (stubs/fakes) |
+| Config schema + ReviewerProvider interface | ✅ Complete (local-only default; optional path) |
 | RepeatedFailure Detector (#82) | ✅ Complete (provisional N=3) |
 | VerificationChurn detector (#85) | ✅ Complete (provisional multi-part fingerprint) |
 | Tool-budget + hypothesis-loop detectors (#98) | ✅ Library complete (provisional; not live host auto-intervention) |
 | Fast/Slow + before_tool Policy (#69 / #86) | ✅ Complete; #98 modes → ZOOM_OUT on slow path |
 | Supervisor Orchestrator (#70/#71) | ✅ Complete (composition root + vertical-slice tests) |
 | TaskSubmitted intake mappers (#84) | ✅ Fixture/host mappers (no protocol host type names) |
-| Codex EventSource offline + near-live tail (#95) | ✅ `CodexRolloutSource` / `CodexTailSource` (not process attach) |
+| Codex EventSource offline + near-live tail (#95/#107/#118) | ✅ Observe-only L0; collision-safe source identity |
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |
-| Claude project-local install/doctor (#106) | ✅ Installer unit path; **not** live smoke (#120 open) |
-| Claude settings ownership harden (#117) | ✅ Exact ownership + atomic write |
-| Codex observe product surface (#107/#118) | ✅ Discovery/cursor/codexctl; observe-only L0 |
+| Claude project-local install/doctor (#106/#117) | ✅ Installer/unit + exact ownership; **not** live smoke |
 | Typed ProposedAction (#115) | ✅ ToolName ≠ Command |
 | PreTool response semantics (#116) | ✅ No `continue:false` for ordinary tool deny |
 | Action Alignment design (#104) + wire contract (#119) | ✅ Concept + closed schemas/FakeProvider |
 | Shadow classifier runtime (#105) | ✅ Library shadow; `Enforced=false` always |
-| M3 synthetic + FP benchmarks (#100) | ✅ Offline runner; disposition MORE-DATA; **no hard-gate** |
+| M3 synthetic + FP benchmark foundation (#100) | ✅ Offline runner; disposition **MORE-DATA**; no hard-gate |
 | Managed worktree checkpoint/rollback (#99) | ✅ Clean-only under managed root; not primary checkout |
 | FileActuator advice channel (#97) | ✅ JSONL `reinframe.advice.v1`; write ≠ agent receipt |
 | Street-wire demo (`cmd/streetwire`) | ✅ Offline Codex + M2 loops + bridge + FileActuator demos |
-| Optional LLM Reviewer (OpenAI-compatible, ADR 003 local-only default) | ✅ Uncertain path only; high-confidence never calls LLM (`cmd/reviewerdemo`) |
-| Live Claude ALLOW/BLOCK smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
-| Real advice consumer / ACK (#108) | 🔲 Open (blocked by #120) |
+| Optional LLM Reviewer (OpenAI-compatible, ADR 003 local-only default) | ✅ Uncertain advice path only; not the classifier provider |
+| Live Claude ALLOW/BLOCK/context smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
+| Real advice consumer / ACK (#108) | 🔲 Open — blocked by #120 |
+| Appealable BLOCK challenge core (#131) | 🔲 Open — ready; host-neutral only |
+| Real classifier provider runtime (#132) | 🔲 Open — ready; generic adapter cache-neutral |
+| Native OpenAI/Anthropic/Gemini/xAI classifier adapters (#134–#137) | 🔲 Open — blocked by #132 |
+| Exact `RawAssessment` cache + singleflight (#138) | 🔲 Open — blocked by #132 |
+| Claude challenge delivery/retry (#139) | 🔲 Open — blocked by #131 + #120 |
+| Challenge and cache follow-up evaluation (#140/#141) | 🔲 Open — blocked by implementation lanes |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
+
+## Core invariants
+
+### Action Alignment stays two-valued
+
+```text
+Classifier / deterministic resolver: ALLOW | BLOCK
+Appeal workflow metadata: none | APPEALABLE_CHALLENGE | HUMAN_REVIEW
+```
+
+A challenge is not a third classifier result. A visible justification is external decision evidence, not private chain-of-thought and not automatic permission. The retry is evaluated again. Hard security boundaries remain non-appealable or require human review.
+
+### Cache layers are not interchangeable
+
+```text
+Stage 0 deterministic skip       → no model call
+Reinframe exact assessment hit   → provider call skipped
+Provider prompt/prefix cache     → provider call occurs; provider may reuse prefix work
+No cache                         → normal provider path
+```
+
+Generic OpenAI-compatible endpoints default to **no vendor-specific cache capability**. Native provider adapters own their request fields and telemetry. Cache never owns the final decision; deterministic Stage 2 reruns with current policy, threshold, exceptions, approval, and challenge state.
 
 ## Project Objective
 
-AI coding agents risk "tunneling" (cognitive lock-in, error loops, patch churn, scope drift). Reinframe is being built toward:
+AI coding agents risk "tunneling" through cognitive lock-in, repeated errors, patch churn, scope drift, and disproportionate verification. Reinframe is being built toward:
 
-1. **Supervision Levels (0–3)** — dual axes: *Integration* (handshake) vs *Intervention* (escalation). See `docs/research/level_axes_mapping.md`.
-2. **Canonical Agent Event Schema** *(available)* — 22 Go types + JSON Schemas.
+1. **Supervision Levels (0–3)** — integration capability is separate from intervention severity. See `docs/research/level_axes_mapping.md`.
+2. **Canonical Agent Event Schema** *(available)* — versioned Go types + JSON Schemas.
 3. **SQLite WAL Persistence** *(available)* — append-only event store.
-4. **Control plane contracts** *(available)* — HookGate, advisory delivery + ACK, FileActuator + fakes.
+4. **Control-plane contracts** *(available)* — HookGate, advisory delivery + ACK, FileActuator + fakes.
 5. **M2.0 detect → defer → deliver → ACK loop** *(library + tests)* — `pkg/supervisor`.
-6. **M2.1 effort calibration** *(library)* — intake, verification_churn, before_tool over-SOP deny.
-7. **M2.2 host bridges** *(experimental / observation)* — Codex JSONL offline+tail, Claude PreTool bridge CLI, FileActuator channel; **not** auto-installed dual-host product.
-8. **Optional LLM Reviewer** *(uncertain slow path only)* — OpenAI-compatible provider from config; high-confidence ZOOM_OUT stays deterministic (no LLM). See `docs/reviewer/optional_llm_advice.md` and `go run ./cmd/reviewerdemo`.
+6. **M2.1 effort calibration** *(library)* — intake, verification churn, before-tool over-SOP denial.
+7. **M2.2 host bridges** *(experimental / observation)* — Codex JSONL offline+tail, Claude PreTool bridge CLI, FileActuator channel; not auto-installed dual-host control.
+8. **Action Alignment classifier** *(shadow only)* — raw severity is evidence; deterministic resolver owns `ALLOW | BLOCK`.
+9. **Appealable productivity block** *(planned in #131/#139)* — one structured justification and one semantic retry; no self-permission.
+10. **Provider/cost control** *(planned in #132/#134–#141)* — strict native adapters, provider-aware prefix caching, exact assessment memoization, and measured evaluation.
 
 ---
 
 ## Core Architecture Overview
 
-```
+```text
 reinframe/
 ├── cmd/
-│   ├── streetwire/            # A–F street demo (offline Codex, loops, bridge, FileActuator)
+│   ├── streetwire/            # Offline vertical-slice demos
 │   ├── claudebridge/          # Claude PreTool / prompt stdin→JSON (#96 experimental)
-│   ├── claudeinstall/         # Project-local Claude hooks install/doctor (#106)
-│   ├── codexctl/              # Codex observe-only operator surface (#107)
-│   └── reviewerdemo/          # Optional LLM: fixed ZOOM_OUT vs SuggestedAdvice
+│   ├── claudeinstall/         # Project-local hooks install/doctor (#106/#117)
+│   ├── codexctl/              # Codex observe-only operator surface (#107/#118)
+│   ├── bench/                 # Offline synthetic/FP evaluation (#100)
+│   └── reviewerdemo/          # Optional LLM advice path
 ├── docs/
-│   ├── adapter/               # Host bridge + intake + FileActuator docs
+│   ├── adapter/               # Host bridge + FileActuator docs
 │   ├── reviewer/              # Optional LLM advice honesty
-│   ├── detector/              # #98 fingerprint rules
-│   ├── dev/                   # STREET_WIRE.md street map
+│   ├── detector/              # Detector/fingerprint rules
+│   ├── evaluation/            # Offline benchmark reports
+│   ├── dev/                   # STREET_WIRE.md
 │   ├── roadmap/               # CURRENT.md executable queue
 │   ├── adr/                   # Architecture Decision Records
 │   ├── research/              # Threat model, capability matrix, level axes
-│   ├── specs/                 # Adaptive Task Supervisor + Action Alignment design
-│   └── architecture/          # Execution DAG
+│   ├── specs/                 # Supervisor + Action Alignment contracts
+│   └── architecture/          # Historical/current architecture notes
 ├── pkg/
-│   ├── protocol/              # Schemas, ValidateEvent, capability negotiation (25 flags)
+│   ├── protocol/              # Canonical schemas and capability negotiation
 │   ├── state/                 # SQLite WAL event store
-│   ├── adapter/               # EventSource, Actuators, HookGate, Claude/Codex bridges
+│   ├── adapter/               # HookGate, Claude/Codex bridges, actuators
 │   ├── detector/              # RepeatedFailure, VerificationChurn, ToolBudget, HypothesisLoop
-│   ├── policy/                # Fast/slow + before_tool
-│   ├── supervisor/            # Orchestrator composition + vertical-slice tests
+│   ├── policy/                # Fast/slow and before-tool policy
+│   ├── supervisor/            # Detect → policy → deliver → ACK composition
+│   ├── classifier/            # Closed shadow classifier/FakeProvider
+│   ├── evaluation/            # Offline benchmark runner
+│   ├── workspace/             # Managed worktree checkpoint/rollback
 │   ├── config/                # Versioned configuration schema
-│   └── reviewer/              # ReviewerProvider + OpenAI-compatible optional path
+│   └── reviewer/              # Optional advice ReviewerProvider
 ├── tests/
-│   └── integration/           # Protocol/store/scenario-persistence tests
+│   └── integration/           # Foundation integration tests
 ├── .github/workflows/ci.yml
-├── go.mod                     # module github.com/ImL1s/reinframe
+├── go.mod
 └── README.md
 ```
 
 ### Module Responsibilities
-- **`pkg/protocol`**: Canonical schemas (TaskEnvelope + TaskSubmitted/TaskContract/EvidenceLedger, interventions, …), `BuildContractFromSubmitted` + store emit helpers (`AgentEventFromTask*`), 25 capability flags (including CapAdviceDelivery, CapToolGate, CapInterventionAck, …), Level masks, negotiation. See `docs/specs/adaptive_task_supervisor.md`.
-- **`pkg/state`**: SQLite WAL append-only store; persistence invariants only (not full schema validation on append).
-- **`pkg/adapter`**: Control-plane contracts; LogObserver; Codex offline/tail EventSource; Claude PreTool bridge; FileActuator + FakeActuator; HookGate / PendingQueue. Docs under `docs/adapter/`.
-- **`pkg/detector`**: Deterministic detectors (no LLM): repeated-failure, verification_churn, tool-budget, hypothesis-loop (provisional thresholds).
-- **`pkg/policy`**: Fast path = HookGate; before_tool over-SOP; slow path ZOOM_OUT for high-confidence signals (including #98 modes; optional Reviewer on uncertain branch).
-- **`pkg/supervisor`**: Composition root: detect → policy → queue → deliver → ACK.
-- **`cmd/streetwire`**: End-to-end **library** demo of residual paths (see `docs/dev/STREET_WIRE.md`).
-- **`cmd/claudebridge`**: Stdin PreTool/prompt bridge for optional Claude Code hooks (experimental).
-- **`cmd/claudeinstall`**: Project-local settings install/doctor (#106 unit path; live smoke is #120).
-- **`cmd/codexctl`**: Codex observe-only discovery/tail helper (#107; not control).
-- **`pkg/config`**: Versioned config schema (loader still thin).
-- **`pkg/reviewer`**: Provider interface + optional OpenAI-compatible path (uncertain only).
-- **`tests/integration`**: Foundation integration tests (not full Anti-Tunnel E2E).
+
+- **`pkg/protocol`**: canonical schemas, task/contract/ledger helpers, intervention types, capability negotiation.
+- **`pkg/state`**: append-only SQLite WAL store and persistence invariants.
+- **`pkg/adapter`**: control-plane contracts, Codex observation, Claude PreTool bridge, FileActuator, HookGate and pending queue.
+- **`pkg/detector`**: deterministic repeated-failure, verification-churn, tool-budget and hypothesis-loop signals.
+- **`pkg/policy`**: fast deterministic gates and slow advisory path.
+- **`pkg/supervisor`**: composition root for detect → policy → queue → deliver → ACK.
+- **`pkg/classifier`**: current closed shadow classifier and fake provider; production provider runtime is #132.
+- **`pkg/evaluation`**: offline fixture scoring and reports; #100 disposition remains MORE-DATA.
+- **`pkg/workspace`**: clean-only checkpoint/rollback inside a verified Reinframe-owned worktree.
+- **`pkg/config`**: versioned configuration and env-placeholder secret references.
+- **`pkg/reviewer`**: optional LLM advice provider; separate from the classifier contract.
 
 ### Control-plane reality check
+
 ```text
-Available:  Detectors → Policy → Orchestrator → HookGate / queue / FileActuator|Fake
-            Codex JSONL offline + tail EventSource; Claude PreTool fixture/CLI bridge
-            Claude project-local installer (unit); codexctl observe helpers
-            ProposedAction, shadow classifier (Enforced=false), offline M3 benches
-            managed worktree checkpoint/rollback (clean-only under managed root)
-Not claimed: global ~/.claude silent install, process-attach daemon,
-             live dual-host supervision, calibrated hard-gates,
-             live Claude smoke (#120), advice agent receipt (#108)
+Available:
+  Detectors → Policy → Orchestrator → HookGate / queue / FileActuator|Fake
+  Codex JSONL offline + tail EventSource
+  Claude PreTool fixture/CLI bridge + project-local installer/unit validation
+  ProposedAction, shadow classifier (Enforced=false), offline benchmark runner
+  managed-worktree checkpoint/rollback (clean-only)
+
+Not claimed:
+  global ~/.claude silent install
+  process-attach daemon
+  live dual-host supervision
+  calibrated hard-gates
+  live Claude smoke (#120)
+  advice agent receipt (#108)
+  live challenge-response (#131/#139)
+  real native classifier providers or measured cache savings (#132/#134–#141)
 ```
-Vertical-slice and street-wire tests prove the **library and channel** paths. Host consumers of FileActuator / optional hook install remain operator-owned.
+
+Vertical-slice and street-wire tests prove the **library and channel** paths. Host consumers and live evidence remain capability-specific.
 
 ---
 
-## Supervision Levels (Integration handshake)
+## Supervision Levels (Integration Handshake)
 
 | Level | Name | Required capabilities (summary) | Use case |
 |-------|------|----------------------------------|----------|
-| 0 | **Observe** | CapEventStream | Passive monitoring (e.g. LogObserver) |
+| 0 | **Observe** | CapEventStream | Passive monitoring (for example LogObserver/Codex tail) |
 | 1 | **Advisory** | + CapToolInspection + **CapAdviceDelivery** | Zoom-out / replan advice |
-| 2 | **Guarded** | + Diff + **native CapPause** + Cancel + Resume | Pause/tool gate (SIGSTOP ≠ CapPause) |
+| 2 | **Guarded** | + Diff + native CapPause + Cancel + Resume | Pause/tool gate; OS SIGSTOP ≠ native CapPause |
 | 3 | **Full Control** | + Checkpoint/Rollback, Headless, CLI, MCP, Subagents, SwitchModel | Full autonomy supervision |
 
-Intervention escalation after detection is a **separate axis** (B0–B3). See `docs/research/level_axes_mapping.md`.
+Intervention escalation after detection is a **separate axis**. See `docs/research/level_axes_mapping.md`.
 
 ---
 
 ## Quickstart Guide
 
 ### Prerequisites
-- **Go 1.25.0+**
 
-### Building and Testing
+- Go 1.25.0+
 
-1. **Clone & Download Dependencies**:
+### Building and testing
+
+1. **Clone and download dependencies**:
+
    ```bash
    git clone https://github.com/ImL1s/reinframe.git
    cd reinframe
    go mod download
    ```
 
-2. **Run Unit Tests**:
+2. **Run package tests**:
+
    ```bash
    go test -v -race ./pkg/...
    ```
 
-3. **Run Integration Test Suite**:
+3. **Run integration tests**:
+
    ```bash
    go test -v -race ./tests/integration/...
    ```
 
-4. **Run All Project Tests**:
+4. **Run the full suite**:
+
    ```bash
    go test -v -race ./...
    ```
 
 5. **Build packages and demos**:
+
    ```bash
    go build -v ./...
    go run ./cmd/streetwire -no-codex
-   # optional: offline Codex rollout if present
+
+   # Optional: offline Codex rollout if present
    go run ./cmd/streetwire -codex "$HOME/.codex/sessions/.../rollout-….jsonl"
-   # experimental Claude PreTool bridge
-   echo '{"session_id":"s","tool_name":"Bash"}' | go run ./cmd/claudebridge pretool -deny-tool Bash
-   # optional LLM reviewer demo (fixture HTTP; not always-on)
+
+   # Experimental Claude PreTool bridge
+   echo '{"session_id":"s","tool_name":"Bash"}' \
+     | go run ./cmd/claudebridge pretool -deny-tool Bash
+
+   # Optional LLM reviewer demo (fixture HTTP; not always-on)
    go run ./cmd/reviewerdemo
    ```
 
 ### Further reading
-- [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md) — how pieces connect + honesty boundaries  
-- [`docs/reviewer/optional_llm_advice.md`](docs/reviewer/optional_llm_advice.md) — when LLM advice runs vs fixed ZOOM_OUT  
-- [`docs/adapter/claude_bridge.md`](docs/adapter/claude_bridge.md) — #96  
-- [`docs/adapter/file_actuator.md`](docs/adapter/file_actuator.md) — #97  
-- [`docs/adapter/codex_eventsource.md`](docs/adapter/codex_eventsource.md) — #95 offline/tail  
-- [`docs/detector/tool_budget_hypothesis.md`](docs/detector/tool_budget_hypothesis.md) — #98  
+
+- [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md) — executable backlog and dependencies
+- [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md) — how the available pieces connect
+- [`docs/specs/action_alignment_classifier.md`](docs/specs/action_alignment_classifier.md) — Stage 0/1/2 design
+- [`docs/specs/action_alignment_wire_contract.md`](docs/specs/action_alignment_wire_contract.md) — closed classifier schemas
+- [`docs/evaluation/m3_benchmarks.md`](docs/evaluation/m3_benchmarks.md) — MORE-DATA benchmark report
+- [`docs/reviewer/optional_llm_advice.md`](docs/reviewer/optional_llm_advice.md) — optional advice provider boundary
+- [`docs/adapter/claude_bridge.md`](docs/adapter/claude_bridge.md) — experimental Claude bridge
+- [`docs/adapter/file_actuator.md`](docs/adapter/file_actuator.md) — advice transport and ACK honesty
+- [`docs/adapter/codex_eventsource.md`](docs/adapter/codex_eventsource.md) — Codex offline/tail observation
+- [`docs/detector/tool_budget_hypothesis.md`](docs/detector/tool_budget_hypothesis.md) — review-session detector rules
 
 ---
 
 ## Contributing
 
-Contributions welcome! Please:
+Contributions are welcome. Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md) for open work (epic **#80**; blocked **#120** live smoke, **#108** advice consumer)
-2. Follow existing code style and test patterns; keep honesty boundaries (no false product claims)
-3. Run `go test -race ./...` before submitting PRs
-4. All PRs require CI green on all three platforms + AI review comment before merge (project standard)
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Ready work is currently #131 and #132; #142 is the governance sync for this queue.
+2. Follow the dependency graph. Do not start #134–#138 before #132, #139 before #131+#120, or treat #120 as code-ready while its interactive evidence is unavailable.
+3. Preserve honesty boundaries: no false provider/cache/live-host/hard-gate claims.
+4. Run `go test -race ./...` before submitting PRs.
+5. Project-standard PRs require multi-platform CI and independent AI review before merge.
 
 ---
 

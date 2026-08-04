@@ -26,4 +26,7 @@
 // cmd/claudebridge). Experimental; host settings install is documented only.
 //
 // #97 — FileActuator: non-fake JSONL advice channel with pending ACK (no AutoAck theater).
+//
+// #115 — ProposedAction versioned projection (ToolName ≠ Command); Claude mapper fills
+// ClaudePreToolInput.Proposed; policy over-SOP uses FullSuiteCommand on Command.
 package adapter

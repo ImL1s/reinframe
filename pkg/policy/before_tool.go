@@ -41,7 +41,7 @@ func (e *Engine) EvaluateBeforeTool(ctx context.Context, in BeforeToolInput) ada
 	if tool != "" {
 		if in.ChurnSignal != nil && in.ChurnSignal.FailureMode == detector.FailureModeVerificationChurn {
 			pol.ToolDenyReasons[tool] = adapter.ReasonRedundantValidation
-		} else if shouldDenyDisproportionate(in.Contract, in.Ledger, tool) {
+		} else if shouldDenyDisproportionate(in.Contract, in.Ledger, in.Request) {
 			pol.ToolDenyReasons[tool] = adapter.ReasonDisproportionateScope
 		}
 	}
@@ -50,9 +50,10 @@ func (e *Engine) EvaluateBeforeTool(ctx context.Context, in BeforeToolInput) ada
 }
 
 // shouldDenyDisproportionate is true for trivial/simple low-risk contracts when
-// success criteria are met and the tool is a full-suite validation.
-func shouldDenyDisproportionate(c *protocol.TaskContract, led *protocol.EvidenceLedger, toolName string) bool {
-	if c == nil || !isFullSuiteTool(toolName) {
+// success criteria are met and the proposed action is a full-suite validation.
+// Prefer ProposedAction.Command (#115); do not treat host tool id "Bash" as a suite.
+func shouldDenyDisproportionate(c *protocol.TaskContract, led *protocol.EvidenceLedger, req adapter.HookRequest) bool {
+	if c == nil || !isFullSuiteRequest(req) {
 		return false
 	}
 	if c.Complexity != protocol.ComplexityTrivial && c.Complexity != protocol.ComplexitySimple {
@@ -65,6 +66,14 @@ func shouldDenyDisproportionate(c *protocol.TaskContract, led *protocol.Evidence
 		return false
 	}
 	return true
+}
+
+func isFullSuiteRequest(req adapter.HookRequest) bool {
+	if req.Proposed != nil {
+		return adapter.FullSuiteCommand(*req.Proposed)
+	}
+	// Legacy: only when ToolName itself is a command string (tests / old callers).
+	return isFullSuiteTool(req.ToolName)
 }
 
 func criteriaAllMet(c *protocol.TaskContract, led *protocol.EvidenceLedger) bool {

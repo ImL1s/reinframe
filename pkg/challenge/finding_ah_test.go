@@ -944,6 +944,96 @@ func TestNewlineCommandSeparatorNotCollapsed(t *testing.T) {
 	}
 }
 
+// Codex: quoted-arg whitespace must not collapse inside shell -c / python -c digests.
+// strings.Fields would turn python -c 'if "a  b"' into the same token stream as 'if "a b"'.
+func TestQuotedWhitespaceInCommandDigestDiffers(t *testing.T) {
+	doubleSpace := mustFP(t, challenge.FingerprintInput{
+		Proposed: samplePA(`python -c 'if "a  b": pass'`), SessionID: "sess-1",
+	})
+	singleSpace := mustFP(t, challenge.FingerprintInput{
+		Proposed: samplePA(`python -c 'if "a b": pass'`), SessionID: "sess-1",
+	})
+	if doubleSpace.Fingerprint == singleSpace.Fingerprint {
+		t.Fatal("quoted interior whitespace must change fingerprint (no Fields collapse)")
+	}
+	if doubleSpace.OperationDigest == singleSpace.OperationDigest {
+		t.Fatal("quoted interior whitespace must change operation digest")
+	}
+	// Unquoted horizontal whitespace still collapses (non-quoted path).
+	a := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("echo   hello"), SessionID: "sess-1"})
+	b := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("echo hello"), SessionID: "sess-1"})
+	if a.Fingerprint != b.Fingerprint {
+		t.Fatal("unquoted horizontal whitespace should still collapse")
+	}
+}
+
+// Codex: Justify rechecks ExpiresAtSequence under lock before OPEN→JUSTIFIED.
+func TestJustifyExpiresUnderLockBeforeJustified(t *testing.T) {
+	fixed := time.Date(2026, 8, 4, 16, 0, 0, 0, time.UTC)
+	svc := challenge.NewService(challenge.ServiceConfig{Now: func() time.Time { return fixed }})
+	pa := samplePA("rm -rf build")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+		ExpiresAfterSequences: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Advance store sequence past ExpiresAtSequence without ExpireDue.
+	other := samplePA("echo other")
+	other.SessionID = "sess-other"
+	_, err = svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "sess-other", Proposed: other, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Concurrent Justifies after seq past expiry must not reach JUSTIFIED.
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	states := make(chan challenge.ChallengeState, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
+			errs <- err
+			states <- out.State
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(states)
+	got, ok := svc.Get(rec.ChallengeID)
+	if !ok {
+		t.Fatal("challenge missing")
+	}
+	if got.State == challenge.StateJustified {
+		t.Fatalf("Justify after sequence expiry must not JUSTIFIED, got %s", got.State)
+	}
+	if got.State != challenge.StateExpired {
+		// Allow race where all saw already-expired without winning the transition,
+		// but terminal must not be JUSTIFIED (checked above). Prefer EXPIRED.
+		for err := range errs {
+			if err == nil {
+				t.Fatalf("Justify after expiry must error; record state=%s", got.State)
+			}
+		}
+		return
+	}
+	for err := range errs {
+		if err == nil {
+			t.Fatal("Justify after under-lock expiry must return error")
+		}
+	}
+	for st := range states {
+		if st == challenge.StateJustified {
+			t.Fatal("no Justify result may report JUSTIFIED after under-lock expiry")
+		}
+	}
+}
+
 // Codex: scope-altering rm flags must change delete identity.
 func TestRmOneFileSystemChangesFingerprint(t *testing.T) {
 	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})

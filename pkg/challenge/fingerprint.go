@@ -264,8 +264,9 @@ func operationDigest(pa adapter.ProposedAction, side string) (string, error) {
 			"payload": boundedPayloadDigest(pa.RedactedPayload),
 		}))), nil
 	default:
-		// Shell / unknown / network: whitespace-collapsed command only (preserve case).
-		cmd := normalizeCommandPreserveCase(pa.Command)
+		// Shell / unknown / network: bind command with quote-preserving digest.
+		// strings.Fields collapses spaces inside quoted -c literals; that is unsafe.
+		cmd := normalizeCommandForDigest(pa.Command)
 		if cmd == "" && len(pa.Arguments) == 0 && len(pa.RedactedPayload) == 0 {
 			// Commandless non-read/search: bind tool name so empty targets do not collapse.
 			return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
@@ -510,7 +511,7 @@ func shellPrivilegedOpDigest(cmd, kind string) string {
 	return digestBytes([]byte(encodeFingerprintCanon(map[string]string{
 		"kind": kind,
 		"rest": encodeStringList(rest),
-		"cmd":  normalizeCommandPreserveCase(cmd),
+		"cmd":  normalizeCommandForDigest(cmd),
 	})))
 }
 
@@ -747,10 +748,29 @@ func normalizeResource(s string) string {
 	return s
 }
 
+// normalizeCommandForDigest is the identity encoding for shell command digests.
+//   - Quotes/escapes present: retain exact trimmed command (no Fields collapse inside
+//     quoted literals — e.g. python -c 'if "a  b"' vs 'if "a b"' must differ).
+//   - Otherwise: collapse horizontal whitespace; preserve newlines as separators.
+func normalizeCommandForDigest(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return ""
+	}
+	cmd = strings.ReplaceAll(cmd, "\r\n", "\n")
+	cmd = strings.ReplaceAll(cmd, "\r", "\n")
+	// Quoted/escaped interiors: do not collapse spaces (semantic in -c literals).
+	if strings.ContainsAny(cmd, `'"\\`) {
+		return cmd
+	}
+	return normalizeCommandPreserveCase(cmd)
+}
+
 // normalizeCommandPreserveCase collapses horizontal whitespace only.
 // Newlines/carriage returns are preserved as separators so multi-command
 // lines cannot collide with space-joined single commands
 // (echo ok\nrm -rf build ≠ echo ok rm -rf build).
+// Prefer normalizeCommandForDigest for fingerprint digests.
 func normalizeCommandPreserveCase(cmd string) string {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {

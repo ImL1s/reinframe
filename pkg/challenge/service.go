@@ -321,26 +321,43 @@ func (s *Service) Justify(ctx context.Context, j Justification, knownEvidence []
 	jh := HashJustification(clean)
 
 	s.store.mu.Lock()
-	defer s.store.mu.Unlock()
 	cur, ok := s.store.byID[rec.ChallengeID]
 	if !ok {
+		s.store.mu.Unlock()
 		return ChallengeRecord{}, fmt.Errorf("justify: unknown challenge")
 	}
 	rec = cloneRecord(*cur)
+	// Recheck sequence expiry under the same lock — expireIfNeeded above can race
+	// with concurrent store sequence advances during justification validation.
+	if rec.ExpiresAtSequence > 0 && s.store.seq >= rec.ExpiresAtSequence && !isTerminal(rec.State) {
+		from := rec.State
+		now := s.now()
+		rec = s.store.appendTransition(rec, from, StateExpired, "expired", clean.ChallengeID, rec.OriginalActionID, "", "sequence_expiry_under_lock", now, nil)
+		out := cloneRecord(rec)
+		s.store.mu.Unlock()
+		s.signalTerminal(out.ChallengeID)
+		return out, fmt.Errorf("justify: challenge expired")
+	}
 	if rec.State == StateExpired {
+		s.store.mu.Unlock()
 		return rec, fmt.Errorf("justify: challenge expired")
 	}
 	if rec.State == StateJustified && rec.JustificationHash == jh {
-		return rec, nil // idempotent
+		out := cloneRecord(rec)
+		s.store.mu.Unlock()
+		return out, nil // idempotent
 	}
 	if rec.State != StateOpen {
+		s.store.mu.Unlock()
 		return rec, fmt.Errorf("justify: invalid state %s", rec.State)
 	}
 	from := rec.State
 	rec.JustificationHash = jh
 	now := s.now()
 	rec = s.store.appendTransition(rec, from, StateJustified, "justified", clean.ChallengeID, rec.OriginalActionID, jh, "justification_accepted", now, &clean)
-	return cloneRecord(rec), nil
+	out := cloneRecord(rec)
+	s.store.mu.Unlock()
+	return out, nil
 }
 
 // AttemptRetry consumes one retry budget atomically for a semantically equivalent action.

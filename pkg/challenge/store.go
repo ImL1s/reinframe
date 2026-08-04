@@ -78,9 +78,10 @@ func (s *Store) markNonAppealBarrierLocked(sessionID, fingerprint, note, policyV
 // openTicket is store.seq sampled at Open entry (before heavy work).
 //
 // Rules:
-//   - same PolicyVersion+RulesetHash → always block (one-shot hard deny / concurrent race)
+//   - same PolicyVersion+RulesetHash → always block
 //   - different policy AND openTicket < MarkSeq → block (stale Open lost race to newer denial)
-//   - different policy AND openTicket >= MarkSeq → allow and clear (genuinely later policy change)
+//   - different policy AND openTicket >= MarkSeq → allow WITHOUT deleting the barrier
+//     (retain MarkSeq so other in-flight older tickets still observe the watermark)
 //
 // Caller holds mu.
 func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint, policyVersion, rulesetHash string, openTicket int64) (string, bool) {
@@ -97,10 +98,10 @@ func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint, policyVersion
 		return e.Note, true
 	}
 	// Different policy: only a request that started at/after the barrier may proceed.
+	// Never delete the entry — watermark must remain for other in-flight opens.
 	if openTicket < e.MarkSeq {
 		return e.Note + "_stale_open", true
 	}
-	delete(s.nonAppealBarrier, k)
 	return "", false
 }
 

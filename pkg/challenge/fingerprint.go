@@ -421,8 +421,9 @@ func shellHasCompoundOrQuoting(cmd string) bool {
 // Rejects spoof tokens like `1BAD=x` that must not skip past command position.
 var envAssignPrefix = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
-// shellArgv0 returns the command-position name (basename of first non ENV=val field).
-// Used so `echo rm -rf build` is not classified as delete.
+// shellArgv0 returns the bare command-position name (first non ENV=val field).
+// Path-qualified argv0 (./rm, /tmp/rm) returns "" so privileged delete/find
+// classification fails closed — never path.Base (would treat ./rm as rm).
 func shellArgv0(cmd string) string {
 	fields := strings.Fields(strings.TrimSpace(cmd))
 	i := 0
@@ -438,7 +439,12 @@ func shellArgv0(cmd string) string {
 	if i >= len(fields) {
 		return ""
 	}
-	return path.Base(fields[i])
+	argv0 := fields[i]
+	// Reject path-qualified tools (matches FullSuiteCommand trusted-argv0 rule).
+	if strings.ContainsAny(argv0, `/\`) {
+		return ""
+	}
+	return argv0
 }
 
 func isRecursiveForceRm(cmd string) bool {

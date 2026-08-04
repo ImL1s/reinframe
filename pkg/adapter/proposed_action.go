@@ -226,15 +226,15 @@ func isFullSuiteText(s string) bool {
 	// (e.g. curl .../evil/./... must not be test_suite).
 	fields := strings.Fields(n)
 	i := 0
+	// Any leading ENV= assignment can override PATH/executable resolution
+	// (e.g. PATH=/tmp go test ./...). Fail closed: not a full-suite identity.
 	for i < len(fields) {
 		f := fields[i]
-		// ENV=value prefixes only (valid shell identifiers).
 		if len(f) > 0 && f[0] != '-' && strings.Contains(f, "=") {
 			eq := strings.IndexByte(f, '=')
 			name := f[:eq]
 			if eq > 0 && isShellIdent(name) {
-				i++
-				continue
+				return false
 			}
 		}
 		break

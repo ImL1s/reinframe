@@ -697,6 +697,36 @@ func TestCompoundFullSuiteNotTestSuiteIdentity(t *testing.T) {
 	if plain.Fingerprint == rogue.Fingerprint {
 		t.Fatal("./go must not share fingerprint with bare go test")
 	}
+	// PATH= override must not be test_suite
+	pathEnv := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("PATH=/tmp go test ./..."), SessionID: "sess-1"})
+	if pathEnv.SideEffectClass == challenge.SideEffectTestSuite {
+		t.Fatal("PATH=/tmp go test must not be test_suite")
+	}
+}
+
+// Codex/review: path-qualified rm/find must not share delete identity with bare rm/find.
+func TestPathQualifiedRmNotDeleteTree(t *testing.T) {
+	bare := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	pathRm := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("./rm -rf build"), SessionID: "sess-1"})
+	absRm := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("/tmp/evil/rm -rf build"), SessionID: "sess-1"})
+	if bare.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("bare rm want delete_tree got %s", bare.SideEffectClass)
+	}
+	for _, name := range []struct {
+		n string
+		f challenge.FingerprintResult
+	}{{"./rm", pathRm}, {"/tmp/evil/rm", absRm}} {
+		if name.f.SideEffectClass == challenge.SideEffectDeleteTree || name.f.SideEffectClass == challenge.SideEffectDeleteFile {
+			t.Fatalf("%s must not be delete_*, got %s", name.n, name.f.SideEffectClass)
+		}
+		if bare.Fingerprint == name.f.Fingerprint {
+			t.Fatalf("%s must not share fingerprint with bare rm", name.n)
+		}
+		rel := challenge.ClassifyRelationship(bare, name.f)
+		if rel == challenge.RelSame || rel == challenge.RelBypass {
+			t.Fatalf("%s must not RelSame/RelBypass bare rm, got %s", name.n, rel)
+		}
+	}
 }
 
 // Codex: find global options / -- before path roots.

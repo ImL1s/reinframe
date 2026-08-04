@@ -56,6 +56,9 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 	if ctx != nil && ctx.Err() != nil {
 		return ChallengeRecord{}, ctx.Err()
 	}
+	// Ticket for nonAppealBarrier race detection: sample before heavy work so a
+	// delayed Open that loses to a later hard-deny cannot clear that barrier.
+	openTicket := s.store.Sequence()
 	reqSID := strings.TrimSpace(req.SessionID)
 	paSID := strings.TrimSpace(req.Proposed.SessionID)
 	if reqSID == "" {
@@ -224,8 +227,8 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
-	// Hard-deny / human-review barrier: reject weaker concurrent Open under same policy.
-	if note, blocked := s.store.nonAppealBarrierNoteLocked(req.SessionID, fp.Fingerprint, req.PolicyVersion, req.RulesetHash); blocked {
+	// Hard-deny / human-review barrier: reject concurrent/stale weaker Open.
+	if note, blocked := s.store.nonAppealBarrierNoteLocked(req.SessionID, fp.Fingerprint, req.PolicyVersion, req.RulesetHash, openTicket); blocked {
 		return ChallengeRecord{}, fmt.Errorf("challenge open: non-appealable barrier (%s) for fingerprint", note)
 	}
 	// Under lock: reclaim any active record with the same action fingerprint.

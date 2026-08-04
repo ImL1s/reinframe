@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"path"
 	"strings"
 	"unicode/utf8"
 )
@@ -243,7 +242,12 @@ func isFullSuiteText(s string) bool {
 	if i >= len(fields) {
 		return false
 	}
-	base := strings.ToLower(path.Base(fields[i]))
+	// Trusted argv0 only: bare tool names — not ./go, /tmp/go, or path.Base tricks.
+	argv0 := fields[i]
+	if strings.ContainsAny(argv0, `/\`) {
+		return false
+	}
+	base := strings.ToLower(argv0)
 	switch base {
 	case "go":
 		if i+1 >= len(fields) || !strings.EqualFold(fields[i+1], "test") {

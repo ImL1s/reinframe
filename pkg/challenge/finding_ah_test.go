@@ -689,6 +689,14 @@ func TestCompoundFullSuiteNotTestSuiteIdentity(t *testing.T) {
 	if plain.Fingerprint == curl.Fingerprint {
 		t.Fatal("curl must not share fingerprint with go test ./...")
 	}
+	// path-qualified ./go must not inherit bare go test suite identity
+	rogue := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("./go test ./..."), SessionID: "sess-1"})
+	if rogue.SideEffectClass == challenge.SideEffectTestSuite {
+		t.Fatal("./go test must not be test_suite")
+	}
+	if plain.Fingerprint == rogue.Fingerprint {
+		t.Fatal("./go must not share fingerprint with bare go test")
+	}
 }
 
 // Codex: find global options / -- before path roots.
@@ -704,6 +712,15 @@ func TestFindLeadingOptionsAndDoubleDash(t *testing.T) {
 	}
 	if len(l.TargetResources) != 1 || l.TargetResources[0] != "build" {
 		t.Fatalf("targets=%v", l.TargetResources)
+	}
+	// -D debugopts must consume the following argument (not treat it as a root).
+	d := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -D search a -delete"), SessionID: "sess-1"})
+	wide := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find search a -delete"), SessionID: "sess-1"})
+	if d.Fingerprint == wide.Fingerprint {
+		t.Fatal("find -D search a must not equal find search a")
+	}
+	if len(d.TargetResources) != 1 || d.TargetResources[0] != "a" {
+		t.Fatalf("find -D search a targets=%v want [a]", d.TargetResources)
 	}
 }
 

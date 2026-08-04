@@ -33,12 +33,14 @@ type Store struct {
 	nonAppealBarrier map[string]barrierEntry
 }
 
-// barrierEntry scopes a non-appeal mark to the denial's policy generation
-// (version + ruleset only — not BlockClass, so hard-deny vs later OverSOP still race-safe).
+// barrierEntry scopes a non-appeal mark to the denial's policy generation and
+// store sequence watermark (MarkSeq). Late Open tickets older than MarkSeq lose
+// the race to a harder policy and cannot clear the barrier.
 type barrierEntry struct {
 	Note          string
 	PolicyVersion string
 	RulesetHash   string
+	MarkSeq       int64
 }
 
 // NewStore creates an empty store.
@@ -58,21 +60,30 @@ func barrierKey(sessionID, fingerprint string) string {
 
 // markNonAppealBarrierLocked records that session|fp must not open a new appealable
 // challenge under the same policy generation. Caller holds mu.
+// Bumps seq so MarkSeq is strictly greater than any openTicket sampled earlier via Sequence().
 func (s *Store) markNonAppealBarrierLocked(sessionID, fingerprint, note, policyVersion, rulesetHash string) {
 	if s.nonAppealBarrier == nil {
 		s.nonAppealBarrier = make(map[string]barrierEntry)
 	}
+	s.seq++ // watermark tick (no event required)
 	s.nonAppealBarrier[barrierKey(sessionID, fingerprint)] = barrierEntry{
 		Note:          note,
 		PolicyVersion: policyVersion,
 		RulesetHash:   rulesetHash,
+		MarkSeq:       s.seq,
 	}
 }
 
-// nonAppealBarrierNoteLocked returns the barrier note when the request's policy still
-// matches the denial generation. A changed PolicyVersion/RulesetHash clears the barrier.
+// nonAppealBarrierNoteLocked returns the barrier note when the open must be blocked.
+// openTicket is store.seq sampled at Open entry (before heavy work).
+//
+// Rules:
+//   - same PolicyVersion+RulesetHash → always block (one-shot hard deny / concurrent race)
+//   - different policy AND openTicket < MarkSeq → block (stale Open lost race to newer denial)
+//   - different policy AND openTicket >= MarkSeq → allow and clear (genuinely later policy change)
+//
 // Caller holds mu.
-func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint, policyVersion, rulesetHash string) (string, bool) {
+func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint, policyVersion, rulesetHash string, openTicket int64) (string, bool) {
 	if s.nonAppealBarrier == nil {
 		return "", false
 	}
@@ -81,12 +92,16 @@ func (s *Store) nonAppealBarrierNoteLocked(sessionID, fingerprint, policyVersion
 	if !ok {
 		return "", false
 	}
-	if e.PolicyVersion != policyVersion || e.RulesetHash != rulesetHash {
-		// Policy generation changed — allow a new challenge under the new ruleset.
-		delete(s.nonAppealBarrier, k)
-		return "", false
+	samePolicy := e.PolicyVersion == policyVersion && e.RulesetHash == rulesetHash
+	if samePolicy {
+		return e.Note, true
 	}
-	return e.Note, true
+	// Different policy: only a request that started at/after the barrier may proceed.
+	if openTicket < e.MarkSeq {
+		return e.Note + "_stale_open", true
+	}
+	delete(s.nonAppealBarrier, k)
+	return "", false
 }
 
 // newID allocates a store-wide unique challenge/human-review id.

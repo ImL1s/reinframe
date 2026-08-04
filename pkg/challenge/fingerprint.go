@@ -525,8 +525,9 @@ func extractFindDeleteTargets(cmd string) []string {
 		return nil
 	}
 	i++ // skip find
-	// GNU find: find [-HLP] [-Olevel] [-D opts] [--] [path...] [expression]
+	// GNU find: find [-HLP] [-Olevel] [-D debugopts] [--] [path...] [expression]
 	// Skip leading global options and optional `--` before path roots.
+	// -D takes a following debugopts argument; -Dsearch may be attached.
 	for i < len(fields) {
 		f := fields[i]
 		if f == "--" {
@@ -537,7 +538,19 @@ func extractFindDeleteTargets(cmd string) []string {
 			i++
 			continue
 		}
-		if strings.HasPrefix(f, "-O") || strings.HasPrefix(f, "-D") {
+		if strings.HasPrefix(f, "-O") {
+			i++
+			continue
+		}
+		if f == "-D" {
+			i++ // -D
+			if i < len(fields) {
+				i++ // debugopts
+			}
+			continue
+		}
+		if strings.HasPrefix(f, "-D") && len(f) > 2 {
+			// attached form -Dsearch
 			i++
 			continue
 		}

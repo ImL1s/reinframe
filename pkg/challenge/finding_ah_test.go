@@ -1350,6 +1350,51 @@ func TestDeleteTrailingDotComponentDistinct(t *testing.T) {
 	}
 }
 
+// Skeptic: uniqueSorted must not drop bare "." — multi-target cwd expansion.
+func TestDeleteDotOperandPreservedInIdentity(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+	}{
+		{"rm tree multi", "rm -r . build", "rm -r build"},
+		{"rm file multi", "rm . build", "rm build"},
+		{"find multi root", "find . build -delete", "find build -delete"},
+		{"rm only dot vs file", "rm -r .", "rm -r build"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fa := mustFP(t, challenge.FingerprintInput{Proposed: samplePA(c.a), SessionID: "sess-1"})
+			fb := mustFP(t, challenge.FingerprintInput{Proposed: samplePA(c.b), SessionID: "sess-1"})
+			if fa.Fingerprint == fb.Fingerprint {
+				t.Fatalf("%q must not share fingerprint with %q (targets a=%v b=%v)",
+					c.a, c.b, fa.TargetResources, fb.TargetResources)
+			}
+		})
+	}
+	// Bare "." must appear in targets for cwd deletes.
+	dotOnly := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -r ."), SessionID: "sess-1"})
+	if len(dotOnly.TargetResources) == 0 {
+		t.Fatal("rm -r . must retain a target resource")
+	}
+	found := false
+	for _, tpath := range dotOnly.TargetResources {
+		if tpath == "." {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("rm -r . targets must include \".\", got %v", dotOnly.TargetResources)
+	}
+	// ./ should normalize to a distinct-or-equivalent cwd form but multi still differ.
+	slashDot := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -r ./ build"), SessionID: "sess-1"})
+	plainBuild := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -r build"), SessionID: "sess-1"})
+	if slashDot.Fingerprint == plainBuild.Fingerprint {
+		t.Fatalf("rm -r ./ build must not collapse to rm -r build (targets %v vs %v)",
+			slashDot.TargetResources, plainBuild.TargetResources)
+	}
+}
+
 // Codex: RETRY_PENDING → EXPIRED must be a valid replay edge.
 func TestReplayRetryPendingToExpired(t *testing.T) {
 	st := challenge.NewStore()

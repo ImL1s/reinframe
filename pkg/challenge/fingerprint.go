@@ -1117,7 +1117,9 @@ func uniqueSorted(in []string) []string {
 	}
 	m := map[string]struct{}{}
 	for _, s := range in {
-		if s == "" || s == "." {
+		// Preserve "." — cwd is a real delete operand (rm -r . build ≠ rm -r build).
+		// Only drop empty strings from dedupe.
+		if s == "" {
 			continue
 		}
 		m[s] = struct{}{}

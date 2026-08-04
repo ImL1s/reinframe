@@ -170,11 +170,7 @@ func EvaluateClaudePreTool(ctx context.Context, in ClaudePreToolInput, cfg Claud
 	} else {
 		dec = EvaluateHook(ctx, req, cfg.Policy)
 	}
-	opts := cfg.Response
-	if opts.Profile == "" && opts.HostMode == "" && !opts.NativeDefer {
-		// defaults applied inside FromDecisionOpts
-	}
-	return ClaudeHookResponseFromDecisionOpts(in, dec, opts), dec, nil
+	return ClaudeHookResponseFromDecisionOpts(in, dec, cfg.Response), dec, nil
 }
 
 // EvaluateClaudePreToolJSON is the stdin/fixture entry: raw PreToolUse JSON → response JSON.

@@ -114,7 +114,10 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 	// hard deny cannot be bypassed via a stale productivity challenge retry.
 	if appeal == AppealNonAppealable {
 		now := s.now()
-		s.expireActiveByFingerprint(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_hard_block", now)
+		// Expire under lock so concurrent appealable Open cannot race past supersession.
+		s.store.mu.Lock()
+		s.expireActiveByFingerprintLocked(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_hard_block", now)
+		s.store.mu.Unlock()
 		rec := ChallengeRecord{
 			SchemaVersion:     SchemaChallengeRecord,
 			SessionID:         req.SessionID,
@@ -143,9 +146,8 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 	}
 	if appeal == AppealHumanReview {
 		now := s.now()
-		// Expire any active productivity challenge for the same session|fp first so a
-		// later HUMAN_REVIEW / security reclass cannot be bypassed via stale retry.
-		s.expireActiveByFingerprint(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_human_review", now)
+		// Atomic under store.mu: expire any active productivity challenge for the same
+		// session|fp, then insert the HUMAN_REVIEW record (no concurrent Open window).
 		rec := ChallengeRecord{
 			SchemaVersion:     SchemaChallengeRecord,
 			ChallengeID:       s.newID("hr"),
@@ -173,6 +175,7 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 			UpdatedAt:         now,
 		}
 		s.store.mu.Lock()
+		s.expireActiveByFingerprintLocked(req.SessionID, fp.Fingerprint, req.CorrelationID, req.Proposed.ActionID, "superseded_by_human_review", now)
 		rec = s.store.appendTransition(rec, "", StateHumanReview, "human_review", req.CorrelationID, req.Proposed.ActionID, fp.Fingerprint, "open_human_review", now, nil)
 		s.store.mu.Unlock()
 		s.signalTerminal(rec.ChallengeID)
@@ -758,6 +761,12 @@ func (s *Service) expireIfNeeded(rec *ChallengeRecord) error {
 func (s *Service) expireActiveByFingerprint(sessionID, fingerprint, corr, cause, note string, now time.Time) {
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
+	s.expireActiveByFingerprintLocked(sessionID, fingerprint, corr, cause, note, now)
+}
+
+// expireActiveByFingerprintLocked is the locked body of expireActiveByFingerprint.
+// Caller must hold s.store.mu.
+func (s *Service) expireActiveByFingerprintLocked(sessionID, fingerprint, corr, cause, note string, now time.Time) {
 	var ids []string
 	for id, existing := range s.store.byID {
 		if existing.SessionID != sessionID || existing.ActionFingerprint != fingerprint {
@@ -775,6 +784,7 @@ func (s *Service) expireActiveByFingerprint(sessionID, fingerprint, corr, cause,
 		}
 		from := cur.State
 		_ = s.store.appendTransition(cloneRecord(*cur), from, StateExpired, "expired", corr, cause, fingerprint, note, now, nil)
+		// Signal without re-taking store.mu (termMu is separate).
 		s.store.signalTerminal(id)
 	}
 }

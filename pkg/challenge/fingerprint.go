@@ -397,6 +397,10 @@ func shellHasCompoundOrQuoting(cmd string) bool {
 	return false
 }
 
+// envAssignPrefix matches shell ENV=value prefixes only (valid identifier names).
+// Rejects spoof tokens like `1BAD=x` that must not skip past command position.
+var envAssignPrefix = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
 // shellArgv0 returns the command-position name (basename of first non ENV=val field).
 // Used so `echo rm -rf build` is not classified as delete.
 func shellArgv0(cmd string) string {
@@ -404,8 +408,8 @@ func shellArgv0(cmd string) string {
 	i := 0
 	for i < len(fields) {
 		f := fields[i]
-		// ENV=value prefixes only (not --flag=x)
-		if strings.Contains(f, "=") && !strings.HasPrefix(f, "-") {
+		// ENV=value prefixes only — name must be a valid shell identifier.
+		if envAssignPrefix.MatchString(f) {
 			i++
 			continue
 		}
@@ -457,22 +461,25 @@ func isPlainRm(cmd string) bool {
 	return true
 }
 
+func skipShellEnvPrefixes(fields []string) int {
+	i := 0
+	for i < len(fields) {
+		if envAssignPrefix.MatchString(fields[i]) {
+			i++
+			continue
+		}
+		break
+	}
+	return i
+}
+
 func extractRmTargets(cmd string) []string {
 	if !strings.EqualFold(shellArgv0(cmd), "rm") {
 		return nil
 	}
 	fields := strings.Fields(cmd)
 	var out []string
-	// Skip ENV= and the command-position rm token only.
-	i := 0
-	for i < len(fields) {
-		f := fields[i]
-		if strings.Contains(f, "=") && !strings.HasPrefix(f, "-") {
-			i++
-			continue
-		}
-		break
-	}
+	i := skipShellEnvPrefixes(fields)
 	if i >= len(fields) {
 		return nil
 	}
@@ -493,15 +500,7 @@ func extractFindDeleteTargets(cmd string) []string {
 	}
 	fields := strings.Fields(cmd)
 	var out []string
-	i := 0
-	for i < len(fields) {
-		f := fields[i]
-		if strings.Contains(f, "=") && !strings.HasPrefix(f, "-") {
-			i++
-			continue
-		}
-		break
-	}
+	i := skipShellEnvPrefixes(fields)
 	if i >= len(fields) {
 		return nil
 	}

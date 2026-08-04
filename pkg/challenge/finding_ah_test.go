@@ -729,6 +729,16 @@ func TestEchoRmNotDeleteTreeIdentity(t *testing.T) {
 	if rel == challenge.RelSame || rel == challenge.RelBypass {
 		t.Fatalf("echo rm must not RelSame/RelBypass real delete, got %s", rel)
 	}
+	// Spoof env-like token must not skip argv0: `1BAD=x rm -rf build`
+	spoof := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("1BAD=x rm -rf build"), SessionID: "sess-1"})
+	if spoof.SideEffectClass == challenge.SideEffectDeleteTree || spoof.SideEffectClass == challenge.SideEffectDeleteFile {
+		t.Fatalf("spoof ENV token must not yield delete_*, got %s", spoof.SideEffectClass)
+	}
+	// Valid ENV prefix still allows command-position rm.
+	envOk := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("FOO=bar rm -rf build"), SessionID: "sess-1"})
+	if envOk.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("valid ENV prefix + rm want delete_tree got %s", envOk.SideEffectClass)
+	}
 }
 
 // Codex P2: multi-Service shared Store IDs must not collide under fixed Now.

@@ -37,7 +37,6 @@ var (
 	reRmRF       = regexp.MustCompile(`(?i)\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)\s+(\S+)`)
 	reRmRF2      = regexp.MustCompile(`(?i)\brm\s+--recursive\s+--force\s+(\S+)`)
 	reFindDelete = regexp.MustCompile(`(?i)\bfind\s+(\S+)\s+.*-delete\b`)
-	reRmFile     = regexp.MustCompile(`(?i)\brm\s+(?:-[a-zA-Z]+\s+)*(\S+)`)
 	reCurl       = regexp.MustCompile(`(?i)\b(curl|wget)\b`)
 	reDeploy     = regexp.MustCompile(`(?i)\b(kubectl\s+apply|helm\s+upgrade|terraform\s+apply|gcloud\s+.*deploy|fly\s+deploy|firebase\s+deploy)\b`)
 	rePayment    = regexp.MustCompile(`(?i)\b(stripe\s+|charge\s+|paypal\s+|billing\s+)\b`)

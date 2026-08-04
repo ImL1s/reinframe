@@ -1212,6 +1212,212 @@ func TestFindSymlinkTraversalChangesFingerprint(t *testing.T) {
 	}
 }
 
+// Finding 1: last-wins traversal — -P -L ≠ -L -P; identical effective modes deterministic.
+func TestFindTraversalLastWinsOrder(t *testing.T) {
+	pl := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -P -L build -delete"), SessionID: "sess-1"})
+	lp := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -L -P build -delete"), SessionID: "sess-1"})
+	if pl.SideEffectClass != challenge.SideEffectDeleteTree || lp.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("want delete_tree pl=%s lp=%s", pl.SideEffectClass, lp.SideEffectClass)
+	}
+	if pl.Fingerprint == lp.Fingerprint {
+		t.Fatal("find -P -L must not share fingerprint with find -L -P (last-wins)")
+	}
+	// Same last mode: -H -L and bare -L should share effective L.
+	hl := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -H -L build -delete"), SessionID: "sess-1"})
+	lOnly := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -L build -delete"), SessionID: "sess-1"})
+	if hl.Fingerprint != lOnly.Fingerprint {
+		t.Fatal("find -H -L and find -L should share effective last mode L")
+	}
+	// Traversal after path is expression territory → not global; fail closed or non-privileged.
+	// find build -L -delete has -L after path → predicates/malformed for path-only delete.
+	afterPath := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -L -delete"), SessionID: "sess-1"})
+	if afterPath.SideEffectClass == challenge.SideEffectDeleteTree {
+		// If still delete_tree, must not match leading -L form.
+		if afterPath.Fingerprint == lOnly.Fingerprint {
+			t.Fatal("post-path -L must not equal leading -L delete identity")
+		}
+	}
+}
+
+// Finding 2: recursive without force is delete_tree; plain rm is delete_file.
+func TestRecursiveRmWithoutForceIsDeleteTree(t *testing.T) {
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build"), SessionID: "sess-1"})
+	rec := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -r build"), SessionID: "sess-1"})
+	recR := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -R build"), SessionID: "sess-1"})
+	recLong := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm --recursive build"), SessionID: "sess-1"})
+	if plain.SideEffectClass != challenge.SideEffectDeleteFile {
+		t.Fatalf("rm build want delete_file, got %s", plain.SideEffectClass)
+	}
+	if rec.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("rm -r build want delete_tree, got %s", rec.SideEffectClass)
+	}
+	if plain.Fingerprint == rec.Fingerprint {
+		t.Fatal("rm build must not share fingerprint with rm -r build")
+	}
+	if rec.Fingerprint != recR.Fingerprint || rec.Fingerprint != recLong.Fingerprint {
+		t.Fatal("-r, -R, --recursive should share recursive delete identity")
+	}
+	// Post-- -r is operand, not recursive.
+	operand := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -- -r build"), SessionID: "sess-1"})
+	if operand.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("rm -- -r build must not be delete_tree, got %s targets=%v", operand.SideEffectClass, operand.TargetResources)
+	}
+	// rewrite with find for recursive.
+	find := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -delete"), SessionID: "sess-1"})
+	if rec.Fingerprint != find.Fingerprint {
+		t.Fatal("rm -r build should rewrite-match find build -delete")
+	}
+}
+
+// Finding 3: GNU interactive aliases + last-wins table.
+func TestRmInteractiveAliasesTable(t *testing.T) {
+	type row struct {
+		cmd  string
+		want string // side class or "generic" if not privileged delete
+		// sameKey groups commands that must share fingerprint (non-empty)
+		sameKey string
+	}
+	// Group by effective prompt: all / once / none(default) within same targets+class.
+	cases := []struct {
+		cmd     string
+		wantDel bool // privileged delete (file or tree)
+		group   string
+	}{
+		{"rm -i build", true, "all"},
+		{"rm --interactive=yes build", true, "all"},
+		{"rm --interactive=always build", true, "all"},
+		{"rm -i --interactive=no build", true, "none"}, // last wins no → none
+		{"rm --interactive=yes -f build", true, "none"},
+		{"rm -f -i build", true, "all"},
+		{"rm -i -f build", true, "none"},
+		{"rm -rI -f build", true, "none_tree"},
+		{"rm -rfI build", true, "once_tree"}, // I after f in cluster: f then I → once
+		{"rm --interactive=none build", true, "none"},
+		{"rm --interactive=bogus build", false, "generic"},
+		{"rm build", true, "none"},
+	}
+	fps := map[string]string{}
+	for _, c := range cases {
+		fp := mustFP(t, challenge.FingerprintInput{Proposed: samplePA(c.cmd), SessionID: "sess-1"})
+		isDel := fp.SideEffectClass == challenge.SideEffectDeleteFile || fp.SideEffectClass == challenge.SideEffectDeleteTree
+		if isDel != c.wantDel {
+			t.Fatalf("%q wantDel=%v got class=%s", c.cmd, c.wantDel, fp.SideEffectClass)
+		}
+		if !c.wantDel {
+			continue
+		}
+		if prev, ok := fps[c.group]; ok {
+			if prev != fp.Fingerprint {
+				t.Fatalf("%q should share group %s fingerprint", c.cmd, c.group)
+			}
+		} else {
+			fps[c.group] = fp.Fingerprint
+		}
+	}
+	if fps["all"] == fps["none"] {
+		t.Fatal("prompt=all must differ from prompt=none/default")
+	}
+	if fps["once_tree"] == fps["none_tree"] {
+		t.Fatal("recursive prompt=once must differ from recursive force-last none")
+	}
+}
+
+// Finding 4: trailing slash preserved on delete targets.
+func TestDeleteTrailingSlashDistinct(t *testing.T) {
+	a := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build"), SessionID: "sess-1"})
+	b := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build/"), SessionID: "sess-1"})
+	if a.Fingerprint == b.Fingerprint {
+		t.Fatal("rm build must not share fingerprint with rm build/")
+	}
+	ra := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -r dir"), SessionID: "sess-1"})
+	rb := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -r dir/"), SessionID: "sess-1"})
+	if ra.Fingerprint == rb.Fingerprint {
+		t.Fatal("rm -r dir must not share fingerprint with rm -r dir/")
+	}
+	// find vs rm rewrite only when targets equivalent — trailing slash on rm breaks rewrite.
+	find := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find dir -delete"), SessionID: "sess-1"})
+	if find.Fingerprint == rb.Fingerprint {
+		t.Fatal("find dir -delete must not match rm -r dir/ (trailing slash)")
+	}
+	if find.Fingerprint != ra.Fingerprint {
+		t.Fatal("find dir -delete should match rm -r dir without trailing slash")
+	}
+}
+
+// Codex: -d/--dir bind into delete digest.
+func TestRmDirFlagChangesFingerprint(t *testing.T) {
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build"), SessionID: "sess-1"})
+	d := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -d build"), SessionID: "sess-1"})
+	dir := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm --dir build"), SessionID: "sess-1"})
+	if plain.Fingerprint == d.Fingerprint || plain.Fingerprint == dir.Fingerprint {
+		t.Fatal("rm -d/--dir must not share fingerprint with plain rm")
+	}
+	if d.Fingerprint != dir.Fingerprint {
+		t.Fatal("-d and --dir should share dir_removal identity")
+	}
+}
+
+// Codex: lone dash is an rm operand.
+func TestRmLoneDashOperand(t *testing.T) {
+	withDash := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm - build"), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build"), SessionID: "sess-1"})
+	if withDash.Fingerprint == plain.Fingerprint {
+		t.Fatal("rm - build must not share fingerprint with rm build")
+	}
+	if len(withDash.TargetResources) < 2 {
+		t.Fatalf("want targets for - and build, got %v", withDash.TargetResources)
+	}
+}
+
+// Codex: find -D help is exit-only; find ! -delete not path-only delete.
+func TestFindHelpAndBangOperatorFailClosed(t *testing.T) {
+	help := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -D help build -delete"), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -delete"), SessionID: "sess-1"})
+	if help.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("-D help must not be delete_tree, got %s", help.SideEffectClass)
+	}
+	if help.Fingerprint == plain.Fingerprint {
+		t.Fatal("find -D help must not share fingerprint with find build -delete")
+	}
+	bang := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find ! -delete"), SessionID: "sess-1"})
+	if bang.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("find ! -delete must not be privileged delete_tree, got %s", bang.SideEffectClass)
+	}
+}
+
+// Codex: replace_all must be JSON boolean.
+func TestEditReplaceAllTypeCheck(t *testing.T) {
+	payload, _ := json.Marshal(map[string]any{"new_string": "x", "replace_all": "false"})
+	pa := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ActionID: "e", ToolName: "Edit", ToolClass: adapter.ToolClassEdit,
+		FilePath: "main.go", RedactedPayload: payload, ParseStatus: "ok",
+		WorkspaceRevision: "ws-1", ContractRevision: 3,
+	}
+	_, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa, SessionID: "sess-1"})
+	if err == nil {
+		t.Fatal("string replace_all must fail closed")
+	}
+}
+
+// Codex: empty content string is a valid write surface.
+func TestEditEmptyContentPresent(t *testing.T) {
+	payload, _ := json.Marshal(map[string]string{"content": ""})
+	pa := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ActionID: "e", ToolName: "Write", ToolClass: adapter.ToolClassEdit,
+		FilePath: "empty.txt", RedactedPayload: payload, ParseStatus: "ok",
+		WorkspaceRevision: "ws-1", ContractRevision: 3,
+	}
+	fp, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa, SessionID: "sess-1"})
+	if err != nil {
+		t.Fatalf("empty content must be allowed: %v", err)
+	}
+	if fp.OperationDigest == "" {
+		t.Fatal("empty content must still bind operation digest")
+	}
+}
+
 // Codex: recursive-flag scan must stop at rm `--` (filename -rf is not recursive).
 func TestRmDoubleDashStopsRecursiveFlagScan(t *testing.T) {
 	// `rm -- -rf build` should NOT be delete_tree of build via recursive classification.

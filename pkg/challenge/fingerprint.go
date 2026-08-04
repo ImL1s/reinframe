@@ -188,7 +188,8 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 		// Compound / quoting / resolution ENV (PATH= etc.): never privileged delete identity.
 		// Matches FullSuiteCommand fail-closed on executable-resolution overrides.
 		unsafeShell := shellHasCompoundOrQuoting(cmd) || shellHasResolutionEnv(cmd)
-		if isRecursiveForceRm(cmd) {
+		// Recursive (-r/-R/--recursive) is tree deletion; force is not required.
+		if isRecursiveRm(cmd) {
 			if unsafeShell || rmHasExitOnlyOrUnknownOption(cmd) {
 				return SideEffectShellGeneric, extractPaths(cmd), nil
 			}
@@ -200,7 +201,7 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 		}
 		// find -delete only when find is bare command-position (case-sensitive).
 		if shellArgv0(cmd) == "find" && reFindDelete.MatchString(cmd) {
-			if unsafeShell || findHasInvalidOptLevel(cmd) {
+			if unsafeShell || findFailClosedGlobals(cmd) {
 				return SideEffectShellGeneric, extractPaths(cmd), nil
 			}
 			// Predicate-bearing find (e.g. -name) is not path-only delete_tree equality.
@@ -208,11 +209,6 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 				return SideEffectShellGeneric, extractPaths(cmd), nil
 			}
 			targets := extractFindDeleteTargets(cmd)
-			if len(targets) == 0 {
-				if m := reFindDelete.FindStringSubmatch(cmd); len(m) >= 2 {
-					targets = []string{normalizeResource(m[1])}
-				}
-			}
 			if len(targets) == 0 {
 				return SideEffectShellGeneric, extractPaths(cmd), nil
 			}
@@ -344,23 +340,28 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 				return "", fmt.Errorf("proposed_action: edit payload key %q unsupported", k)
 			}
 		}
-		if s := stringField(m, "old_string", "old_str"); s != "" {
+		if s, ok := stringFieldPresent(m, "old_string", "old_str"); ok {
 			d := digestBytes([]byte(s))
 			if oldDig != "" && oldDig != d {
 				return "", fmt.Errorf("proposed_action: edit old content conflicts between args and payload")
 			}
 			oldDig = d
 		}
-		if s := stringField(m, "new_string", "new_str", "content", "contents"); s != "" {
+		// Present empty string is a valid write/truncate surface (≠ missing key).
+		if s, ok := stringFieldPresent(m, "new_string", "new_str", "content", "contents"); ok {
 			d := digestBytes([]byte(s))
 			if newDig != "" && newDig != d {
 				return "", fmt.Errorf("proposed_action: edit new content conflicts between args and payload")
 			}
 			newDig = d
 		}
-		// Bind replace_all so false vs true cannot share fingerprint.
+		// Bind replace_all only as JSON boolean (string "false" must not match false).
 		if v, ok := m["replace_all"]; ok {
-			parts["replace_all"] = fmt.Sprintf("%v", v)
+			b, ok := v.(bool)
+			if !ok {
+				return "", fmt.Errorf("proposed_action: edit replace_all must be JSON boolean")
+			}
+			parts["replace_all"] = fmt.Sprintf("%t", b)
 		}
 		// Path aliases must not diverge from ProposedAction.FilePath (only FilePath binds).
 		if s := stringField(m, "file_path", "path"); s != "" {
@@ -389,14 +390,23 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 }
 
 func stringField(m map[string]any, keys ...string) string {
+	s, ok := stringFieldPresent(m, keys...)
+	if !ok || s == "" {
+		return ""
+	}
+	return s
+}
+
+// stringFieldPresent returns a string field even when empty (key present with "").
+func stringFieldPresent(m map[string]any, keys ...string) (string, bool) {
 	for _, k := range keys {
 		if v, ok := m[k]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				return s
+			if s, ok := v.(string); ok {
+				return s, true
 			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 func digestBytes(b []byte) string {
@@ -526,8 +536,8 @@ func shellPrivilegedOpDigest(cmd, kind string) string {
 }
 
 // extractDeleteScopeFlags returns flags that change deletion scope/safety beyond
-// recursive/force (which are rewrite-eligible between rm and find -delete).
-// Prompt mode is bound as the effective last-wins mode (GNU rm: last of -f/-i/-I wins).
+// recursive flags (rewrite-eligible between rm -r and find -delete when targets match).
+// Find traversal: last-wins single mode. Rm prompt: last-wins normalized mode.
 func extractDeleteScopeFlags(cmd string) []string {
 	fields := strings.Fields(cmd)
 	i := skipShellEnvPrefixes(fields)
@@ -538,8 +548,10 @@ func extractDeleteScopeFlags(cmd string) []string {
 	i++
 	var out []string
 	if argv0 == "rm" {
-		// effectivePrompt: "" default/none-from-force only; "all"/"once" bind into digest.
+		// effectivePrompt: "all" | "once" | "none" | "" (default). Only all/once bind
+		// so prompt_none/default can still rewrite-match find -delete.
 		effectivePrompt := ""
+		dirRemoval := false
 		for ; i < len(fields); i++ {
 			f := fields[i]
 			if f == "--" {
@@ -549,47 +561,57 @@ func extractDeleteScopeFlags(cmd string) []string {
 			case f == "--one-file-system" || f == "--preserve-root" || strings.HasPrefix(f, "--preserve-root=") ||
 				f == "--no-preserve-root":
 				out = append(out, f)
+			case f == "--dir" || f == "-d":
+				dirRemoval = true
 			case f == "--force":
-				effectivePrompt = "" // force cancels prompt (same as default for rewrite)
-			case f == "-i" || f == "--interactive" || f == "--interactive=always":
+				effectivePrompt = "none"
+			case f == "-i":
 				effectivePrompt = "all"
-			case f == "-I" || f == "--interactive=once":
+			case f == "-I":
 				effectivePrompt = "once"
-			case f == "--interactive=never":
-				effectivePrompt = ""
-			case strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--"):
-				// short clusters left-to-right; r/R/f/v do not themselves bind as scope
-				// except f/i/I affect prompt precedence.
+			case f == "--interactive":
+				effectivePrompt = "all"
+			case strings.HasPrefix(f, "--interactive="):
+				mode, ok := parseInteractiveValue(strings.TrimPrefix(f, "--interactive="))
+				if ok {
+					effectivePrompt = mode
+				}
+			case strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--") && f != "-":
 				for _, r := range f[1:] {
 					switch r {
 					case 'f':
-						effectivePrompt = ""
+						effectivePrompt = "none"
 					case 'i':
 						effectivePrompt = "all"
 					case 'I':
 						effectivePrompt = "once"
-					case 'r', 'R', 'v', 'd':
-						// rewrite-eligible / non-scope
+					case 'd':
+						dirRemoval = true
+					case 'r', 'R', 'v':
+						// recursive/verbose not scope beyond class
 					default:
 						out = append(out, string(r))
 					}
 				}
 			}
 		}
+		if dirRemoval {
+			out = append(out, "dir_removal")
+		}
 		if effectivePrompt == "all" || effectivePrompt == "once" {
 			out = append(out, "prompt="+effectivePrompt)
 		}
 	}
 	if argv0 == "find" {
-		// Bind symlink traversal mode: -L follows dirs, -P does not, -H is mixed.
-		// Bind valid -Olevel forms only.
+		// Last-wins traversal mode only (sorting would erase -P -L vs -L -P).
+		effectiveTraversal := ""
 		for ; i < len(fields); i++ {
 			f := fields[i]
 			if f == "--" {
 				break
 			}
 			if f == "-H" || f == "-L" || f == "-P" {
-				out = append(out, f)
+				effectiveTraversal = f
 				continue
 			}
 			if isValidFindOLevel(f) {
@@ -603,11 +625,30 @@ func extractDeleteScopeFlags(cmd string) []string {
 			if strings.HasPrefix(f, "-D") && len(f) > 2 {
 				continue
 			}
+			// path or expression — stop global option scan
 			break
+		}
+		if effectiveTraversal != "" {
+			out = append(out, "traversal="+effectiveTraversal)
 		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+// parseInteractiveValue maps GNU rm --interactive=VALUE aliases to closed modes.
+// Returns ok=false for unsupported values (caller fail-closed).
+func parseInteractiveValue(v string) (mode string, ok bool) {
+	switch v {
+	case "always", "yes":
+		return "all", true
+	case "once":
+		return "once", true
+	case "never", "no", "none":
+		return "none", true
+	default:
+		return "", false
+	}
 }
 
 // isValidFindOLevel reports GNU find [-Olevel] with an attached decimal integer.
@@ -624,8 +665,8 @@ func isValidFindOLevel(f string) bool {
 	return true
 }
 
-// findHasInvalidOptLevel is true when find carries a malformed -O token.
-func findHasInvalidOptLevel(cmd string) bool {
+// findFailClosedGlobals is true for malformed -O or exit-only -D help (no privileged delete).
+func findFailClosedGlobals(cmd string) bool {
 	if shellArgv0(cmd) != "find" {
 		return false
 	}
@@ -654,13 +695,22 @@ func findHasInvalidOptLevel(cmd string) bool {
 		if f == "-D" {
 			i++
 			if i < len(fields) {
+				if fields[i] == "help" {
+					return true // exit-only debug help
+				}
 				i++
 			}
 			continue
 		}
 		if strings.HasPrefix(f, "-D") && len(f) > 2 {
+			if f == "-Dhelp" {
+				return true
+			}
 			i++
 			continue
+		}
+		if f == "--help" || f == "--version" {
+			return true
 		}
 		break
 	}
@@ -696,11 +746,19 @@ func rmHasExitOnlyOrUnknownOption(cmd string) bool {
 				f == "--dir" ||
 				f == "--one-file-system" || f == "--preserve-root" ||
 				strings.HasPrefix(f, "--preserve-root=") || f == "--no-preserve-root" ||
-				f == "--interactive" || strings.HasPrefix(f, "--interactive="):
+				f == "--interactive":
 				// known
+			case strings.HasPrefix(f, "--interactive="):
+				if _, ok := parseInteractiveValue(strings.TrimPrefix(f, "--interactive=")); !ok {
+					return true
+				}
 			default:
 				return true
 			}
+			continue
+		}
+		// Lone "-" is a filename operand, not an option.
+		if f == "-" {
 			continue
 		}
 		// short options: case-sensitive letters as GNU accepts (r/R/f/v/i/I/d)
@@ -709,7 +767,6 @@ func rmHasExitOnlyOrUnknownOption(cmd string) bool {
 				switch r {
 				case 'r', 'R', 'f', 'v', 'i', 'I', 'd':
 				default:
-					// unknown short still fails closed for privileged identity
 					return true
 				}
 			}
@@ -719,7 +776,7 @@ func rmHasExitOnlyOrUnknownOption(cmd string) bool {
 }
 
 // findHasExpressionPredicates reports find expression tokens beyond path roots and -delete.
-// e.g. -name, -type, -path make delete scope unequal to plain path -delete.
+// e.g. -name, -type, -path, ! EXPR make delete scope unequal to plain path -delete.
 func findHasExpressionPredicates(cmd string) bool {
 	fields := strings.Fields(cmd)
 	i := skipShellEnvPrefixes(fields)
@@ -743,7 +800,6 @@ func findHasExpressionPredicates(cmd string) bool {
 			continue
 		}
 		if strings.HasPrefix(f, "-O") {
-			// invalid -O handled by findHasInvalidOptLevel; treat as expression boundary
 			break
 		}
 		if f == "-D" {
@@ -759,13 +815,15 @@ func findHasExpressionPredicates(cmd string) bool {
 		}
 		break
 	}
-	// skip path roots
-	for i < len(fields) && !strings.HasPrefix(fields[i], "-") {
+	// skip path roots (not operators like ! or () )
+	for i < len(fields) {
+		f := fields[i]
+		if f == "!" || f == "(" || f == ")" || strings.HasPrefix(f, "-") {
+			break
+		}
 		i++
 	}
 	// remaining expression: only the sole token -delete is rewrite-eligible.
-	// Boolean glue (-o/-a), printers (-print), and other actions make scope unequal
-	// (e.g. find build -print -o -delete must not share delete_tree with find build -delete).
 	expr := fields[i:]
 	if len(expr) != 1 || expr[0] != "-delete" {
 		return true
@@ -773,51 +831,42 @@ func findHasExpressionPredicates(cmd string) bool {
 	return false
 }
 
-func isRecursiveForceRm(cmd string) bool {
-	// Command-position only, case-sensitive — never match `echo rm -rf` or `RM -rf`.
+// isRecursiveRm reports -r/-R/--recursive before `--` (force not required).
+func isRecursiveRm(cmd string) bool {
 	if shellArgv0(cmd) != "rm" {
 		return false
 	}
-	// Field-based only, stop at `--`: operands like `-rf` must not set flags
-	// (`rm -- -rf build` is NOT recursive delete of build).
-	// Long options are case-sensitive (--FORCE is not --force).
 	fields := strings.Fields(cmd)
 	i := skipShellEnvPrefixes(fields)
 	if i >= len(fields) {
 		return false
 	}
 	i++ // skip rm
-	hasR, hasF := false, false
 	for ; i < len(fields); i++ {
 		f := fields[i]
 		if f == "--" {
 			break
 		}
 		if f == "--recursive" {
-			hasR = true
-			continue
+			return true
 		}
-		if f == "--force" {
-			hasF = true
-			continue
+		if f == "-" {
+			continue // operand
 		}
 		if strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--") {
 			if strings.Contains(f, "r") || strings.Contains(f, "R") {
-				hasR = true
-			}
-			if strings.Contains(f, "f") {
-				hasF = true
+				return true
 			}
 		}
 	}
-	return hasR && hasF
+	return false
 }
 
 func isPlainRm(cmd string) bool {
 	if shellArgv0(cmd) != "rm" {
 		return false
 	}
-	if isRecursiveForceRm(cmd) {
+	if isRecursiveRm(cmd) {
 		return false
 	}
 	return true
@@ -847,7 +896,7 @@ func extractRmTargets(cmd string) []string {
 	}
 	i++ // skip argv0 (rm)
 	// After `--`, every token is an operand (including names starting with `-`).
-	// GNU rm: `rm -- -foo` deletes the file named -foo.
+	// Lone "-" is always an operand (filename), never an option.
 	afterDashDash := false
 	for ; i < len(fields); i++ {
 		f := fields[i]
@@ -856,11 +905,15 @@ func extractRmTargets(cmd string) []string {
 				afterDashDash = true
 				continue
 			}
+			if f == "-" {
+				out = append(out, normalizeDeleteTarget(f))
+				continue
+			}
 			if strings.HasPrefix(f, "-") {
 				continue // option
 			}
 		}
-		out = append(out, normalizeResource(f))
+		out = append(out, normalizeDeleteTarget(f))
 	}
 	return out
 }
@@ -877,7 +930,6 @@ func extractFindDeleteTargets(cmd string) []string {
 	}
 	i++ // skip find
 	// GNU find: find [-HLP] [-Olevel] [-D debugopts] [--] [path...] [expression]
-	// Only valid -Olevel (attached decimal) is skipped; bare -O fails closed upstream.
 	for i < len(fields) {
 		f := fields[i]
 		if f == "--" {
@@ -893,30 +945,28 @@ func extractFindDeleteTargets(cmd string) []string {
 			continue
 		}
 		if strings.HasPrefix(f, "-O") {
-			// invalid — do not consume as option (caller fail-closed)
 			break
 		}
 		if f == "-D" {
-			i++ // -D
+			i++
 			if i < len(fields) {
-				i++ // debugopts
+				i++
 			}
 			continue
 		}
 		if strings.HasPrefix(f, "-D") && len(f) > 2 {
-			// attached form -Dsearch
 			i++
 			continue
 		}
 		break
 	}
-	// Path roots until expression (first remaining '-' token).
+	// Path roots until expression (dash option, ! , or parentheses).
 	for ; i < len(fields); i++ {
 		f := fields[i]
-		if strings.HasPrefix(f, "-") {
+		if f == "!" || f == "(" || f == ")" || strings.HasPrefix(f, "-") {
 			break
 		}
-		out = append(out, normalizeResource(f))
+		out = append(out, normalizeDeleteTarget(f))
 	}
 	return out
 }
@@ -925,6 +975,10 @@ func extractPaths(cmd string) []string {
 	fields := strings.Fields(cmd)
 	var out []string
 	for _, f := range fields {
+		if f == "-" {
+			out = append(out, normalizeResource(f))
+			continue
+		}
 		if strings.HasPrefix(f, "-") {
 			continue
 		}
@@ -939,12 +993,33 @@ func extractPaths(cmd string) []string {
 	return out
 }
 
+// normalizeResource is general path cleanup (non-delete). Trailing slash is collapsed.
 func normalizeResource(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, `"'`)
 	s = path.Clean(s)
 	s = strings.TrimPrefix(s, "./")
 	return s
+}
+
+// normalizeDeleteTarget preserves meaningful trailing-slash semantics for deletion
+// identity (rm build vs rm build/ differ when build is a regular file).
+func normalizeDeleteTarget(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, `"'`)
+	if s == "" {
+		return ""
+	}
+	if s == "-" {
+		return "-"
+	}
+	trailingSlash := len(s) > 1 && strings.HasSuffix(s, "/")
+	cleaned := path.Clean(s)
+	cleaned = strings.TrimPrefix(cleaned, "./")
+	if trailingSlash && cleaned != "/" && !strings.HasSuffix(cleaned, "/") {
+		cleaned += "/"
+	}
+	return cleaned
 }
 
 // normalizeCommandForDigest is the identity encoding for shell command digests.

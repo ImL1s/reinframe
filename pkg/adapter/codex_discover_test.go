@@ -74,7 +74,7 @@ func TestCodexTailCursor_TruncateAndSave(t *testing.T) {
 	if err != nil || loaded.Offset != 100 {
 		t.Fatalf("%+v %v", loaded, err)
 	}
-	fixed := adapter.ReconcileCursorAgainstFile(loaded, 40)
+	fixed := adapter.ReconcileCursorAgainstFile(loaded, 40, nil)
 	if fixed.Offset != 0 || fixed.Generation != 2 {
 		t.Fatalf("%+v", fixed)
 	}

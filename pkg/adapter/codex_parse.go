@@ -68,13 +68,21 @@ func parseCodexRolloutLine(p *rolloutParser, line []byte) (protocol.AgentEvent, 
 				p.spawnCalls++
 			}
 			p.seq++
-			return makeToolEvent(p.sessionID, p.seq, ts, name, payload), true
+			return makeToolEvent(p.sessionID, p.seq, ts, name, payload, p.identityAtLine()), true
 		case "function_call_output", "custom_tool_call_output":
 			out := payloadOutputString(payload["output"])
 			if looksLikeFailure(out) {
 				p.seq++
-				return makeErrorEvent(p.sessionID, p.seq, ts, out), true
+				return makeErrorEvent(p.sessionID, p.seq, ts, out, p.identityAtLine()), true
 			}
+		default:
+			p.unknown++
+		}
+	default:
+		if typ != "" {
+			p.unknown++
+		} else {
+			p.malformed++
 		}
 	}
 	return protocol.AgentEvent{}, false

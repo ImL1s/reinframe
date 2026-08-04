@@ -140,6 +140,12 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			}
 			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "parse_fail_open"}, nil
 		}
+		if !classifier.ValidateSeverity(raw.Severity) {
+			if in.PolicyClass == PolicyClassSecurity {
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "severity_fail_closed"}, nil
+			}
+			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "severity_fail_open"}, nil
+		}
 		dec := DecisionAllow
 		reason := "below_threshold"
 		if raw.Severity >= in.Threshold {

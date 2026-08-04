@@ -83,6 +83,13 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 	if req.ReasonCode == "" {
 		req.ReasonCode = "BLOCK"
 	}
+	// SECURITY policy class is never self-appealable productivity workflow.
+	if req.PolicyClass == PolicyClassSecurity {
+		if !IsHardDenyClass(req.BlockClass) && !IsIrreversibleClass(req.BlockClass) {
+			// Unknown or productivity-coded block under SECURITY → fail closed human review.
+			req.BlockClass = BlockClassUnknownSecurity
+		}
+	}
 
 	appeal, _ := ClassifyAppealability(req.BlockClass, req.Proposed)
 	fpIn := FingerprintInput{
@@ -149,6 +156,7 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 			Branch:             req.Branch,
 			PolicyVersion:      req.PolicyVersion,
 			RulesetHash:        req.RulesetHash,
+			PolicyHash:         hashPolicy(req.PolicyVersion, req.RulesetHash, req.BlockClass),
 			CreatedAt:          now,
 			UpdatedAt:          now,
 		}
@@ -300,7 +308,19 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		return RetryResult{Record: rec, Stage2Decision: DecisionBlock, RejectedReason: "expired"}, err
 	}
 
-	fp := ComputeFingerprint(FingerprintInput{
+	// Session / ownership binding: never rewrite foreign session into the owner fingerprint.
+	if err := checkOwnership(rec, req); err != nil {
+		return RetryResult{
+			Record:         rec,
+			Stage2Decision: DecisionBlock,
+			Intervention:   rec.Intervention,
+			RejectedReason: "ownership_mismatch",
+		}, err
+	}
+
+	// Fingerprint with owner session/branch so syntax rewrites match the stored challenge.
+	// Foreign sessions were already rejected by checkOwnership (do not rewrite them in).
+	fpOwner := ComputeFingerprint(FingerprintInput{
 		Proposed:          req.Proposed,
 		SessionID:         rec.SessionID,
 		Branch:            rec.Branch,
@@ -312,7 +332,18 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		SideEffectClass: rec.SideEffectClass,
 		TargetResources: rec.TargetResources,
 	}
-	rel := ClassifyRelationship(origFP, fp)
+	rel := ClassifyRelationship(origFP, fpOwner)
+
+	// Scope expansion (superset of targets) is never a free retry under the original challenge.
+	if isTargetSuperset(fpOwner.TargetResources, rec.TargetResources) {
+		return RetryResult{
+			Record:         rec,
+			Stage2Decision: DecisionBlock,
+			Intervention:   rec.Intervention,
+			Relationship:   RelDifferent,
+			RejectedReason: "scope_expansion",
+		}, fmt.Errorf("retry: target scope expansion is not bound to challenge")
+	}
 
 	// Reduced scope / different → not this challenge's retry (caller may open new evaluation).
 	if rel == RelReducedScope || rel == RelDifferent {
@@ -357,7 +388,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		from := rec.State
 		now := s.now()
 		// Does NOT consume budget for invalid retry without justification (mandatory test 2).
-		rec = s.store.appendTransition(rec, from, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, fp.Fingerprint, "retry_without_justification", now, nil)
+		rec = s.store.appendTransition(rec, from, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, fpOwner.Fingerprint, "retry_without_justification", now, nil)
 		rec.Stage2Decision = DecisionBlock
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 		out := cloneRecord(rec)
@@ -376,7 +407,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	if rec.State == StateJustified && rec.RetryBudget <= 0 {
 		from := rec.State
 		now := s.now()
-		rec = s.store.appendTransition(rec, from, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, fp.Fingerprint, "budget_exhausted", now, nil)
+		rec = s.store.appendTransition(rec, from, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, fpOwner.Fingerprint, "budget_exhausted", now, nil)
 		rec.Stage2Decision = DecisionBlock
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 		out := cloneRecord(rec)
@@ -430,7 +461,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		ToState:       StateRetryPending,
 		CorrelationID: req.CorrelationID,
 		CausationID:   req.Proposed.ActionID,
-		PayloadHash:   fp.Fingerprint,
+		PayloadHash:   fpOwner.Fingerprint,
 		Note:          "one_shot_budget",
 		At:            now,
 	}
@@ -480,16 +511,18 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	case re.Intervention == InterventionHumanReview:
 		rec.Stage2Decision = DecisionBlock
 		rec.Intervention = InterventionHumanReview
-		rec = s.store.appendTransition(rec, from2, StateHumanReview, "human_review", req.CorrelationID, req.Proposed.ActionID, fp.Fingerprint, re.Reason, now2, nil)
+		rec = s.store.appendTransition(rec, from2, StateHumanReview, "human_review", req.CorrelationID, req.Proposed.ActionID, fpOwner.Fingerprint, re.Reason, now2, nil)
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 		s.store.byID[rec.ChallengeID].Intervention = InterventionHumanReview
 	case re.Stage2Decision == DecisionAllow:
 		rec.Stage2Decision = DecisionAllow
-		rec = s.store.appendTransition(rec, from2, StateAllowedOnce, "allowed_once", req.CorrelationID, req.Proposed.ActionID, fp.Fingerprint, re.Reason, now2, nil)
+		rec.Intervention = InterventionNone // one-shot allowance consumed; challenge workflow done
+		rec = s.store.appendTransition(rec, from2, StateAllowedOnce, "allowed_once", req.CorrelationID, req.Proposed.ActionID, fpOwner.Fingerprint, re.Reason, now2, nil)
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionAllow
+		s.store.byID[rec.ChallengeID].Intervention = InterventionNone
 	default:
 		rec.Stage2Decision = DecisionBlock
-		rec = s.store.appendTransition(rec, from2, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, fp.Fingerprint, re.Reason, now2, nil)
+		rec = s.store.appendTransition(rec, from2, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, fpOwner.Fingerprint, re.Reason, now2, nil)
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 	}
 	out := cloneRecord(*s.store.byID[rec.ChallengeID])
@@ -718,4 +751,32 @@ func pickContract(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// checkOwnership enforces session (and optional request session) binding.
+func checkOwnership(rec ChallengeRecord, req RetryRequest) error {
+	if sid := strings.TrimSpace(req.SessionID); sid != "" && sid != rec.SessionID {
+		return fmt.Errorf("retry: session_id mismatch (challenge=%s request=%s)", rec.SessionID, sid)
+	}
+	if sid := strings.TrimSpace(req.Proposed.SessionID); sid != "" && sid != rec.SessionID {
+		return fmt.Errorf("retry: proposed session_id mismatch (challenge=%s proposed=%s)", rec.SessionID, sid)
+	}
+	return nil
+}
+
+// isTargetSuperset reports whether cand has every original target plus at least one extra.
+func isTargetSuperset(cand, original []string) bool {
+	if len(cand) <= len(original) || len(original) == 0 {
+		return false
+	}
+	set := map[string]struct{}{}
+	for _, t := range cand {
+		set[t] = struct{}{}
+	}
+	for _, t := range original {
+		if _, ok := set[t]; !ok {
+			return false
+		}
+	}
+	return true
 }

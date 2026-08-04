@@ -164,25 +164,148 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 	if reCurl.MatchString(cmd) {
 		return SideEffectNetwork, nil
 	}
-	if m := reRmRF.FindStringSubmatch(cmd); len(m) >= 3 {
-		return SideEffectDeleteTree, []string{normalizeResource(m[2])}
-	}
-	if m := reRmRF2.FindStringSubmatch(cmd); len(m) >= 2 {
-		return SideEffectDeleteTree, []string{normalizeResource(m[1])}
+	// Multi-target rm -rf / rm --recursive --force: capture ALL path operands.
+	if isRecursiveForceRm(cmd) {
+		targets := extractRmTargets(cmd)
+		if len(targets) > 0 {
+			return SideEffectDeleteTree, targets
+		}
 	}
 	if m := reFindDelete.FindStringSubmatch(cmd); len(m) >= 2 {
-		return SideEffectDeleteTree, []string{normalizeResource(m[1])}
+		// find PATH ... -delete may have only one root; still extract all non-flag args after find.
+		targets := extractFindDeleteTargets(cmd)
+		if len(targets) == 0 {
+			targets = []string{normalizeResource(m[1])}
+		}
+		return SideEffectDeleteTree, targets
 	}
-	// Plain rm file (not -rf) — after -rf patterns.
-	if strings.Contains(strings.ToLower(cmd), "rm ") && !strings.Contains(cmd, "-r") {
-		if m := reRmFile.FindStringSubmatch(cmd); len(m) >= 2 {
-			return SideEffectDeleteFile, []string{normalizeResource(m[1])}
+	// Plain rm file (not recursive) — all path operands.
+	if isPlainRm(cmd) {
+		targets := extractRmTargets(cmd)
+		if len(targets) > 0 {
+			if len(targets) == 1 {
+				return SideEffectDeleteFile, targets
+			}
+			// Multi-file non-recursive rm still binds on full target set.
+			return SideEffectDeleteFile, targets
 		}
 	}
 	if pa.ToolClass == adapter.ToolClassShell {
 		return SideEffectShellGeneric, extractPaths(cmd)
 	}
+	// Non-shell tools: include arguments in path extraction when present.
+	if len(pa.Arguments) > 0 {
+		extra := make([]string, 0, len(pa.Arguments))
+		for _, a := range pa.Arguments {
+			if a != "" {
+				extra = append(extra, normalizeResource(a))
+			}
+		}
+		return SideEffectUnknown, extra
+	}
 	return SideEffectUnknown, extractPaths(cmd)
+}
+
+func isRecursiveForceRm(cmd string) bool {
+	low := strings.ToLower(cmd)
+	if !strings.Contains(low, "rm") {
+		return false
+	}
+	// rm -rf / -fr / --recursive --force (any order of short flags)
+	if reRmRF.MatchString(cmd) || reRmRF2.MatchString(cmd) {
+		return true
+	}
+	// also: rm -r -f path, rm -f -r path
+	fields := strings.Fields(low)
+	if len(fields) == 0 || fields[0] != "rm" {
+		// allow leading env: env rm -rf ...
+		hasRm := false
+		for _, f := range fields {
+			if f == "rm" {
+				hasRm = true
+				break
+			}
+		}
+		if !hasRm {
+			return false
+		}
+	}
+	hasR, hasF := false, false
+	for _, f := range fields {
+		if f == "--recursive" {
+			hasR = true
+		}
+		if f == "--force" {
+			hasF = true
+		}
+		if strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--") {
+			if strings.Contains(f, "r") {
+				hasR = true
+			}
+			if strings.Contains(f, "f") {
+				hasF = true
+			}
+		}
+	}
+	return hasR && hasF
+}
+
+func isPlainRm(cmd string) bool {
+	low := strings.ToLower(strings.TrimSpace(cmd))
+	if !strings.Contains(low, "rm ") && !strings.HasPrefix(low, "rm ") {
+		return false
+	}
+	if isRecursiveForceRm(cmd) {
+		return false
+	}
+	// exclude rmdir
+	fields := strings.Fields(low)
+	for _, f := range fields {
+		if f == "rm" {
+			return true
+		}
+	}
+	return false
+}
+
+// extractRmTargets returns every non-flag operand after the rm binary.
+func extractRmTargets(cmd string) []string {
+	fields := strings.Fields(cmd)
+	var out []string
+	seenRm := false
+	for _, f := range fields {
+		if !seenRm {
+			if strings.EqualFold(f, "rm") {
+				seenRm = true
+			}
+			continue
+		}
+		if strings.HasPrefix(f, "-") {
+			continue
+		}
+		out = append(out, normalizeResource(f))
+	}
+	return out
+}
+
+func extractFindDeleteTargets(cmd string) []string {
+	fields := strings.Fields(cmd)
+	var out []string
+	seenFind := false
+	for _, f := range fields {
+		if !seenFind {
+			if strings.EqualFold(f, "find") {
+				seenFind = true
+			}
+			continue
+		}
+		if strings.HasPrefix(f, "-") {
+			continue
+		}
+		// first non-flag after find is the root path (and any extras)
+		out = append(out, normalizeResource(f))
+	}
+	return out
 }
 
 func extractPaths(cmd string) []string {
@@ -208,9 +331,9 @@ func normalizeResource(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, `"'`)
 	s = path.Clean(s)
-	// collapse ./prefix
+	// collapse ./prefix — preserve case for case-sensitive filesystems.
 	s = strings.TrimPrefix(s, "./")
-	return strings.ToLower(s)
+	return s
 }
 
 // normalizeCommand is a closed, deterministic shell surface for fingerprinting

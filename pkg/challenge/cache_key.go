@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
-	"strings"
 )
 
 // BuildCacheKeyInputs constructs assessment identity inputs for #131 / future #138.
@@ -53,6 +52,10 @@ func hashStrings(ids []string) string {
 	if len(ids) == 0 {
 		return ""
 	}
-	h := sha256.Sum256([]byte(strings.Join(ids, ",")))
-	return hex.EncodeToString(h[:8])
+	// Length-prefixed encoding avoids comma-collision between ID sets.
+	h := sha256.New()
+	for _, id := range ids {
+		_, _ = fmt.Fprintf(h, "%d:%s\x00", len(id), id)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:8])
 }

@@ -512,6 +512,120 @@ func TestUnknownBlockClassHumanReview(t *testing.T) {
 	}
 }
 
+func TestExpandRetryAllows(t *testing.T) {
+	// Multi-target rm must fingerprint ALL operands; expanding targets must not inherit one-shot ALLOW.
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	orig := samplePA("rm -rf build")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "sess-1", Proposed: orig, BlockClass: challenge.BlockClassOverSOP, Branch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stored targets must be only "build" initially
+	if len(rec.TargetResources) != 1 || rec.TargetResources[0] != "build" {
+		t.Fatalf("orig targets %v", rec.TargetResources)
+	}
+	// Multi-target fingerprint differs from single-target
+	multi := challenge.ComputeFingerprint(challenge.FingerprintInput{
+		Proposed: samplePA("rm -rf build /tmp/secrets"), SessionID: "sess-1", Branch: "main",
+	})
+	single := challenge.ComputeFingerprint(challenge.FingerprintInput{
+		Proposed: samplePA("rm -rf build"), SessionID: "sess-1", Branch: "main",
+	})
+	if multi.Fingerprint == single.Fingerprint {
+		t.Fatalf("multi-target must not share fingerprint: multi=%v single=%v", multi.TargetResources, single.TargetResources)
+	}
+	if len(multi.TargetResources) < 2 {
+		t.Fatalf("expected both targets, got %v", multi.TargetResources)
+	}
+	_, _ = svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
+	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID,
+		SessionID:   "sess-1",
+		Proposed:    samplePA("rm -rf build /tmp/secrets"),
+		ReEval:      &challenge.ReEvalContext{UserException: true},
+	})
+	if err == nil {
+		t.Fatalf("scope expansion must not succeed: %+v", res)
+	}
+	if res.RejectedReason != "scope_expansion" && res.RejectedReason != "not_same_semantic_action" {
+		t.Fatalf("reason %q state=%s stage2=%s", res.RejectedReason, res.Record.State, res.Stage2Decision)
+	}
+	if res.Stage2Decision != challenge.DecisionBlock {
+		t.Fatalf("must remain BLOCK, got %s", res.Stage2Decision)
+	}
+	if res.Record.State == challenge.StateAllowedOnce {
+		t.Fatal("DEFECT: scope expansion reached ALLOWED_ONCE")
+	}
+	// Budget must remain available (not consumed by expansion attempt)
+	got, _ := svc.Get(rec.ChallengeID)
+	if got.RetryBudget != 1 || got.State != challenge.StateJustified {
+		t.Fatalf("budget/state: budget=%d state=%s", got.RetryBudget, got.State)
+	}
+}
+
+func TestForeignSessionRetry(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "owner-sess", Proposed: samplePA("rm -rf build"), BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fix proposed session on open action
+	ownerPA := samplePA("rm -rf build")
+	ownerPA.SessionID = "owner-sess"
+	// Re-open with correct session for clean budget path
+	svc2 := challenge.NewService(challenge.ServiceConfig{})
+	rec, err = svc2.Open(context.Background(), challenge.OpenRequest{
+		SessionID: "owner-sess", Proposed: ownerPA, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc2.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := samplePA("rm -rf build")
+	foreign.SessionID = "attacker-sess"
+	res, err := svc2.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID,
+		SessionID:   "attacker-sess",
+		Proposed:    foreign,
+		ReEval:      &challenge.ReEvalContext{UserException: true},
+	})
+	if err == nil {
+		t.Fatalf("foreign session must fail: %+v", res)
+	}
+	if res.RejectedReason != "ownership_mismatch" {
+		t.Fatalf("reason %q", res.RejectedReason)
+	}
+	if res.Stage2Decision != challenge.DecisionBlock {
+		t.Fatal(res.Stage2Decision)
+	}
+	if res.Record.State == challenge.StateAllowedOnce {
+		t.Fatal("DEFECT: foreign session reached ALLOWED_ONCE")
+	}
+	got, _ := svc2.Get(rec.ChallengeID)
+	if got.RetryBudget != 1 || got.State != challenge.StateJustified {
+		t.Fatalf("owner challenge mutated: budget=%d state=%s", got.RetryBudget, got.State)
+	}
+	// Also reject when only Proposed.SessionID differs
+	foreign2 := samplePA("rm -rf build")
+	foreign2.SessionID = "other"
+	res2, err := svc2.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID,
+		SessionID:   "owner-sess", // request ok
+		Proposed:    foreign2,     // proposed foreign
+		ReEval:      &challenge.ReEvalContext{UserException: true},
+	})
+	if err == nil || res2.RejectedReason != "ownership_mismatch" {
+		t.Fatalf("proposed session mismatch: %+v err=%v", res2, err)
+	}
+}
+
 func TestSharedTargetScopeDifferentShellNotBound(t *testing.T) {
 	// cmd-bearing shell with identical TargetScope must not bind via RelBypass.
 	a := adapter.ProposedAction{

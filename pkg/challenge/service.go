@@ -877,7 +877,8 @@ func pickContract(a, b int) int {
 	return b
 }
 
-// checkOwnership enforces session (and optional request session) binding.
+// checkOwnership enforces session/branch/workspace/contract binding on retry.
+// Explicit mismatches must reject before RelBypass can authorize a foreign ownership.
 func checkOwnership(rec ChallengeRecord, req RetryRequest) error {
 	if sid := strings.TrimSpace(req.SessionID); sid != "" && sid != rec.SessionID {
 		return fmt.Errorf("retry: session_id mismatch (challenge=%s request=%s)", rec.SessionID, sid)
@@ -887,6 +888,16 @@ func checkOwnership(rec ChallengeRecord, req RetryRequest) error {
 	}
 	if b := strings.TrimSpace(req.Branch); b != "" && rec.Branch != "" && b != rec.Branch {
 		return fmt.Errorf("retry: branch mismatch (challenge=%s request=%s)", rec.Branch, b)
+	}
+	// Workspace/contract are part of the original fingerprint ownership surface.
+	// An explicit different revision must not RelBypass into the challenge budget.
+	if wr := strings.TrimSpace(req.Proposed.WorkspaceRevision); wr != "" &&
+		strings.TrimSpace(rec.WorkspaceRevision) != "" && wr != rec.WorkspaceRevision {
+		return fmt.Errorf("retry: workspace_revision mismatch (challenge=%s proposed=%s)", rec.WorkspaceRevision, wr)
+	}
+	if req.Proposed.ContractRevision != 0 && rec.ContractRevision != 0 &&
+		req.Proposed.ContractRevision != rec.ContractRevision {
+		return fmt.Errorf("retry: contract_revision mismatch (challenge=%d proposed=%d)", rec.ContractRevision, req.Proposed.ContractRevision)
 	}
 	return nil
 }

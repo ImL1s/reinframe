@@ -1035,6 +1035,146 @@ func TestHardDenyExpiresRelBypassToolVariant(t *testing.T) {
 	}
 }
 
+// Codex: retry must reject explicit workspace/contract ownership mismatches.
+func TestRetryRejectsWorkspaceContractMismatch(t *testing.T) {
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	pa := samplePA("rm -rf build")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+	// Different workspace must not RelBypass into one-shot ALLOW.
+	foreign := pa
+	foreign.ActionID = "retry-ws"
+	foreign.WorkspaceRevision = "ws-OTHER"
+	res, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: foreign,
+		CorrelationID: "corr-ws",
+		ReEval:        &challenge.ReEvalContext{UserException: true},
+	})
+	if res.Stage2Decision == challenge.DecisionAllow || res.Record.State == challenge.StateAllowedOnce {
+		t.Fatalf("workspace mismatch must not ALLOW: %+v err=%v", res, err)
+	}
+	if res.RejectedReason != "ownership_mismatch" && err == nil {
+		t.Fatalf("want ownership_mismatch, got res=%+v err=%v", res, err)
+	}
+	// Different contract revision.
+	foreignC := pa
+	foreignC.ActionID = "retry-cr"
+	foreignC.ContractRevision = 99
+	res2, err2 := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: foreignC,
+		CorrelationID: "corr-cr",
+		ReEval:        &challenge.ReEvalContext{UserException: true},
+	})
+	if res2.Stage2Decision == challenge.DecisionAllow {
+		t.Fatalf("contract mismatch must not ALLOW: %+v err=%v", res2, err2)
+	}
+}
+
+// Codex: find -O without numeric level must not share delete identity with plain find -delete.
+func TestFindInvalidOLevelNotDeleteIdentity(t *testing.T) {
+	bad := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -O build -delete"), SessionID: "sess-1"})
+	good := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -delete"), SessionID: "sess-1"})
+	if bad.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("find -O build must not be delete_tree, got %s", bad.SideEffectClass)
+	}
+	if bad.Fingerprint == good.Fingerprint {
+		t.Fatal("malformed -O must not share fingerprint with real find -delete")
+	}
+	// Valid -O1 still delete_tree but distinct if bound into scope.
+	o1 := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -O1 build -delete"), SessionID: "sess-1"})
+	if o1.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("find -O1 want delete_tree, got %s", o1.SideEffectClass)
+	}
+	if o1.Fingerprint == good.Fingerprint {
+		t.Fatal("find -O1 must not share fingerprint with bare find -delete")
+	}
+}
+
+// Codex: unsupported rm --directory must not share identity with rm build.
+func TestRmDirectoryLongOptionNotDeleteIdentity(t *testing.T) {
+	bad := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm --directory build"), SessionID: "sess-1"})
+	good := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build"), SessionID: "sess-1"})
+	if bad.SideEffectClass == challenge.SideEffectDeleteFile || bad.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("rm --directory must not be delete_*, got %s", bad.SideEffectClass)
+	}
+	if bad.Fingerprint == good.Fingerprint {
+		t.Fatal("rm --directory must not share fingerprint with rm build")
+	}
+	// Valid --dir still delete_file (directory removal).
+	dir := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm --dir build"), SessionID: "sess-1"})
+	if dir.SideEffectClass != challenge.SideEffectDeleteFile {
+		t.Fatalf("rm --dir want delete_file, got %s", dir.SideEffectClass)
+	}
+}
+
+// Codex: privileged argv0 is case-sensitive (RM ≠ rm on Linux).
+func TestPrivilegedArgv0CaseSensitive(t *testing.T) {
+	upper := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("RM -rf build"), SessionID: "sess-1"})
+	lower := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	if upper.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("RM must not be delete_tree, got %s", upper.SideEffectClass)
+	}
+	if upper.Fingerprint == lower.Fingerprint {
+		t.Fatal("RM -rf must not share fingerprint with rm -rf")
+	}
+	upperFind := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("FIND build -delete"), SessionID: "sess-1"})
+	if upperFind.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("FIND must not be delete_tree, got %s", upperFind.SideEffectClass)
+	}
+}
+
+// Codex: non-shell ToolClass must not open delete_tree RelBypass for Bash.
+func TestNonShellToolNoDeleteTreeIdentity(t *testing.T) {
+	other := samplePA("rm -rf build")
+	other.ToolClass = adapter.ToolClassOther
+	other.ToolName = "CustomTool"
+	ofp := mustFP(t, challenge.FingerprintInput{Proposed: other, SessionID: "sess-1"})
+	shell := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	if ofp.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("ToolClassOther must not be delete_tree, got %s", ofp.SideEffectClass)
+	}
+	if challenge.ClassifyRelationship(ofp, shell) == challenge.RelBypass ||
+		challenge.ClassifyRelationship(ofp, shell) == challenge.RelSame {
+		t.Fatal("shell delete must not RelSame/RelBypass non-shell projected command")
+	}
+}
+
+// Codex: wrong-case long options fail closed (--FORCE ≠ --force).
+func TestRmWrongCaseLongOptionNotDeleteIdentity(t *testing.T) {
+	bad := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm --FORCE build"), SessionID: "sess-1"})
+	good := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm build"), SessionID: "sess-1"})
+	if bad.SideEffectClass == challenge.SideEffectDeleteFile || bad.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("--FORCE must not be delete_*, got %s", bad.SideEffectClass)
+	}
+	if bad.Fingerprint == good.Fingerprint {
+		t.Fatal("rm --FORCE must not share fingerprint with rm build")
+	}
+}
+
+// Codex: interactive prompt last-wins must change delete digest vs force-cancel.
+func TestRmInteractivePromptPrecedence(t *testing.T) {
+	// -rf -i ends interactive (prompt=all) vs -r -i -f ends force (prompt none, rewrite-eligible).
+	interactive := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf -i build"), SessionID: "sess-1"})
+	forceLast := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -r -i -f build"), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	if interactive.Fingerprint == plain.Fingerprint {
+		t.Fatal("rm -rf -i must not share fingerprint with rm -rf")
+	}
+	if forceLast.Fingerprint != plain.Fingerprint {
+		t.Fatal("rm -r -i -f (force last) should match plain rm -rf for rewrite eligibility")
+	}
+	if interactive.Fingerprint == forceLast.Fingerprint {
+		t.Fatal("interactive-last must differ from force-last")
+	}
+}
+
 // Codex: rm --help/--version must not share delete identity with real deletes.
 func TestRmHelpVersionNotDeleteIdentity(t *testing.T) {
 	help := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm --help build"), SessionID: "sess-1"})

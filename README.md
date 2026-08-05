@@ -6,29 +6,29 @@
 
 Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go.
 
-**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, offline/near-live Codex observation, a FileActuator advice channel, a non-enforcing Action Alignment classifier, offline benchmark tooling, and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** a calibrated hard-gate, **not** a live challenge-response product, and **not** a measured multi-provider cache product.
+**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, offline/near-live Codex observation, a FileActuator advice channel, a non-enforcing Action Alignment classifier, a host-neutral appealable `BLOCK` challenge core, offline benchmark tooling, and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** a calibrated hard-gate, **not** live Claude challenge delivery, and **not** a measured multi-provider cache product.
 
 ## Project Status
 
-> **Phase: M1 + M2 library + experimental host bridges + shadow classifier + offline evaluation**  
-> **Ready:** [#131](https://github.com/ImL1s/reinframe/issues/131) appealable BLOCK challenge core; [#132](https://github.com/ImL1s/reinframe/issues/132) classifier provider runtime.  
-> **Environment-blocked:** [#120](https://github.com/ImL1s/reinframe/issues/120) pinned live Claude ALLOW/BLOCK/context smoke (`BLOCKED_BY_ENVIRONMENT`).  
-> **Dependency-blocked:** [#108](https://github.com/ImL1s/reinframe/issues/108), [#134](https://github.com/ImL1s/reinframe/issues/134)–[#141](https://github.com/ImL1s/reinframe/issues/141). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) remains open. The initial open-set governance sync completed in [#142](https://github.com/ImL1s/reinframe/issues/142)/PR [#143](https://github.com/ImL1s/reinframe/pull/143), with post-close cleanup in PR [#144](https://github.com/ImL1s/reinframe/pull/144).  
+> **Phase: M1 + M2 library + experimental host bridges + shadow classifier + host-neutral challenge core + offline evaluation**  
+> **Ready:** [#132](https://github.com/ImL1s/reinframe/issues/132) classifier provider runtime; [#140](https://github.com/ImL1s/reinframe/issues/140) deterministic challenge-evaluation Lane A.  
+> **Environment-blocked:** [#120](https://github.com/ImL1s/reinframe/issues/120) pinned live Claude ALLOW/BLOCK/context smoke (`BLOCKED_BY_ENVIRONMENT`), which blocks [#108](https://github.com/ImL1s/reinframe/issues/108) and the Claude-specific lane of [#139](https://github.com/ImL1s/reinframe/issues/139).  
+> **Dependency-blocked:** [#134](https://github.com/ImL1s/reinframe/issues/134)–[#138](https://github.com/ImL1s/reinframe/issues/138) and [#141](https://github.com/ImL1s/reinframe/issues/141). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) remains open.  
+> **Recently completed:** [#131](https://github.com/ImL1s/reinframe/issues/131) / PR [#148](https://github.com/ImL1s/reinframe/pull/148) delivered the host-neutral appealable `BLOCK` state machine and one-shot semantic retry core.  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
 
 ### Current dependency shape
 
 ```text
 Ready in parallel:
-  #131 challenge core
   #132 provider runtime
+  #140 Lane A deterministic challenge evaluation
 
 Interactive environment:
   #120 live Claude smoke
     → #108 generic advice consumer
-
-#131 + #120
-  → #139 Claude challenge delivery / structured appeal / one-shot retry
+    → #139 Claude challenge delivery / structured appeal / one-shot retry
+       (#131 core is already merged)
 
 #132
   → #134 OpenAI native provider/cache
@@ -38,8 +38,8 @@ Interactive environment:
   → #138 exact assessment cache + singleflight
 
 Evaluation:
-  #140 challenge safety/recovery
-  #141 provider/cache correctness and economics
+  #140 Lane A now; model-backed lane after #132 + a provider; Claude lane after #139
+  #141 after #132 and the selected provider/cache implementation lanes
 ```
 
 | Component | Status |
@@ -70,15 +70,16 @@ Evaluation:
 | FileActuator advice channel (#97) | ✅ JSONL `reinframe.advice.v1`; write ≠ agent receipt |
 | Street-wire demo (`cmd/streetwire`) | ✅ Offline Codex + M2 loops + bridge + FileActuator demos |
 | Optional LLM Reviewer (OpenAI-compatible, ADR 003 local-only default) | ✅ Uncertain advice path only; not the classifier provider |
-| Open-set governance (#142 / PR #143, PR #144) | ✅ Closed — public/current backlog synchronized |
+| Open-set governance (#142 / PR #143, PR #144, PR #147) | ✅ Closed — public/current backlog synchronization |
+| Appealable BLOCK challenge core (#131 / PR #148) | ✅ Host-neutral core; one-shot retry; no live Claude claim |
 | Live Claude ALLOW/BLOCK/context smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
 | Real advice consumer / ACK (#108) | 🔲 Open — blocked by #120 |
-| Appealable BLOCK challenge core (#131) | 🔲 Open — ready; host-neutral only |
 | Real classifier provider runtime (#132) | 🔲 Open — ready; generic adapter cache-neutral |
 | Native OpenAI/Anthropic/Gemini/xAI classifier adapters (#134–#137) | 🔲 Open — blocked by #132 |
 | Exact `RawAssessment` cache + singleflight (#138) | 🔲 Open — blocked by #132 |
-| Claude challenge delivery/retry (#139) | 🔲 Open — blocked by #131 + #120 |
-| Challenge and cache follow-up evaluation (#140/#141) | 🔲 Open — blocked by implementation lanes |
+| Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; still blocked by #120 live host evidence |
+| Challenge evaluation (#140) | 🔲 Open — Lane A ready; later lanes depend on #132/#139 |
+| Provider/cache evaluation (#141) | 🔲 Open — blocked by implementation lanes |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Core invariants
@@ -115,7 +116,7 @@ AI coding agents risk "tunneling" through cognitive lock-in, repeated errors, pa
 6. **M2.1 effort calibration** *(library)* — intake, verification churn, before-tool over-SOP denial.
 7. **M2.2 host bridges** *(experimental / observation)* — Codex JSONL offline+tail, Claude PreTool bridge CLI, FileActuator channel; not auto-installed dual-host control.
 8. **Action Alignment classifier** *(shadow only)* — raw severity is evidence; deterministic resolver owns `ALLOW | BLOCK`.
-9. **Appealable productivity block** *(planned in #131/#139)* — one structured justification and one semantic retry; no self-permission.
+9. **Appealable productivity block** *(host-neutral core available in #131; live host delivery planned in #139)* — one structured justification and one semantic retry; no self-permission.
 10. **Provider/cost control** *(planned in #132/#134–#141)* — strict native adapters, provider-aware prefix caching, exact assessment memoization, and measured evaluation.
 
 ---
@@ -133,6 +134,7 @@ reinframe/
 │   └── reviewerdemo/          # Optional LLM advice path
 ├── docs/
 │   ├── adapter/               # Host bridge + FileActuator docs
+│   ├── policy/                # Challenge policy and intervention boundaries
 │   ├── reviewer/              # Optional LLM advice honesty
 │   ├── detector/              # Detector/fingerprint rules
 │   ├── evaluation/            # Offline benchmark reports
@@ -150,6 +152,7 @@ reinframe/
 │   ├── policy/                # Fast/slow and before-tool policy
 │   ├── supervisor/            # Detect → policy → deliver → ACK composition
 │   ├── classifier/            # Closed shadow classifier/FakeProvider
+│   ├── challenge/             # Host-neutral appealable BLOCK workflow (#131)
 │   ├── evaluation/            # Offline benchmark runner
 │   ├── workspace/             # Managed worktree checkpoint/rollback
 │   ├── config/                # Versioned configuration schema
@@ -170,6 +173,7 @@ reinframe/
 - **`pkg/policy`**: fast deterministic gates and slow advisory path.
 - **`pkg/supervisor`**: composition root for detect → policy → queue → deliver → ACK.
 - **`pkg/classifier`**: current closed shadow classifier and fake provider; production provider runtime is #132.
+- **`pkg/challenge`**: versioned appealable `BLOCK` records, closed justification schema, one-shot retry, semantic fingerprinting, replay, and audit/cache identity.
 - **`pkg/evaluation`**: offline fixture scoring and reports; #100 disposition remains MORE-DATA.
 - **`pkg/workspace`**: clean-only checkpoint/rollback inside a verified Reinframe-owned worktree.
 - **`pkg/config`**: versioned configuration and env-placeholder secret references.
@@ -183,6 +187,7 @@ Available:
   Codex JSONL offline + tail EventSource
   Claude PreTool fixture/CLI bridge + project-local installer/unit validation
   ProposedAction, shadow classifier (Enforced=false), offline benchmark runner
+  host-neutral appealable BLOCK challenge core with one-shot semantic retry
   managed-worktree checkpoint/rollback (clean-only)
 
 Not claimed:
@@ -192,7 +197,7 @@ Not claimed:
   calibrated hard-gates
   live Claude smoke (#120)
   advice agent receipt (#108)
-  live challenge-response (#131/#139)
+  live Claude challenge delivery / structured appeal (#139)
   real native classifier providers or measured cache savings (#132/#134–#141)
 ```
 
@@ -267,6 +272,7 @@ Intervention escalation after detection is a **separate axis**. See `docs/resear
 ### Further reading
 
 - [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md) — executable backlog and dependencies
+- [`docs/policy/appealable_block_challenge.md`](docs/policy/appealable_block_challenge.md) — host-neutral challenge contract and non-claims
 - [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md) — how the available pieces connect
 - [`docs/specs/action_alignment_classifier.md`](docs/specs/action_alignment_classifier.md) — Stage 0/1/2 design
 - [`docs/specs/action_alignment_wire_contract.md`](docs/specs/action_alignment_wire_contract.md) — closed classifier schemas
@@ -283,8 +289,8 @@ Intervention escalation after detection is a **separate axis**. See `docs/resear
 
 Contributions are welcome. Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Ready product work is currently #131 and #132.
-2. Follow the dependency graph. Do not start #134–#138 before #132, #139 before #131+#120, or treat #120 as code-ready while its interactive evidence is unavailable.
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Ready product work is currently #132 and #140 Lane A.
+2. Follow the dependency graph. Do not start #134–#138 before #132, #139 before #120 live evidence, or treat #120 as code-ready while its interactive evidence is unavailable.
 3. Preserve honesty boundaries: no false provider/cache/live-host/hard-gate claims.
 4. Run `go test -race ./...` before submitting PRs.
 5. Project-standard PRs require multi-platform CI and independent AI review before merge.

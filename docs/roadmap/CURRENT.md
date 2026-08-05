@@ -1,9 +1,9 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-04) — post-#142/PR #143 and PR #144 challenge/provider/cache follow-up
+**Status:** current (2026-08-05) — post-#131 / PR #148 host-neutral challenge core merge  
 **Wins on conflict:** README (public status) > this file (executable queue) > `docs/specs/*` (normative model) > Epic #80 (tracker) > historical docs.
 
-Governance issue #142 and PR #143 completed the initial open-set sync; PR #144 removed #142 from the active set after closure. They are historical here, not active product work.
+Governance issue #142 and PRs #143/#144/#147 established the challenge/provider/cache source of truth. PR #148 subsequently completed the host-neutral #131 challenge core. Closed work is historical here, not an active implementation dependency.
 
 ## Implemented (narrow DoD — do not reopen for the same scope)
 
@@ -17,7 +17,7 @@ Governance issue #142 and PR #143 completed the initial open-set sync; PR #144 r
 | FileActuator | #97 / #102 | Write ≠ agent receipt |
 | Review-session detectors | #98 / #101–#102 | Library + thin policy; provisional |
 | Optional LLM reviewer | PR #103 | Uncertain path only; not the classifier provider |
-| Governance / source of truth | #109/#121/#142 / PR #110/#122/#143/#144 | README/CURRENT/Epic synchronization only |
+| Governance / source of truth | #109/#121/#142 / PR #110/#122/#143/#144/#147 | README/CURRENT/Epic synchronization only |
 | Action Alignment design | #104 / PR #111 | Concept Stage 0/1/2 only |
 | Classifier wire contract | #119 / PR #126 | Schemas, ADR 005, FakeProvider |
 | Claude project-local install | #106 / PR #112 | Installer unit; **no live smoke** |
@@ -29,15 +29,16 @@ Governance issue #142 and PR #143 completed the initial open-set sync; PR #144 r
 | M3 synthetic/FP benchmark foundation | #100 / PR #129 | **MORE-DATA**; no hard-gate |
 | Managed worktree rollback | #99 / PR #130 | Clean-only; not primary checkout |
 | Post-merge hygiene | PR #133 | Evaluation denominator, workspace fail-closed, docs |
+| Appealable BLOCK challenge core | **#131 / PR #148** | Host-neutral schemas/state/retry/fingerprint/replay; **no live Claude delivery** |
 
 ## Active backlog (product/research issues only)
 
-### Ready — no open code dependency
+### Ready — no open code dependency for the stated lane
 
 | Issue | Pri | Scope | Boundary |
 |-------|-----|-------|----------|
-| **#131** | P1 | Appealable productivity BLOCK, justification, one-shot semantic retry | Host-neutral core in `pkg/challenge` ([docs](../policy/appealable_block_challenge.md)); no live Claude claim |
 | **#132** | P1 | Real classifier provider runtime, strict parser, normalized usage, cache-neutral generic adapter | No native provider/cache claim |
+| **#140 Lane A** | P2 | Deterministic challenge fixtures, bypass/replay/race/recovery evaluation | Evidence only; later model/Claude lanes remain blocked |
 
 ### Blocked by environment
 
@@ -52,13 +53,13 @@ Closed #115/#116/#117 are implementation prerequisites, not current blockers. Do
 | Issue | Pri | Blocked by | Notes |
 |-------|-----|------------|-------|
 | **#108** | P0 | **#120** | Real advice consumer / SafeBoundary / honest ACK; does not own challenge state |
-| **#139** | P1 | **#131 + #120** | Claude challenge context, structured appeal, bound one-shot retry |
+| **#139** | P1 | **#120** | #131 core is merged; still needs pinned Claude context/behavior evidence |
 | **#134** | P1 | **#132** | Native OpenAI Responses + explicit prompt-cache controls |
 | **#135** | P1 | **#132** | Native Anthropic Messages + `cache_control` profiles |
 | **#136** | P1 | **#132** | Native Gemini `generateContent` + implicit-cache telemetry/eligibility |
 | **#137** | P1 | **#132** | Native xAI Responses + sticky prefix-cache routing |
 | **#138** | P1 | **#132** | Exact `RawAssessment` cache + singleflight + cache observability |
-| **#140** | P2 | **#131** for Lane A | Challenge appeal, bypass, recovery, and cost evaluation; later lanes need provider/#139 |
+| **#140 later lanes** | P2 | model lane: **#132 + provider**; Claude lane: **#139** | Lane A is ready now |
 | **#141** | P2 | **#132** minimum | Provider/cache correctness and economics; full scope needs #138 + native provider lane |
 | **#80** | epic | — | Residual tracker; keep open |
 
@@ -72,6 +73,8 @@ Appeal workflow metadata: none | APPEALABLE_CHALLENGE | HUMAN_REVIEW
 ```
 
 `CHALLENGE` is not a third classifier decision. A justification is new evidence, never automatic permission. Hard security boundaries remain non-appealable or require human review.
+
+The merged #131 core provides durable host-neutral challenge records, one-shot semantic retry, collision-resistant action identity, policy-bound reuse, concurrency control, replay, and audit/cache identity. It does not prove that any live host delivered the challenge or executed the retry.
 
 ### Provider cache vs Reinframe exact cache
 
@@ -88,15 +91,14 @@ The generic OpenAI-compatible adapter defaults to no vendor-specific cache capab
 
 ```text
 Ready in parallel:
-  #131 challenge core
   #132 provider runtime
+  #140 Lane A deterministic challenge evaluation
 
 Environment lane:
   #120 live Claude smoke
     → #108 generic advice consumer
-
-After #131 + #120:
-  #139 Claude challenge integration
+    → #139 Claude challenge integration
+       (#131 core dependency is satisfied)
 
 After #132, parallel:
   #134 OpenAI native adapter/cache
@@ -106,7 +108,7 @@ After #132, parallel:
   #138 exact assessment cache + singleflight
 
 Evaluation:
-  #140 Lane A after #131
+  #140 Lane A now
        model-backed lane after #132 + native provider
        Claude lane after #139
   #141 after #132 and the implementation lanes selected for its matrix
@@ -115,7 +117,7 @@ Evaluation:
 ## Explicit non-claims
 
 - No calibrated classifier/detector hard-gate; #100 disposition is **MORE-DATA**
-- No live challenge-response product
+- No live Claude challenge-response product; #131 is host-neutral core and #139 remains open
 - No real production classifier provider beyond fakes until #132 and a provider adapter land
 - No cross-provider cache API equivalence claim
 - No measured token/cost savings before #141 evidence
@@ -133,10 +135,11 @@ Baseline offline synthetic benchmarks: [`docs/evaluation/m3_benchmarks.md`](../e
 
 Follow-ups:
 
-- #140 evaluates challenge appeal quality, semantic bypass resistance, recovery, and added cost.
+- #140 Lane A can now evaluate deterministic challenge appeal quality, semantic bypass resistance, replay, concurrency, recovery, and added cost.
+- #140 model-backed/Claude lanes remain dependent on #132/providers and #139 respectively.
 - #141 evaluates provider prefix caching, Reinframe exact caching, singleflight, correctness invariance, and measured economics.
 
-Both require a separate promotion issue for any enforcement or default-enable decision.
+All promotion or default-enable decisions require a separate issue.
 
 ## Historical sources (not executable backlog)
 

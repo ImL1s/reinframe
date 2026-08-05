@@ -19,8 +19,9 @@ func TestOpenAICompatible_ValidSuccess(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
-		if auth != "" && strings.Contains(auth, "super-secret-key") {
-			// ok bearer present
+		if !strings.Contains(auth, "super-secret-key") {
+			http.Error(w, "missing bearer", http.StatusUnauthorized)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w, `{

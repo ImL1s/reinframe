@@ -185,19 +185,15 @@ func decodeStrictInt(raw json.RawMessage) (int, error) {
 	if len(raw) == 0 {
 		return 0, parseFail("type", "empty number")
 	}
-	// Reject floats, NaN, Inf, quoted numbers.
-	if raw[0] == '"' || bytes.ContainsAny(raw, ".eE+NaInfn") {
-		// Allow plain integers only (optional leading minus already covered by contains +).
-		// Re-check carefully: digits and optional leading minus only.
-	}
 	s := string(raw)
+	// Reject floats, NaN, Inf, quoted numbers — plain integers only.
+	if s[0] == '"' {
+		return 0, parseFail("type", "no string coercion")
+	}
 	if strings.ContainsAny(s, ".eE") || strings.EqualFold(s, "NaN") ||
 		strings.EqualFold(s, "Infinity") || strings.EqualFold(s, "+Infinity") ||
 		strings.EqualFold(s, "-Infinity") {
 		return 0, parseFail("type", "severity must be integer")
-	}
-	if s[0] == '"' {
-		return 0, parseFail("type", "no string coercion")
 	}
 	var n json.Number
 	if err := json.Unmarshal(raw, &n); err != nil {
@@ -207,10 +203,9 @@ func decodeStrictInt(raw json.RawMessage) (int, error) {
 	if err != nil {
 		return 0, parseFail("type", "severity must be integer")
 	}
-	if i64 < int64(SeverityMin) || i64 > int64(SeverityMax) {
-		// Still return as int for ValidateSeverity path; caller checks range.
-	}
-	if i64 > int64(^uint(0)>>1) || i64 < -int64(^uint(0)>>1)-1 {
+	// Overflow into platform int is not expected for severity 0–100, but guard.
+	const maxInt = int64(^uint(0) >> 1)
+	if i64 > maxInt || i64 < -maxInt-1 {
 		return 0, parseFail("type", "integer overflow")
 	}
 	return int(i64), nil

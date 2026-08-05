@@ -235,6 +235,45 @@ func TestOpenAICompatible_OversizedRequestRejected(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatible_RejectsURLUserinfo(t *testing.T) {
+	t.Parallel()
+	_, err := classifier.NewOpenAICompatible(classifier.OpenAICompatibleConfig{
+		Model: "m", BaseURL: "http://user:pass@127.0.0.1:9", AllowRemote: true,
+	})
+	if err == nil {
+		t.Fatal("userinfo in base_url must be rejected")
+	}
+}
+
+func TestOpenAICompatible_HostOwnsIdentityFields(t *testing.T) {
+	t.Parallel()
+	// Even if model tried to spoof prompt_hash (now rejected by parser), host fills fields.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"rid","choices":[{"message":{"content":"{\"schema_version\":\"reinframe.raw_assessment.v1\",\"severity\":3,\"reason_code\":\"NORMAL_PROGRESS\"}"}}]}`))
+	}))
+	defer srv.Close()
+	p, err := classifier.NewOpenAICompatible(classifier.OpenAICompatibleConfig{
+		Model: "host-model", BaseURL: srv.URL, Path: "/", AllowRemote: true, HTTPClient: srv.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := classifier.NewProviderRequest(classifier.ClassifierInput{RulesetID: "rid", RulesetHash: "rh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := p.Assess(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Assessment.ModelID != "host-model" {
+		t.Fatal(res.Assessment.ModelID)
+	}
+	if res.Assessment.PromptHash != req.Prompt.PromptHash || res.Assessment.RulesetHash != "rh" {
+		t.Fatalf("%+v", res.Assessment)
+	}
+}
+
 func TestOpenAICompatible_RawAPIKeyRejected(t *testing.T) {
 	t.Parallel()
 	_, err := classifier.NewOpenAICompatible(classifier.OpenAICompatibleConfig{

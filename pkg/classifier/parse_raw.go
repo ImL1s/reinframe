@@ -74,27 +74,21 @@ func ParseRawAssessmentStrict(content []byte, maxBytes int, allowedEvidence map[
 	}
 	// Trailing non-whitespace already checked by validateSingleJSONObject.
 
-	// Closed field allowlist.
+	// Closed field allowlist — assessment content may only carry score evidence.
+	// Host-owned identity (model_id, prompt_hash, ruleset_*, latency) is rejected
+	// here so the adapter always overwrites from trusted request/config.
 	allowed := map[string]struct{}{
 		"schema_version":     {},
 		"severity":           {},
 		"reason_code":        {},
 		"evidence_event_ids": {},
-		// Optional closed metadata fields (may appear; model-injected usage is ignored elsewhere).
-		"model_id":      {},
-		"model_version": {},
-		"prompt_hash":   {},
-		"ruleset_id":    {},
-		"ruleset_hash":  {},
-		"parse_status":  {},
-		"latency_ms":    {},
-		// Explicitly reject if present as nested objects for usage injection —
-		// these keys are NOT part of RawAssessment and must fail closed.
 	}
-	// Reject usage/meta injection keys in assessment content.
+	// Reject usage/meta / host-identity injection keys in assessment content.
 	forbidden := []string{
 		"input_tokens", "output_tokens", "cached_tokens", "cache_hit",
 		"provider_request_id", "usage", "cache_read_tokens", "uncached_input_tokens",
+		"model_id", "model_version", "prompt_hash", "ruleset_id", "ruleset_hash",
+		"parse_status", "latency_ms",
 	}
 	for _, k := range forbidden {
 		if _, ok := raw[k]; ok {
@@ -171,58 +165,6 @@ func ParseRawAssessmentStrict(content []byte, maxBytes int, allowedEvidence map[
 		EvidenceEventIDs: evidence,
 		ParseStatus:      ParseStatusOK,
 	}
-	// Optional closed string fields (no coercion).
-	if v, ok := raw["model_id"]; ok {
-		out.ModelID, err = decodeStrictString(v)
-		if err != nil {
-			return RawAssessment{}, err
-		}
-	}
-	if v, ok := raw["model_version"]; ok {
-		out.ModelVersion, err = decodeStrictString(v)
-		if err != nil {
-			return RawAssessment{}, err
-		}
-	}
-	if v, ok := raw["prompt_hash"]; ok {
-		out.PromptHash, err = decodeStrictString(v)
-		if err != nil {
-			return RawAssessment{}, err
-		}
-	}
-	if v, ok := raw["ruleset_id"]; ok {
-		out.RulesetID, err = decodeStrictString(v)
-		if err != nil {
-			return RawAssessment{}, err
-		}
-	}
-	if v, ok := raw["ruleset_hash"]; ok {
-		out.RulesetHash, err = decodeStrictString(v)
-		if err != nil {
-			return RawAssessment{}, err
-		}
-	}
-	if v, ok := raw["parse_status"]; ok {
-		ps, err := decodeStrictString(v)
-		if err != nil {
-			return RawAssessment{}, err
-		}
-		// Only ok is accepted from model for a successful parse path.
-		if ps != ParseStatusOK {
-			return RawAssessment{}, parseFail("parse_status", "invalid parse_status in content")
-		}
-	}
-	if v, ok := raw["latency_ms"]; ok {
-		// Reject model-supplied latency for assessment identity — optional closed int only if present.
-		lat, err := decodeStrictInt64(v)
-		if err != nil {
-			return RawAssessment{}, err
-		}
-		if lat < 0 {
-			return RawAssessment{}, parseFail("latency", "negative latency")
-		}
-		out.LatencyMS = lat
-	}
 	return out, nil
 }
 
@@ -272,19 +214,6 @@ func decodeStrictInt(raw json.RawMessage) (int, error) {
 		return 0, parseFail("type", "integer overflow")
 	}
 	return int(i64), nil
-}
-
-func decodeStrictInt64(raw json.RawMessage) (int64, error) {
-	raw = bytes.TrimSpace(raw)
-	s := string(raw)
-	if strings.ContainsAny(s, ".eE") || s[0] == '"' {
-		return 0, parseFail("type", "expected integer")
-	}
-	var n json.Number
-	if err := json.Unmarshal(raw, &n); err != nil {
-		return 0, parseFail("type", "invalid number")
-	}
-	return n.Int64()
 }
 
 func decodeStrictStringArray(raw json.RawMessage) ([]string, error) {

@@ -84,6 +84,10 @@ func NewOpenAICompatible(cfg OpenAICompatibleConfig) (*OpenAICompatibleProvider,
 	default:
 		return nil, newProviderError("config", "base_url scheme must be http or https", false, 0)
 	}
+	// Reject URL userinfo (credentials in URL must never be accepted or logged).
+	if u.User != nil {
+		return nil, newProviderError("config", "base_url must not include userinfo", false, 0)
+	}
 	if !cfg.AllowRemote && !isLoopbackHost(u.Hostname()) {
 		return nil, newProviderError("config", "base_url must be loopback unless AllowRemote", false, 0)
 	}
@@ -138,9 +142,10 @@ func NewOpenAICompatible(cfg OpenAICompatibleConfig) (*OpenAICompatibleProvider,
 
 	client := cfg.HTTPClient
 	if client == nil {
+		// No client-level Timeout: per-call budget is enforced via context.WithTimeout
+		// so configured/request timeouts (up to MaxAllowedTimeout) are honored.
 		// No redirects by default — prevent silent egress destination change.
 		client = &http.Client{
-			Timeout: DefaultTimeout,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -360,8 +365,14 @@ func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, endpoint string, 
 	if err != nil {
 		return ProviderResult{}, status, false, newProviderError("parse", err.Error(), false, status)
 	}
+	// Host-owned identity fields — never trust model content for these.
 	assessment.ModelID = p.cfg.Model
+	assessment.ModelVersion = ""
+	assessment.PromptHash = req.Prompt.PromptHash
+	assessment.RulesetID = req.Input.RulesetID
+	assessment.RulesetHash = req.Input.RulesetHash
 	assessment.ParseStatus = ParseStatusOK
+	assessment.LatencyMS = 0 // filled by caller from wall clock
 
 	return ProviderResult{
 		Assessment: assessment,
@@ -509,10 +520,15 @@ func redactSecret(msg, secret string) string {
 
 // RedactedConfig returns a copy safe for logging/serialization (no resolved secrets).
 func (p *OpenAICompatibleProvider) RedactedConfig() map[string]any {
+	base := p.cfg.BaseURL
+	if u, err := url.Parse(base); err == nil {
+		u.User = nil
+		base = u.String()
+	}
 	return map[string]any{
 		"kind":                 "openai_compatible",
 		"model":                p.cfg.Model,
-		"base_url":             p.cfg.BaseURL,
+		"base_url":             base,
 		"path":                 p.cfg.Path,
 		"api_key_ref":          p.cfg.APIKeyRef, // placeholder only
 		"capabilities_profile": profileName(p.cfg.CapabilitiesProfile),

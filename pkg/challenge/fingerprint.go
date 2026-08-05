@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
 )
@@ -69,10 +70,22 @@ func ComputeFingerprint(in FingerprintInput) (FingerprintResult, error) {
 		return FingerprintResult{}, err
 	}
 	for _, t := range pa.TargetScope {
-		targets = append(targets, normalizeResource(t))
+		// TargetScope is advisory scope labels — keep general clean for non-write classes.
+		// For write/edit authorization, FilePath lexical identity is authoritative (below).
+		if side == SideEffectWriteFile {
+			targets = append(targets, lexicalEditPathIdentity(t))
+		} else {
+			targets = append(targets, normalizeResource(t))
+		}
 	}
 	if pa.FilePath != "" {
-		targets = append(targets, normalizeResource(pa.FilePath))
+		// Write/edit: bind exact lexical path spelling (not path.Clean).
+		// Other classes may still use display/path cleanup for non-auth convenience targets.
+		if side == SideEffectWriteFile {
+			targets = append(targets, lexicalEditPathIdentity(pa.FilePath))
+		} else {
+			targets = append(targets, normalizeResource(pa.FilePath))
+		}
 	}
 	targets = uniqueSorted(targets)
 
@@ -138,7 +151,8 @@ func ClassifyRelationship(original FingerprintResult, candidate FingerprintResul
 }
 
 func classifySideEffect(pa adapter.ProposedAction) (side string, targets []string, err error) {
-	cmd := strings.TrimSpace(pa.Command)
+	// ASCII-only shell boundary trim — never strings.TrimSpace (strips NBSP/EM SPACE).
+	cmd := trimShellASCIIWhitespace(pa.Command)
 	switch pa.ToolClass {
 	case adapter.ToolClassRead:
 		return SideEffectRead, nil, nil
@@ -146,7 +160,7 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 		return SideEffectSearch, nil, nil
 	case adapter.ToolClassEdit:
 		if pa.FilePath != "" {
-			return SideEffectWriteFile, []string{normalizeResource(pa.FilePath)}, nil
+			return SideEffectWriteFile, []string{lexicalEditPathIdentity(pa.FilePath)}, nil
 		}
 		return SideEffectWriteFile, nil, nil
 	}
@@ -307,7 +321,8 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 	parts := map[string]string{
 		// ToolName intentionally omitted from op identity so Edit/StrReplace equivalents can match
 		// when path+content digests are the same; ToolClass still in outer fingerprint.
-		"path": normalizeResource(pa.FilePath),
+		// Authorization binds exact lexical path spelling — not path.Clean (build ≠ build/).
+		"path": lexicalEditPathIdentity(pa.FilePath),
 	}
 	var oldDig, newDig string
 
@@ -370,8 +385,9 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 			parts["replace_all"] = fmt.Sprintf("%t", b)
 		}
 		// Path aliases must not diverge from ProposedAction.FilePath (only FilePath binds).
+		// Compare lexical spelling so build/ vs build cannot agree via path.Clean.
 		if s := stringField(m, "file_path", "path"); s != "" {
-			if normalizeResource(s) != normalizeResource(pa.FilePath) {
+			if lexicalEditPathIdentity(s) != lexicalEditPathIdentity(pa.FilePath) {
 				return "", fmt.Errorf("proposed_action: edit payload path conflicts with FilePath")
 			}
 		}
@@ -385,7 +401,7 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 	}
 
 	if oldDig == "" && newDig == "" {
-		if strings.TrimSpace(pa.Command) != "" {
+		if trimShellASCIIWhitespace(pa.Command) != "" {
 			// Quote-preserving: same as shell digests (Fields must not collapse -c literals).
 			parts["cmd"] = normalizeCommandForDigest(pa.Command)
 		} else {
@@ -478,7 +494,12 @@ var resolutionEnvNames = map[string]struct{}{
 
 // shellHasResolutionEnv reports ENV= prefixes that can redirect which binary runs.
 func shellHasResolutionEnv(cmd string) bool {
-	for _, f := range strings.Fields(strings.TrimSpace(cmd)) {
+	fields, ok := shellFields(trimShellASCIIWhitespace(cmd))
+	if !ok {
+		// Unicode whitespace → fail closed for privileged classification.
+		return true
+	}
+	for _, f := range fields {
 		if !envAssignPrefix.MatchString(f) {
 			// Stop at first non-ENV field (argv0 area); only leading assigns count.
 			if strings.Contains(f, "=") && !strings.HasPrefix(f, "-") {
@@ -498,23 +519,64 @@ func shellHasResolutionEnv(cmd string) bool {
 	return false
 }
 
+// isShellASCIIWhitespace reports the closed set of shell field separators we accept
+// for boundary/token handling: space, tab, LF, CR only (not Unicode IsSpace).
+func isShellASCIIWhitespace(r rune) bool {
+	switch r {
+	case ' ', '\t', '\n', '\r':
+		return true
+	default:
+		return false
+	}
+}
+
+// trimShellASCIIWhitespace trims only ASCII shell boundary characters.
+// Unlike strings.TrimSpace, it does not remove NBSP, EM SPACE, or other Unicode spaces.
+func trimShellASCIIWhitespace(s string) string {
+	start := 0
+	for start < len(s) {
+		r, size := utf8.DecodeRuneInString(s[start:])
+		if r == utf8.RuneError && size == 1 {
+			break
+		}
+		if !isShellASCIIWhitespace(r) {
+			break
+		}
+		start += size
+	}
+	end := len(s)
+	for end > start {
+		r, size := utf8.DecodeLastRuneInString(s[:end])
+		if r == utf8.RuneError && size == 1 {
+			break
+		}
+		if !isShellASCIIWhitespace(r) {
+			break
+		}
+		end -= size
+	}
+	return s[start:end]
+}
+
+// hasNonShellUnicodeWhitespace is true when any non-ASCII Unicode space appears.
+// Such commands must not receive privileged shell side-effect identity.
+func hasNonShellUnicodeWhitespace(s string) bool {
+	for _, r := range s {
+		if r >= 0x80 && unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
+}
+
 // shellFields splits on ASCII shell whitespace only (space/tab/LF/CR).
 // ok is false if non-ASCII Unicode whitespace appears — Bash would not treat those
 // as separators, so privileged classification must fail closed (e.g. NBSP).
 func shellFields(cmd string) (fields []string, ok bool) {
-	for _, r := range cmd {
-		if r >= 0x80 && unicode.IsSpace(r) {
-			return nil, false
-		}
+	if hasNonShellUnicodeWhitespace(cmd) {
+		return nil, false
 	}
-	return strings.FieldsFunc(cmd, func(r rune) bool {
-		switch r {
-		case ' ', '\t', '\n', '\r':
-			return true
-		default:
-			return false
-		}
-	}), true
+	return strings.FieldsFunc(cmd, isShellASCIIWhitespace), true
 }
 
 // shellArgv0 returns the bare command-position name (first non ENV=val field).
@@ -525,7 +587,7 @@ func shellArgv0(cmd string) string {
 	if shellHasResolutionEnv(cmd) {
 		return ""
 	}
-	fields, ok := shellFields(strings.TrimSpace(cmd))
+	fields, ok := shellFields(trimShellASCIIWhitespace(cmd))
 	if !ok {
 		return ""
 	}
@@ -561,7 +623,7 @@ func shellPrivilegedOpDigest(cmd, kind string) string {
 			"scope_flags": encodeStringList(extractDeleteScopeFlags(cmd)),
 		})))
 	}
-	fields, ok := shellFields(strings.TrimSpace(cmd))
+	fields, ok := shellFields(trimShellASCIIWhitespace(cmd))
 	if !ok {
 		fields = nil
 	}
@@ -1070,7 +1132,8 @@ func extractPaths(cmd string) []string {
 	return out
 }
 
-// normalizeResource is general path cleanup (non-delete). Trailing slash is collapsed.
+// normalizeResource is general path cleanup for non-authorization convenience targets
+// (read/search/shell path extraction). It must NOT authorize write/edit identity.
 func normalizeResource(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, `"'`)
@@ -1079,12 +1142,20 @@ func normalizeResource(s string) string {
 	return s
 }
 
+// lexicalEditPathIdentity is the authorization identity for ToolClassEdit / write_file.
+// Retains exact bounded lexical spelling: build ≠ build/ ≠ build/. ≠ ./build ≠ Build.
+// Does not apply path.Clean, filepath.Clean, or case folding.
+func lexicalEditPathIdentity(s string) string {
+	return s
+}
+
 // normalizeDeleteTarget preserves deletion-sensitive path spelling that path.Clean
 // would erase: trailing slash (build/) and trailing /. (build/.).
 // rm build vs rm build/ and rm build vs rm build/. must not share identity when
 // build is a regular file (GNU rm rejects the directory-required forms).
 func normalizeDeleteTarget(s string) string {
-	s = strings.TrimSpace(s)
+	// Operand tokens come from shellFields (ASCII-split); only ASCII boundary trim.
+	s = trimShellASCIIWhitespace(s)
 	s = strings.Trim(s, `"'`)
 	if s == "" || s == "-" {
 		return s
@@ -1113,42 +1184,56 @@ func normalizeDeleteTarget(s string) string {
 }
 
 // normalizeCommandForDigest is the identity encoding for shell command digests.
-//   - Quotes/escapes present: retain exact trimmed command only (no CR/LF rewrite,
+//   - Non-shell Unicode whitespace: retain exact spelling after ASCII-only boundary
+//     trim (never strings.TrimSpace — would strip leading/trailing NBSP).
+//   - Quotes/escapes present: retain exact ASCII-trimmed command only (no CR/LF rewrite,
 //     no Fields collapse — e.g. python -c 'if "a  b"' vs 'if "a b"' must differ;
 //     quoted CRLF vs LF must also differ).
-//   - Otherwise: normalize CR/LF, collapse horizontal whitespace; preserve newlines.
+//   - Otherwise: normalize CR/LF, collapse horizontal ASCII whitespace; preserve newlines.
 func normalizeCommandForDigest(cmd string) string {
-	cmd = strings.TrimSpace(cmd)
+	cmd = trimShellASCIIWhitespace(cmd)
 	if cmd == "" {
 		return ""
 	}
-	// Quoted/escaped interiors: identity after TrimSpace only.
+	// Unicode shell-foreign whitespace: keep exact bounded spelling (fail-closed identity).
+	if hasNonShellUnicodeWhitespace(cmd) {
+		return cmd
+	}
+	// Quoted/escaped interiors: identity after ASCII boundary trim only.
 	if strings.ContainsAny(cmd, `'"\\`) {
 		return cmd
 	}
 	return normalizeCommandPreserveCase(cmd)
 }
 
-// normalizeCommandPreserveCase collapses horizontal whitespace only.
+// normalizeCommandPreserveCase collapses horizontal ASCII whitespace only.
 // Newlines/carriage returns are preserved as separators so multi-command
 // lines cannot collide with space-joined single commands
 // (echo ok\nrm -rf build ≠ echo ok rm -rf build).
 // Prefer normalizeCommandForDigest for fingerprint digests.
+// Caller must ensure no non-shell Unicode whitespace (see normalizeCommandForDigest).
 func normalizeCommandPreserveCase(cmd string) string {
-	cmd = strings.TrimSpace(cmd)
+	cmd = trimShellASCIIWhitespace(cmd)
 	if cmd == "" {
 		return ""
 	}
 	cmd = strings.ReplaceAll(cmd, "\r\n", "\n")
 	cmd = strings.ReplaceAll(cmd, "\r", "\n")
+	joinASCIIFields := func(p string) string {
+		fields, ok := shellFields(p)
+		if !ok {
+			return p
+		}
+		return strings.Join(fields, " ")
+	}
 	if strings.Contains(cmd, "\n") {
 		parts := strings.Split(cmd, "\n")
 		for i, p := range parts {
-			parts[i] = strings.Join(strings.Fields(p), " ")
+			parts[i] = joinASCIIFields(p)
 		}
 		return strings.Join(parts, "\n")
 	}
-	return strings.Join(strings.Fields(cmd), " ")
+	return joinASCIIFields(cmd)
 }
 
 // encodeStringList is a collision-free stable encoding for multi-value fields.

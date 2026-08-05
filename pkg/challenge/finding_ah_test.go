@@ -2021,3 +2021,170 @@ func TestEditArgsPayloadConflictRejected(t *testing.T) {
 		t.Fatal("Open must reject conflicting edit")
 	}
 }
+
+// --- P1-A: non-shell Unicode whitespace at command boundaries (Codex afd4fc4) ---
+
+// Leading NBSP must not become privileged delete via TrimSpace stripping.
+func TestLeadingNBSPDoesNotBecomePrivilegedDelete(t *testing.T) {
+	const nbsp = "\u00a0"
+	leading := mustFP(t, challenge.FingerprintInput{Proposed: samplePA(nbsp + "rm -rf build"), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	if leading.SideEffectClass == challenge.SideEffectDeleteTree ||
+		leading.SideEffectClass == challenge.SideEffectDeleteFile {
+		t.Fatalf("leading NBSP must not be privileged delete, got %s", leading.SideEffectClass)
+	}
+	if leading.Fingerprint == plain.Fingerprint {
+		t.Fatal("leading-NBSP command must not share fingerprint with ASCII rm -rf")
+	}
+	rel := challenge.ClassifyRelationship(leading, plain)
+	if rel == challenge.RelSame || rel == challenge.RelBypass {
+		t.Fatalf("leading NBSP vs ASCII delete must not RelSame/RelBypass, got %s", rel)
+	}
+	// Generic digest retains leading NBSP (ASCII-only boundary trim leaves it).
+	if leading.OperationDigest == plain.OperationDigest {
+		t.Fatal("generic op digest must retain Unicode-boundary difference")
+	}
+}
+
+// Trailing Unicode whitespace changes command identity.
+func TestTrailingUnicodeWhitespaceChangesCommandIdentity(t *testing.T) {
+	const nbsp = "\u00a0"
+	trailing := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build" + nbsp), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	if trailing.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("trailing NBSP must not be delete_tree, got %s", trailing.SideEffectClass)
+	}
+	if trailing.Fingerprint == plain.Fingerprint {
+		t.Fatal("trailing NBSP must change fingerprint vs ASCII rm -rf")
+	}
+	if trailing.OperationDigest == plain.OperationDigest {
+		t.Fatal("trailing NBSP must change operation digest")
+	}
+}
+
+// Interior NBSP / EM SPACE fail closed to generic shell; ASCII boundaries stay deterministic.
+func TestUnicodeWhitespaceFailsClosedToGenericShell(t *testing.T) {
+	const (
+		nbsp    = "\u00a0" // NO-BREAK SPACE
+		emSpace = "\u2003" // EM SPACE
+	)
+	cases := []struct {
+		name string
+		cmd  string
+	}{
+		{"interior_nbsp", "rm" + nbsp + "-rf build"},
+		{"leading_em", emSpace + "rm -rf build"},
+		{"trailing_em", "rm -rf build" + emSpace},
+		{"interior_em", "rm -rf" + emSpace + "build"},
+	}
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := mustFP(t, challenge.FingerprintInput{Proposed: samplePA(c.cmd), SessionID: "sess-1"})
+			if got.SideEffectClass == challenge.SideEffectDeleteTree ||
+				got.SideEffectClass == challenge.SideEffectDeleteFile ||
+				got.SideEffectClass == challenge.SideEffectTestSuite {
+				t.Fatalf("%s: want generic-shell (not privileged), got %s", c.name, got.SideEffectClass)
+			}
+			if got.Fingerprint == plain.Fingerprint {
+				t.Fatalf("%s: must not collide with ASCII privileged delete", c.name)
+			}
+			rel := challenge.ClassifyRelationship(got, plain)
+			if rel == challenge.RelSame || rel == challenge.RelBypass {
+				t.Fatalf("%s: rel=%s want different", c.name, rel)
+			}
+		})
+	}
+	// Ordinary ASCII leading/trailing whitespace remains deterministic privileged delete.
+	asciiLead := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("  rm -rf build"), SessionID: "sess-1"})
+	asciiTrail := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build\t"), SessionID: "sess-1"})
+	if asciiLead.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("ASCII leading space should still be delete_tree, got %s", asciiLead.SideEffectClass)
+	}
+	if asciiTrail.SideEffectClass != challenge.SideEffectDeleteTree {
+		t.Fatalf("ASCII trailing tab should still be delete_tree, got %s", asciiTrail.SideEffectClass)
+	}
+	if asciiLead.Fingerprint != plain.Fingerprint || asciiTrail.Fingerprint != plain.Fingerprint {
+		t.Fatal("ASCII boundary whitespace must normalize to same privileged delete identity")
+	}
+}
+
+// --- P1-B: edit/write path lexical identity (Codex afd4fc4) ---
+
+func TestEditPathTrailingSlashDistinct(t *testing.T) {
+	a := sampleEdit("build", "content-x")
+	b := sampleEdit("build/", "content-x")
+	fa := mustFP(t, challenge.FingerprintInput{Proposed: a, SessionID: "sess-1"})
+	fb := mustFP(t, challenge.FingerprintInput{Proposed: b, SessionID: "sess-1"})
+	if fa.Fingerprint == fb.Fingerprint {
+		t.Fatal("edit path build vs build/ must differ")
+	}
+	if fa.OperationDigest == fb.OperationDigest {
+		t.Fatal("edit op digest must bind trailing slash distinction")
+	}
+	rel := challenge.ClassifyRelationship(fa, fb)
+	if rel == challenge.RelSame || rel == challenge.RelBypass {
+		t.Fatalf("build/ → build retry must not RelSame/RelBypass, got %s", rel)
+	}
+}
+
+func TestEditPathTrailingDotDistinct(t *testing.T) {
+	a := sampleEdit("build", "content-y")
+	b := sampleEdit("build/.", "content-y")
+	c := sampleEdit("./build", "content-y")
+	d := sampleEdit("build//", "content-y")
+	fa := mustFP(t, challenge.FingerprintInput{Proposed: a, SessionID: "sess-1"})
+	fb := mustFP(t, challenge.FingerprintInput{Proposed: b, SessionID: "sess-1"})
+	fc := mustFP(t, challenge.FingerprintInput{Proposed: c, SessionID: "sess-1"})
+	fd := mustFP(t, challenge.FingerprintInput{Proposed: d, SessionID: "sess-1"})
+	for _, pair := range []struct {
+		name string
+		x, y challenge.FingerprintResult
+	}{
+		{"build vs build/.", fa, fb},
+		{"build vs ./build", fa, fc},
+		{"build vs build//", fa, fd},
+	} {
+		if pair.x.Fingerprint == pair.y.Fingerprint {
+			t.Fatalf("%s must differ", pair.name)
+		}
+		rel := challenge.ClassifyRelationship(pair.x, pair.y)
+		if rel == challenge.RelSame || rel == challenge.RelBypass {
+			t.Fatalf("%s rel=%s", pair.name, rel)
+		}
+	}
+}
+
+func TestEditPathCasePreserved(t *testing.T) {
+	lower := mustFP(t, challenge.FingerprintInput{Proposed: sampleEdit("build", "same"), SessionID: "sess-1"})
+	upper := mustFP(t, challenge.FingerprintInput{Proposed: sampleEdit("Build", "same"), SessionID: "sess-1"})
+	if lower.Fingerprint == upper.Fingerprint {
+		t.Fatal("Build vs build must retain distinct edit identity")
+	}
+	if challenge.ClassifyRelationship(lower, upper) == challenge.RelBypass {
+		t.Fatal("case variants must not RelBypass")
+	}
+}
+
+func TestIdenticalEditPathAndPayloadDeterministic(t *testing.T) {
+	a := sampleEdit("main.go", "func F() {}")
+	b := sampleEdit("main.go", "func F() {}")
+	fa := mustFP(t, challenge.FingerprintInput{Proposed: a, SessionID: "sess-1"})
+	fb := mustFP(t, challenge.FingerprintInput{Proposed: b, SessionID: "sess-1"})
+	if fa.Fingerprint != fb.Fingerprint || fa.OperationDigest != fb.OperationDigest {
+		t.Fatal("identical path+payload must be deterministic")
+	}
+	// Different content still differs.
+	fc := mustFP(t, challenge.FingerprintInput{Proposed: sampleEdit("main.go", "func G() {}"), SessionID: "sess-1"})
+	if fa.Fingerprint == fc.Fingerprint {
+		t.Fatal("different content must differ")
+	}
+	// Empty content remains valid and deterministic.
+	e1 := sampleEdit("empty.txt", "")
+	e2 := sampleEdit("empty.txt", "")
+	fe1 := mustFP(t, challenge.FingerprintInput{Proposed: e1, SessionID: "sess-1"})
+	fe2 := mustFP(t, challenge.FingerprintInput{Proposed: e2, SessionID: "sess-1"})
+	if fe1.Fingerprint != fe2.Fingerprint {
+		t.Fatal("empty content must be deterministic")
+	}
+}

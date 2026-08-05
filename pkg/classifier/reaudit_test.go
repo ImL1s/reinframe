@@ -297,8 +297,9 @@ func TestUsage_NegativeRejectedNotClamped(t *testing.T) {
 	if !a.UsageInvalid || a.UsagePresent {
 		t.Fatalf("%+v", a)
 	}
-	if a.InputTokens != 0 {
-		// zero field is ok as omitted genuine measurement, not as UsagePresent true zero
+	// Invalid path must not claim measured zeros as UsagePresent telemetry.
+	if a.InputTokens != 0 || a.OutputTokens != 0 {
+		t.Fatalf("invalid usage must not publish token values as genuine: %+v", a)
 	}
 }
 

@@ -124,7 +124,15 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 		if just != nil {
 			cin.RelatedEventIDs = append([]string(nil), just.SupportingEvidenceEventIDs...)
 		}
-		raw, err := in.Provider.Assess(ctx, cin)
+		preq, perr := classifier.NewProviderRequest(cin)
+		if perr != nil {
+			if in.PolicyClass == PolicyClassSecurity {
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_fail_closed"}, nil
+			}
+			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "provider_fail_open", RawSeverity: 0}, nil
+		}
+		pres, err := in.Provider.Assess(ctx, preq)
+		raw := pres.Assessment
 		if err != nil {
 			// Never fail-open on owner cancellation — AttemptRetry must not persist ALLOWED_ONCE.
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -137,7 +145,7 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "provider_fail_open", RawSeverity: 0}, nil
 		}
 		// Stage 2 threshold
-		if raw.ParseStatus != "ok" {
+		if raw.ParseStatus != "ok" && raw.ParseStatus != classifier.ParseStatusOK {
 			if in.PolicyClass == PolicyClassSecurity {
 				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "parse_fail_closed"}, nil
 			}

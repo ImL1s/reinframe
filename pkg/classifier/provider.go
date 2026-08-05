@@ -3,13 +3,15 @@ package classifier
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
 )
 
-// ClassifierProvider produces closed RawAssessment values (#119 / #105).
+// ClassifierProvider is the canonical Stage-1 provider contract (#132).
+// Implementations return typed success or typed failure; they never decide ALLOW|BLOCK.
 type ClassifierProvider interface {
-	Assess(ctx context.Context, in ClassifierInput) (RawAssessment, error)
+	Assess(ctx context.Context, req ProviderRequest) (ProviderResult, error)
 }
 
 // ClassifierInput is the versioned Stage 1 input.
@@ -45,24 +47,39 @@ type RawAssessment struct {
 }
 
 // FakeClassifierProvider maps golden fixture names to deterministic assessments.
+// Uses the canonical ProviderRequest/ProviderResult contract (#132).
 type FakeClassifierProvider struct {
 	LatencyMS int64
+	// ProviderKind labels Meta.Provider (default "fake").
+	ProviderKind string
 }
 
 // Assess implements ClassifierProvider.
-func (f FakeClassifierProvider) Assess(ctx context.Context, in ClassifierInput) (RawAssessment, error) {
+func (f FakeClassifierProvider) Assess(ctx context.Context, req ProviderRequest) (ProviderResult, error) {
+	start := time.Now()
 	if ctx != nil && ctx.Err() != nil {
-		return RawAssessment{}, ctx.Err()
+		return ProviderResult{}, ctx.Err()
+	}
+	if err := ValidateProviderRequest(req); err != nil {
+		return ProviderResult{}, err
+	}
+	in := req.Input
+	kind := f.ProviderKind
+	if kind == "" {
+		kind = "fake"
 	}
 	out := RawAssessment{
 		SchemaVersion: SchemaRawAssessment,
 		ModelID:       "fake",
 		ModelVersion:  "v0",
-		PromptHash:    "fake-prompt",
+		PromptHash:    req.Prompt.PromptHash,
 		RulesetID:     in.RulesetID,
 		RulesetHash:   in.RulesetHash,
-		ParseStatus:   "ok",
+		ParseStatus:   ParseStatusOK,
 		LatencyMS:     f.LatencyMS,
+	}
+	if out.PromptHash == "" {
+		out.PromptHash = "fake-prompt"
 	}
 	// Prefer FixtureName; else derive from proposed action for non-fixture path.
 	name := in.FixtureName
@@ -80,7 +97,7 @@ func (f FakeClassifierProvider) Assess(ctx context.Context, in ClassifierInput) 
 			out.EvidenceEventIDs = append([]string(nil), in.RecentEventIDs...)
 		}
 	case "malformed_output":
-		out.ParseStatus = "invalid"
+		out.ParseStatus = ParseStatusInvalid
 		out.Severity = 0
 		out.ReasonCode = "UNKNOWN"
 	case "user_exception", "repo_policy_exception", "flaky_investigation":
@@ -95,13 +112,42 @@ func (f FakeClassifierProvider) Assess(ctx context.Context, in ClassifierInput) 
 		out.Severity = 0
 		out.ReasonCode = "NORMAL_PROGRESS"
 	default:
-		return RawAssessment{}, fmt.Errorf("classifier fake: unknown fixture %q", name)
+		return ProviderResult{}, fmt.Errorf("classifier fake: unknown fixture %q", name)
 	}
-	if out.ParseStatus == "ok" && !ValidateSeverity(out.Severity) {
-		return RawAssessment{}, fmt.Errorf("severity out of range")
+	if out.ParseStatus == ParseStatusOK && !ValidateSeverity(out.Severity) {
+		return ProviderResult{}, fmt.Errorf("severity out of range")
 	}
-	if out.ParseStatus == "ok" && !ValidateRawReasonCode(out.ReasonCode) {
-		return RawAssessment{}, fmt.Errorf("unknown reason code")
+	if out.ParseStatus == ParseStatusOK && !ValidateRawReasonCode(out.ReasonCode) {
+		return ProviderResult{}, fmt.Errorf("unknown reason code")
 	}
-	return out, nil
+	if f.LatencyMS == 0 {
+		out.LatencyMS = time.Since(start).Milliseconds()
+	}
+	return ProviderResult{
+		Assessment: out,
+		Usage:      ProviderUsage{UsagePresent: false},
+		Meta: ProviderMeta{
+			Provider:     kind,
+			ModelID:      "fake",
+			ModelVersion: "v0",
+			LatencyMS:    out.LatencyMS,
+			ParseStatus:  out.ParseStatus,
+		},
+	}, nil
+}
+
+// NewProviderRequest builds a ProviderRequest with default prompt plan and bounds.
+func NewProviderRequest(in ClassifierInput) (ProviderRequest, error) {
+	plan, err := BuildPromptPlan(DefaultPromptPlanMaterial(), in)
+	if err != nil {
+		return ProviderRequest{}, err
+	}
+	return ProviderRequest{
+		SchemaVersion:  SchemaProviderRequest,
+		Input:          in,
+		Prompt:         plan,
+		Timeout:        DefaultTimeout,
+		MaxInputBytes:  DefaultMaxInputBytes,
+		MaxOutputBytes: DefaultMaxOutputBytes,
+	}, nil
 }

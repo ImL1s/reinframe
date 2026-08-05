@@ -214,3 +214,46 @@ func TestIsEnvPlaceholder(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifierProviderConfig_Validate(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// empty kind ok
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{Kind: "none"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// raw key rejected
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_compatible", Model: "m", BaseURL: "http://127.0.0.1:1",
+		APIKeyRef: "sk-raw",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("raw api key must fail")
+	}
+	// unknown profile
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_compatible", Model: "m", BaseURL: "http://127.0.0.1:1",
+		APIKeyRef: "${REINFRAME_CLASSIFIER_API_KEY}", CapabilitiesProfile: "native-openai",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("unknown profile must fail")
+	}
+	// good
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_compatible", Model: "m", BaseURL: "http://127.0.0.1:1",
+		APIKeyRef: "${REINFRAME_CLASSIFIER_API_KEY}", CapabilitiesProfile: "generic-none-v1",
+		TimeoutMS: 1500, MaxInputBytes: 1024, MaxOutputBytes: 512,
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// secret not in JSON
+	b, _ := config.MarshalJSONDocument(cfg)
+	if strings.Contains(string(b), "sk-") {
+		t.Fatal("raw secret in json")
+	}
+}

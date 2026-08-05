@@ -43,11 +43,38 @@ type Config struct {
 	// Reviewer configures ReviewerProvider selection and egress posture (ADR 003).
 	Reviewer ReviewerConfig `json:"reviewer" yaml:"reviewer"`
 
+	// ClassifierProvider configures the Stage-1 classifier provider runtime (#132).
+	// Separate from Reviewer — never silently reuses reviewer advice path.
+	// Empty/disabled means shadow/tests use FakeClassifierProvider only (no network).
+	ClassifierProvider ClassifierProviderConfig `json:"classifier_provider,omitempty" yaml:"classifier_provider,omitempty"`
+
 	// Secrets maps logical names to env placeholders only — never raw values.
 	Secrets SecretsConfig `json:"secrets" yaml:"secrets"`
 
 	// Workspace configures managed worktree isolation (ADR 004).
 	Workspace WorkspaceConfig `json:"workspace" yaml:"workspace"`
+}
+
+// ClassifierProviderConfig selects the optional real classifier provider (#132).
+// kind empty or "none" disables network providers (default).
+type ClassifierProviderConfig struct {
+	// Kind: ""|"none"|"openai_compatible".
+	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
+	// Model identifier (required when kind is openai_compatible).
+	Model string `json:"model,omitempty" yaml:"model,omitempty"`
+	// BaseURL for OpenAI-compatible endpoint.
+	BaseURL string `json:"base_url,omitempty" yaml:"base_url,omitempty"`
+	// Path defaults to /v1/chat/completions.
+	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+	// APIKeyRef must be ${ENV} placeholder — never a raw secret.
+	APIKeyRef string `json:"api_key_ref,omitempty" yaml:"api_key_ref,omitempty"`
+	// TimeoutMS per-call timeout (default 1500).
+	TimeoutMS int `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+	// MaxInputBytes / MaxOutputBytes bounds.
+	MaxInputBytes  int `json:"max_input_bytes,omitempty" yaml:"max_input_bytes,omitempty"`
+	MaxOutputBytes int `json:"max_output_bytes,omitempty" yaml:"max_output_bytes,omitempty"`
+	// CapabilitiesProfile defaults to generic-none-v1.
+	CapabilitiesProfile string `json:"capabilities_profile,omitempty" yaml:"capabilities_profile,omitempty"`
 }
 
 // SessionDefaults are applied to new supervised sessions unless overridden.
@@ -181,10 +208,51 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
+	if err := validateClassifierProvider(c.ClassifierProvider); err != nil {
+		return err
+	}
 	for name, ref := range c.Secrets.Refs {
 		if err := validateEnvPlaceholder(fmt.Sprintf("secrets.refs[%s]", name), ref); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateClassifierProvider(cp ClassifierProviderConfig) error {
+	switch strings.TrimSpace(cp.Kind) {
+	case "", "none":
+		return nil
+	case "openai_compatible":
+		// ok
+	default:
+		return fmt.Errorf("classifier_provider.kind %q is not supported", cp.Kind)
+	}
+	if strings.TrimSpace(cp.Model) == "" {
+		return fmt.Errorf("classifier_provider.model is required")
+	}
+	if strings.TrimSpace(cp.BaseURL) == "" {
+		return fmt.Errorf("classifier_provider.base_url is required")
+	}
+	if cp.APIKeyRef != "" {
+		if err := validateEnvPlaceholder("classifier_provider.api_key_ref", cp.APIKeyRef); err != nil {
+			return err
+		}
+	}
+	if cp.TimeoutMS < 0 || cp.TimeoutMS > 60000 {
+		return fmt.Errorf("classifier_provider.timeout_ms out of range")
+	}
+	if cp.MaxInputBytes < 0 || cp.MaxInputBytes > 1<<20 {
+		return fmt.Errorf("classifier_provider.max_input_bytes out of range")
+	}
+	if cp.MaxOutputBytes < 0 || cp.MaxOutputBytes > 256<<10 {
+		return fmt.Errorf("classifier_provider.max_output_bytes out of range")
+	}
+	switch strings.TrimSpace(cp.CapabilitiesProfile) {
+	case "", "generic-none-v1":
+		// ok — only generic cache-neutral profile in #132
+	default:
+		return fmt.Errorf("classifier_provider.capabilities_profile %q is not supported", cp.CapabilitiesProfile)
 	}
 	return nil
 }

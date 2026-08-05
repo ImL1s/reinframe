@@ -298,6 +298,6 @@ func (failProvider) ReEvaluate(ctx context.Context, rec challenge.ChallengeRecor
 
 type failClassifier struct{}
 
-func (failClassifier) Assess(ctx context.Context, in classifier.ClassifierInput) (classifier.RawAssessment, error) {
-	return classifier.RawAssessment{}, context.DeadlineExceeded
+func (failClassifier) Assess(ctx context.Context, req classifier.ProviderRequest) (classifier.ProviderResult, error) {
+	return classifier.ProviderResult{}, context.DeadlineExceeded
 }

@@ -134,22 +134,30 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 			cin.FixtureName = in.RulesetID[8:]
 			cin.RulesetID = "test"
 		}
+		preq, perr := NewProviderRequest(cin)
 		var err error
-		raw, err = s.Provider.Assess(ctx, cin)
+		if perr != nil {
+			err = perr
+			raw = RawAssessment{SchemaVersion: SchemaRawAssessment, ParseStatus: ParseStatusError}
+		} else {
+			var pres ProviderResult
+			pres, err = s.Provider.Assess(ctx, preq)
+			raw = pres.Assessment
+		}
 		if err != nil {
-			// PRODUCTIVITY fail-open
+			// PRODUCTIVITY fail-open / SECURITY fail-closed — resolver owns this.
 			if in.PolicyClass == PolicyClassSecurity {
 				res.Decision = DecisionBlock
 				res.ResolverReason = "fail_closed_security"
 				res.ReasonCode = "provider_unavailable"
-				raw.ParseStatus = "error"
+				raw.ParseStatus = ParseStatusError
 			} else {
 				res.Decision = DecisionAllow
 				res.ResolverReason = "fail_open_productivity"
 				res.ReasonCode = "provider_unavailable"
-				raw.ParseStatus = "error"
+				raw.ParseStatus = ParseStatusError
 			}
-		} else if raw.ParseStatus != "ok" {
+		} else if raw.ParseStatus != "ok" && raw.ParseStatus != ParseStatusOK {
 			if in.PolicyClass == PolicyClassSecurity {
 				res.Decision = DecisionBlock
 				res.ResolverReason = "fail_closed_security"

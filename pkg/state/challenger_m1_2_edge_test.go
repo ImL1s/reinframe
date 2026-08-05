@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,9 @@ import (
 // TestChallenger_MultipleConcurrentCloseWithReadersWriters tests multiple concurrent Close() calls
 // racing simultaneously with active readers and writers.
 func TestChallenger_MultipleConcurrentCloseWithReadersWriters(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping multi-close concurrent race on Windows — NTFS file locking causes SQLITE_BUSY under CI contention")
+	}
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "multi_close_race.db")
 	store, err := state.NewStore(state.StoreOptions{

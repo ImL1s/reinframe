@@ -386,7 +386,10 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 		}
 		// Path aliases must not diverge from ProposedAction.FilePath (only FilePath binds).
 		// Compare lexical spelling so build/ vs build cannot agree via path.Clean.
-		if s := stringField(m, "file_path", "path"); s != "" {
+		// Propagate stringFieldsAgree errors (conflicting/non-string aliases) like content fields.
+		if s, ok, err := stringFieldsAgree(m, "file_path", "path"); err != nil {
+			return "", err
+		} else if ok {
 			if lexicalEditPathIdentity(s) != lexicalEditPathIdentity(pa.FilePath) {
 				return "", fmt.Errorf("proposed_action: edit payload path conflicts with FilePath")
 			}
@@ -520,18 +523,20 @@ func shellHasResolutionEnv(cmd string) bool {
 }
 
 // isShellASCIIWhitespace reports the closed set of shell field separators we accept
-// for boundary/token handling: space, tab, LF, CR only (not Unicode IsSpace).
+// for boundary/token handling: space, tab, and LF only.
+// CR is intentionally excluded — Bash does not treat CR as a blank; trimming/splitting
+// on CR would turn `rm -rf build\r` into a privileged `rm -rf build` identity.
 func isShellASCIIWhitespace(r rune) bool {
 	switch r {
-	case ' ', '\t', '\n', '\r':
+	case ' ', '\t', '\n':
 		return true
 	default:
 		return false
 	}
 }
 
-// trimShellASCIIWhitespace trims only ASCII shell boundary characters.
-// Unlike strings.TrimSpace, it does not remove NBSP, EM SPACE, or other Unicode spaces.
+// trimShellASCIIWhitespace trims only space/tab/LF at boundaries.
+// Unlike strings.TrimSpace, it does not remove NBSP, EM SPACE, CR, or other Unicode spaces.
 func trimShellASCIIWhitespace(s string) string {
 	start := 0
 	for start < len(s) {
@@ -569,11 +574,17 @@ func hasNonShellUnicodeWhitespace(s string) bool {
 	return false
 }
 
-// shellFields splits on ASCII shell whitespace only (space/tab/LF/CR).
-// ok is false if non-ASCII Unicode whitespace appears — Bash would not treat those
-// as separators, so privileged classification must fail closed (e.g. NBSP).
+// hasCarriageReturn is true when CR is present. Bash does not split on CR, so
+// privileged shell identity must fail closed (do not treat CR as a field blank).
+func hasCarriageReturn(s string) bool {
+	return strings.Contains(s, "\r")
+}
+
+// shellFields splits on ASCII shell blanks only (space/tab/LF).
+// ok is false if non-ASCII Unicode whitespace or CR appears — Bash would not treat
+// those as separators, so privileged classification must fail closed.
 func shellFields(cmd string) (fields []string, ok bool) {
-	if hasNonShellUnicodeWhitespace(cmd) {
+	if hasNonShellUnicodeWhitespace(cmd) || hasCarriageReturn(cmd) {
 		return nil, false
 	}
 	return strings.FieldsFunc(cmd, isShellASCIIWhitespace), true
@@ -1150,9 +1161,9 @@ func lexicalEditPathIdentity(s string) string {
 }
 
 // normalizeDeleteTarget preserves deletion-sensitive path spelling that path.Clean
-// would erase: trailing slash (build/) and trailing /. (build/.).
-// rm build vs rm build/ and rm build vs rm build/. must not share identity when
-// build is a regular file (GNU rm rejects the directory-required forms).
+// would erase: trailing slash (build/), trailing /. (build/.), and interior . / ..
+// components (file/../victim ≠ victim). rm of a non-directory path with /.. may be a
+// no-op under -f while the cleaned form names a different real target.
 func normalizeDeleteTarget(s string) string {
 	// Operand tokens come from shellFields (ASCII-split); only ASCII boundary trim.
 	s = trimShellASCIIWhitespace(s)
@@ -1161,42 +1172,53 @@ func normalizeDeleteTarget(s string) string {
 		return s
 	}
 	raw := s
+	// Any . or .. path component: bind exact operand spelling (no path.Clean).
+	if deleteOperandHasDotComponent(raw) {
+		return raw
+	}
 	hadSlash := len(raw) > 1 && strings.HasSuffix(raw, "/")
-	noTrailSlash := strings.TrimRight(raw, "/")
-	// "build/." or "build/./" — path.Clean collapses to "build".
-	hadDot := noTrailSlash == "." || strings.HasSuffix(noTrailSlash, "/.")
 	cleaned := path.Clean(raw)
 	cleaned = strings.TrimPrefix(cleaned, "./")
-	if hadDot {
-		if cleaned == "." {
-			return "."
-		}
-		cleaned = strings.TrimSuffix(cleaned, "/")
-		if !strings.HasSuffix(cleaned, "/.") {
-			cleaned += "/."
-		}
-		return cleaned
-	}
 	if hadSlash && cleaned != "/" && !strings.HasSuffix(cleaned, "/") {
 		cleaned += "/"
 	}
 	return cleaned
 }
 
+// deleteOperandHasDotComponent reports path segments "." or ".." (including bare
+// "." / ".." and trailing "/." "/.."). These must not be cleaned away.
+func deleteOperandHasDotComponent(p string) bool {
+	if p == "." || p == ".." {
+		return true
+	}
+	// Walk segments without path.Clean.
+	start := 0
+	for i := 0; i <= len(p); i++ {
+		if i == len(p) || p[i] == '/' {
+			seg := p[start:i]
+			if seg == "." || seg == ".." {
+				return true
+			}
+			start = i + 1
+		}
+	}
+	return false
+}
+
 // normalizeCommandForDigest is the identity encoding for shell command digests.
-//   - Non-shell Unicode whitespace: retain exact spelling after ASCII-only boundary
-//     trim (never strings.TrimSpace — would strip leading/trailing NBSP).
-//   - Quotes/escapes present: retain exact ASCII-trimmed command only (no CR/LF rewrite,
-//     no Fields collapse — e.g. python -c 'if "a  b"' vs 'if "a b"' must differ;
-//     quoted CRLF vs LF must also differ).
-//   - Otherwise: normalize CR/LF, collapse horizontal ASCII whitespace; preserve newlines.
+//   - Non-shell Unicode whitespace or CR: retain exact spelling after ASCII-only
+//     boundary trim (never strings.TrimSpace / CR→LF rewrite that would strip or
+//     collapse shell-foreign control characters).
+//   - Quotes/escapes present: retain exact ASCII-trimmed command only (no Fields
+//     collapse — e.g. python -c 'if "a  b"' vs 'if "a b"' must differ).
+//   - Otherwise: collapse horizontal space/tab; preserve newlines as separators.
 func normalizeCommandForDigest(cmd string) string {
 	cmd = trimShellASCIIWhitespace(cmd)
 	if cmd == "" {
 		return ""
 	}
-	// Unicode shell-foreign whitespace: keep exact bounded spelling (fail-closed identity).
-	if hasNonShellUnicodeWhitespace(cmd) {
+	// Unicode shell-foreign whitespace or CR: keep exact bounded spelling.
+	if hasNonShellUnicodeWhitespace(cmd) || hasCarriageReturn(cmd) {
 		return cmd
 	}
 	// Quoted/escaped interiors: identity after ASCII boundary trim only.
@@ -1206,19 +1228,16 @@ func normalizeCommandForDigest(cmd string) string {
 	return normalizeCommandPreserveCase(cmd)
 }
 
-// normalizeCommandPreserveCase collapses horizontal ASCII whitespace only.
-// Newlines/carriage returns are preserved as separators so multi-command
-// lines cannot collide with space-joined single commands
-// (echo ok\nrm -rf build ≠ echo ok rm -rf build).
+// normalizeCommandPreserveCase collapses horizontal space/tab only.
+// Newlines are preserved as separators so multi-command lines cannot collide with
+// space-joined single commands (echo ok\nrm -rf build ≠ echo ok rm -rf build).
 // Prefer normalizeCommandForDigest for fingerprint digests.
-// Caller must ensure no non-shell Unicode whitespace (see normalizeCommandForDigest).
+// Caller must ensure no CR / non-shell Unicode whitespace.
 func normalizeCommandPreserveCase(cmd string) string {
 	cmd = trimShellASCIIWhitespace(cmd)
 	if cmd == "" {
 		return ""
 	}
-	cmd = strings.ReplaceAll(cmd, "\r\n", "\n")
-	cmd = strings.ReplaceAll(cmd, "\r", "\n")
 	joinASCIIFields := func(p string) string {
 		fields, ok := shellFields(p)
 		if !ok {

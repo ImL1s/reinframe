@@ -3,6 +3,7 @@ package challenge_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2186,5 +2187,76 @@ func TestIdenticalEditPathAndPayloadDeterministic(t *testing.T) {
 	fe2 := mustFP(t, challenge.FingerprintInput{Proposed: e2, SessionID: "sess-1"})
 	if fe1.Fingerprint != fe2.Fingerprint {
 		t.Fatal("empty content must be deterministic")
+	}
+}
+
+// Codex e209470: CR is not a Bash blank — must not trim/split into privileged delete.
+func TestCarriageReturnDoesNotBecomePrivilegedDelete(t *testing.T) {
+	cases := []string{
+		"rm -rf build\r",
+		"rm -rf build\r\n",
+		"rm -rf build\r\nextra",
+		"\rrm -rf build",
+	}
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf build"), SessionID: "sess-1"})
+	for _, cmd := range cases {
+		got := mustFP(t, challenge.FingerprintInput{Proposed: samplePA(cmd), SessionID: "sess-1"})
+		if got.SideEffectClass == challenge.SideEffectDeleteTree ||
+			got.SideEffectClass == challenge.SideEffectDeleteFile {
+			t.Fatalf("%q must not be privileged delete, got %s", cmd, got.SideEffectClass)
+		}
+		if got.Fingerprint == plain.Fingerprint {
+			t.Fatalf("%q must not share fingerprint with ASCII rm -rf build", cmd)
+		}
+		rel := challenge.ClassifyRelationship(got, plain)
+		if rel == challenge.RelSame || rel == challenge.RelBypass {
+			t.Fatalf("%q rel=%s", cmd, rel)
+		}
+	}
+}
+
+// Codex e209470: path.Clean must not collapse file/../victim into victim for delete identity.
+func TestDeleteDotDotOperandPreserved(t *testing.T) {
+	dotdot := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf file/../victim"), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("rm -rf victim"), SessionID: "sess-1"})
+	if dotdot.Fingerprint == plain.Fingerprint {
+		t.Fatal("rm -rf file/../victim must not share fingerprint with rm -rf victim")
+	}
+	if len(dotdot.TargetResources) == 0 {
+		t.Fatal("dot-dot operand must bind a target")
+	}
+	// Interior .. must appear in target spelling (not cleaned to victim alone).
+	found := false
+	for _, tr := range dotdot.TargetResources {
+		if strings.Contains(tr, "..") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("targets must retain .. component, got %v", dotdot.TargetResources)
+	}
+	rel := challenge.ClassifyRelationship(dotdot, plain)
+	if rel == challenge.RelSame || rel == challenge.RelBypass {
+		t.Fatalf("dot-dot vs cleaned victim rel=%s", rel)
+	}
+}
+
+// Codex e209470: conflicting payload path aliases must fail closed (not stringField swallow).
+func TestEditConflictingPathAliasesRejected(t *testing.T) {
+	payload, _ := json.Marshal(map[string]string{
+		"content":   "x",
+		"file_path": "build",
+		"path":      "build/",
+	})
+	pa := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ActionID: "path-alias", ToolName: "Write", ToolClass: adapter.ToolClassEdit,
+		FilePath: "build", RedactedPayload: payload, ParseStatus: "ok",
+		WorkspaceRevision: "ws-1", ContractRevision: 3,
+	}
+	_, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa, SessionID: "sess-1"})
+	if err == nil {
+		t.Fatal("conflicting file_path/path aliases must fail closed")
 	}
 }

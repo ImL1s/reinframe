@@ -9,6 +9,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -231,8 +232,24 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 	if strings.TrimSpace(cp.Model) == "" {
 		return fmt.Errorf("classifier_provider.model is required")
 	}
-	if strings.TrimSpace(cp.BaseURL) == "" {
+	base := strings.TrimSpace(cp.BaseURL)
+	if base == "" {
 		return fmt.Errorf("classifier_provider.base_url is required")
+	}
+	// Mirror adapter construction: parseable URL, http(s) only, no userinfo.
+	// Loopback/ADR-003 egress is enforced at adapter construction (AllowRemote=false default).
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("classifier_provider.base_url is invalid")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		// ok
+	default:
+		return fmt.Errorf("classifier_provider.base_url scheme must be http or https")
+	}
+	if u.User != nil {
+		return fmt.Errorf("classifier_provider.base_url must not include userinfo")
 	}
 	if cp.APIKeyRef != "" {
 		if err := validateEnvPlaceholder("classifier_provider.api_key_ref", cp.APIKeyRef); err != nil {

@@ -172,6 +172,49 @@ func TestOpenAICompatible_Retry429Bounded(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatible_RetryAfterBounded(t *testing.T) {
+	t.Parallel()
+	// Server returns Retry-After: 999 (seconds). Adapter must clamp sleep to MaxRetryAfter.
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		if n == 1 {
+			w.Header().Set("Retry-After", "999")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"schema_version\":\"reinframe.raw_assessment.v1\",\"severity\":1,\"reason_code\":\"NORMAL_PROGRESS\"}"}}]}`))
+	}))
+	defer srv.Close()
+	var seen []time.Duration
+	p, err := classifier.NewOpenAICompatible(classifier.OpenAICompatibleConfig{
+		Model: "m", BaseURL: srv.URL, Path: "/", AllowRemote: true, HTTPClient: srv.Client(),
+		MaxRetries: 2,
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			seen = append(seen, d)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := classifier.NewProviderRequest(classifier.ClassifierInput{})
+	if _, err := p.Assess(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) < 1 {
+		t.Fatal("expected at least one sleep")
+	}
+	if seen[0] > classifier.MaxRetryAfter {
+		t.Fatalf("sleep %v exceeds MaxRetryAfter %v", seen[0], classifier.MaxRetryAfter)
+	}
+	// Parsed 999s would be 999*time.Second; must have been capped.
+	if seen[0] != classifier.MaxRetryAfter {
+		// ParseRetryAfterMs already caps; sleep path also caps — exact MaxRetryAfter expected.
+		t.Fatalf("want sleep==MaxRetryAfter got %v", seen[0])
+	}
+}
+
 func TestOpenAICompatible_NonRetryable4xx(t *testing.T) {
 	t.Parallel()
 	var hits atomic.Int32

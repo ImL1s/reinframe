@@ -248,6 +248,7 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 	var lastStatus int
 	var retryCount int
 	var lastErr error
+	var nextDelay time.Duration
 	maxAttempts := p.cfg.MaxRetries + 1
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -256,7 +257,13 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 		}
 		if attempt > 0 {
 			retryCount++
-			delay := retryBackoff(attempt)
+			delay := nextDelay
+			if delay <= 0 {
+				delay = retryBackoff(attempt)
+			}
+			if delay > MaxRetryAfter {
+				delay = MaxRetryAfter
+			}
 			if err := p.sleep(ctx, delay); err != nil {
 				return ProviderResult{}, err
 			}
@@ -267,11 +274,12 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 		if timeout > 0 {
 			callCtx, cancel = context.WithTimeout(ctx, timeout)
 		}
-		res, status, retryable, err := p.doOnce(callCtx, endpoint, payload, maxOut, req)
+		res, status, retryable, retryAfter, err := p.doOnce(callCtx, endpoint, payload, maxOut, req)
 		if cancel != nil {
 			cancel()
 		}
 		lastStatus = status
+		nextDelay = retryAfter
 		if err == nil {
 			res.Meta.RetryCount = retryCount
 			res.Meta.LatencyMS = p.now().Sub(start).Milliseconds()
@@ -318,10 +326,12 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 	}, pe
 }
 
-func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, endpoint string, payload []byte, maxOut int, req ProviderRequest) (ProviderResult, int, bool, error) {
+// doOnce performs one HTTP attempt. retryAfter is the capped delay from Retry-After
+// (zero when absent); callers must still clamp to MaxRetryAfter before sleep.
+func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, endpoint string, payload []byte, maxOut int, req ProviderRequest) (ProviderResult, int, bool, time.Duration, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return ProviderResult{}, 0, true, newProviderError("transport", "build request", true, 0)
+		return ProviderResult{}, 0, true, 0, newProviderError("transport", "build request", true, 0)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if p.apiKey != "" {
@@ -331,39 +341,40 @@ func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, endpoint string, 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ProviderResult{}, 0, false, ctx.Err()
+			return ProviderResult{}, 0, false, 0, ctx.Err()
 		}
-		return ProviderResult{}, 0, true, newProviderError("transport", "http do failed", true, 0)
+		return ProviderResult{}, 0, true, 0, newProviderError("transport", "http do failed", true, 0)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	status := resp.StatusCode
+	retryAfter := ParseRetryAfterMs(resp.Header)
 	body, err := readBounded(resp.Body, maxOut+1024) // small slack for envelope
 	if err != nil {
 		if err == errOversized {
-			return ProviderResult{}, status, false, newProviderError("oversized", "response exceeds max_output_bytes", false, status)
+			return ProviderResult{}, status, false, 0, newProviderError("oversized", "response exceeds max_output_bytes", false, status)
 		}
-		return ProviderResult{}, status, true, newProviderError("transport", "read body", true, status)
+		return ProviderResult{}, status, true, retryAfter, newProviderError("transport", "read body", true, status)
 	}
 
 	if status == http.StatusTooManyRequests || status >= 500 {
-		return ProviderResult{}, status, true, newProviderError("http", fmt.Sprintf("HTTP %d", status), true, status)
+		return ProviderResult{}, status, true, retryAfter, newProviderError("http", fmt.Sprintf("HTTP %d", status), true, status)
 	}
 	if status < 200 || status >= 300 {
 		// Non-retryable 4xx
-		return ProviderResult{}, status, false, newProviderError("http", fmt.Sprintf("HTTP %d", status), false, status)
+		return ProviderResult{}, status, false, 0, newProviderError("http", fmt.Sprintf("HTTP %d", status), false, status)
 	}
 
 	content, usage, reqID, err := parseOAIChatEnvelope(body)
 	if err != nil {
-		return ProviderResult{}, status, false, newProviderError("parse", err.Error(), false, status)
+		return ProviderResult{}, status, false, 0, newProviderError("parse", err.Error(), false, status)
 	}
 
 	// Usage only from transport metadata.
 	// Ignore any usage-like fields inside content (parser also rejects them).
 	assessment, err := ParseRawAssessmentStrict([]byte(content), maxOut, AllowedEvidenceSet(req.Input))
 	if err != nil {
-		return ProviderResult{}, status, false, newProviderError("parse", err.Error(), false, status)
+		return ProviderResult{}, status, false, 0, newProviderError("parse", err.Error(), false, status)
 	}
 	// Host-owned identity fields — never trust model content for these.
 	assessment.ModelID = p.cfg.Model
@@ -385,7 +396,7 @@ func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, endpoint string, 
 			HTTPStatus:          status,
 			ParseStatus:         ParseStatusOK,
 		},
-	}, status, false, nil
+	}, status, false, 0, nil
 }
 
 type oaiChatRequest struct {

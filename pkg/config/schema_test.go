@@ -242,6 +242,16 @@ func TestClassifierProviderConfig_Validate(t *testing.T) {
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("unknown profile must fail")
 	}
+	// invalid base_url shapes (OBJECTIVE G)
+	for _, bad := range []string{"not-a-url", "ftp://127.0.0.1/v1", "http://user:pass@127.0.0.1:1"} {
+		cfg.ClassifierProvider = config.ClassifierProviderConfig{
+			Kind: "openai_compatible", Model: "m", BaseURL: bad,
+			APIKeyRef: "${REINFRAME_CLASSIFIER_API_KEY}", CapabilitiesProfile: "generic-none-v1",
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("base_url %q must fail validation", bad)
+		}
+	}
 	// good
 	cfg.ClassifierProvider = config.ClassifierProviderConfig{
 		Kind: "openai_compatible", Model: "m", BaseURL: "http://127.0.0.1:1",

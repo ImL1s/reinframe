@@ -414,14 +414,6 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 	return digestBytes([]byte(encodeFingerprintCanon(parts))), nil
 }
 
-func stringField(m map[string]any, keys ...string) string {
-	s, ok, err := stringFieldsAgree(m, keys...)
-	if err != nil || !ok || s == "" {
-		return ""
-	}
-	return s
-}
-
 // stringFieldsAgree requires every present alias among keys to be a string and equal.
 // Conflicting aliases (e.g. new_string vs content) fail closed.
 func stringFieldsAgree(m map[string]any, keys ...string) (value string, present bool, err error) {

@@ -221,13 +221,28 @@ func (c Config) Validate() error {
 }
 
 func validateClassifierProvider(cp ClassifierProviderConfig) error {
-	switch strings.TrimSpace(cp.Kind) {
+	kind := strings.TrimSpace(cp.Kind)
+	// Secret-like fields always validated with redacted errors (even when disabled).
+	if cp.APIKeyRef != "" {
+		if err := validateEnvPlaceholder("classifier_provider.api_key_ref", cp.APIKeyRef); err != nil {
+			// Never echo the raw value.
+			return fmt.Errorf("classifier_provider.api_key_ref is invalid")
+		}
+	}
+	switch kind {
 	case "", "none":
+		// Disabled: every other field must be empty/zero.
+		if strings.TrimSpace(cp.Model) != "" || strings.TrimSpace(cp.BaseURL) != "" ||
+			strings.TrimSpace(cp.Path) != "" || strings.TrimSpace(cp.APIKeyRef) != "" ||
+			cp.TimeoutMS != 0 || cp.MaxInputBytes != 0 || cp.MaxOutputBytes != 0 ||
+			strings.TrimSpace(cp.CapabilitiesProfile) != "" {
+			return fmt.Errorf("classifier_provider: disabled kind requires empty fields")
+		}
 		return nil
 	case "openai_compatible":
 		// ok
 	default:
-		return fmt.Errorf("classifier_provider.kind %q is not supported", cp.Kind)
+		return fmt.Errorf("classifier_provider.kind is not supported")
 	}
 	if strings.TrimSpace(cp.Model) == "" {
 		return fmt.Errorf("classifier_provider.model is required")
@@ -236,24 +251,37 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 	if base == "" {
 		return fmt.Errorf("classifier_provider.base_url is required")
 	}
-	// Mirror adapter construction: parseable URL, http(s) only, no userinfo.
-	// Loopback/ADR-003 egress is enforced at adapter construction (AllowRemote=false default).
+	// Origin-only contract: scheme+host, no path/query/fragment/userinfo.
 	u, err := url.Parse(base)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return fmt.Errorf("classifier_provider.base_url is invalid")
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
-		// ok
 	default:
 		return fmt.Errorf("classifier_provider.base_url scheme must be http or https")
 	}
 	if u.User != nil {
 		return fmt.Errorf("classifier_provider.base_url must not include userinfo")
 	}
-	if cp.APIKeyRef != "" {
-		if err := validateEnvPlaceholder("classifier_provider.api_key_ref", cp.APIKeyRef); err != nil {
-			return err
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("classifier_provider.base_url must not include query or fragment")
+	}
+	p := u.EscapedPath()
+	if p != "" && p != "/" {
+		return fmt.Errorf("classifier_provider.base_url must be origin only")
+	}
+	if path := strings.TrimSpace(cp.Path); path != "" {
+		if !strings.HasPrefix(path, "/") {
+			return fmt.Errorf("classifier_provider.path must begin with /")
+		}
+		if strings.Contains(path, "://") || strings.ContainsAny(path, "?#") {
+			return fmt.Errorf("classifier_provider.path is invalid")
+		}
+		for _, seg := range strings.Split(path, "/") {
+			if seg == ".." {
+				return fmt.Errorf("classifier_provider.path traversal rejected")
+			}
 		}
 	}
 	if cp.TimeoutMS < 0 || cp.TimeoutMS > 60000 {
@@ -267,9 +295,8 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 	}
 	switch strings.TrimSpace(cp.CapabilitiesProfile) {
 	case "", "generic-none-v1":
-		// ok — only generic cache-neutral profile in #132
 	default:
-		return fmt.Errorf("classifier_provider.capabilities_profile %q is not supported", cp.CapabilitiesProfile)
+		return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
 	}
 	return nil
 }
@@ -314,6 +341,7 @@ func validateRequiredDuration(field, value string) error {
 }
 
 // IsEnvPlaceholder reports whether s is a ${NAME} style reference.
+// NAME must match [A-Za-z_][A-Za-z0-9_]* (no spaces, dashes, dots, or leading digits).
 func IsEnvPlaceholder(s string) bool {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, EnvPlaceholderPrefix) || !strings.HasSuffix(s, EnvPlaceholderSuffix) {
@@ -323,16 +351,24 @@ func IsEnvPlaceholder(s string) bool {
 	if inner == "" {
 		return false
 	}
-	// Disallow nested braces / whitespace-only names.
-	if strings.ContainsAny(inner, "${}") {
-		return false
+	for i, r := range inner {
+		if i == 0 {
+			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_') {
+				return false
+			}
+			continue
+		}
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
 	}
-	return strings.TrimSpace(inner) == inner
+	return true
 }
 
 func validateEnvPlaceholder(field, value string) error {
 	if !IsEnvPlaceholder(value) {
-		return fmt.Errorf("%s must be an env placeholder like ${VAR_NAME}, got %q", field, value)
+		// Never echo the supplied value (may be a raw secret).
+		return fmt.Errorf("%s must be an env placeholder like ${VAR_NAME}", field)
 	}
 	return nil
 }

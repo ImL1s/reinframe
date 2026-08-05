@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -16,49 +17,45 @@ import (
 
 // OpenAICompatibleConfig configures the generic OpenAI-compatible classifier adapter (#132).
 // Separate from pkg/reviewer — does not reuse Reviewer advice path.
+//
+// Canonical URL contract:
+//
+//	base_url = origin only (scheme + host[:port], path empty or "/")
+//	path     = absolute endpoint path (default /v1/chat/completions)
+//
+// Example:
+//
+//	base_url: http://127.0.0.1:11434
+//	path: /v1/chat/completions
 type OpenAICompatibleConfig struct {
-	// Kind must be "openai_compatible" when set.
-	Kind string
-	// Model is required.
-	Model string
-	// BaseURL required (e.g. http://127.0.0.1:11434/v1).
-	BaseURL string
-	// Path defaults to /v1/chat/completions when empty (joined carefully with BaseURL).
-	Path string
-	// APIKeyRef is ${ENV} only; raw secrets rejected.
-	APIKeyRef string
-	// Timeout defaults to DefaultTimeout.
-	Timeout time.Duration
-	// MaxInputBytes / MaxOutputBytes defaults applied when zero.
-	MaxInputBytes  int
-	MaxOutputBytes int
-	// CapabilitiesProfile defaults to generic-none-v1.
+	Kind                string
+	Model               string
+	BaseURL             string
+	Path                string
+	APIKeyRef           string
+	Timeout             time.Duration
+	MaxInputBytes       int
+	MaxOutputBytes      int
 	CapabilitiesProfile string
-	// HTTPClient injectable for tests.
-	HTTPClient *http.Client
-	// Sleep injectable for retry backoff tests (default time.Sleep).
-	Sleep func(context.Context, time.Duration) error
-	// MaxRetries caps transport retries (default MaxRetryCount).
-	MaxRetries int
-	// Now for latency (tests).
-	Now func() time.Time
-	// LookupEnv resolves APIKeyRef (default os.LookupEnv).
-	LookupEnv func(string) (string, bool)
-	// AllowRemote when true permits non-loopback URLs (tests/CI only).
-	// Production config should leave this false and honor ADR 003 local-only.
+	HTTPClient          *http.Client
+	Sleep               func(context.Context, time.Duration) error
+	MaxRetries          int
+	Now                 func() time.Time
+	LookupEnv           func(string) (string, bool)
+	// AllowRemote when true permits non-loopback URLs (tests only).
 	AllowRemote bool
 }
 
 // OpenAICompatibleProvider is a production-shaped generic Chat Completions adapter.
-// CacheMode is always none for generic-none-v1; no vendor cache fields are sent.
 type OpenAICompatibleProvider struct {
-	cfg    OpenAICompatibleConfig
-	caps   ProviderCapabilities
-	apiKey string // resolved once at construction; never logged
-	client *http.Client
-	sleep  func(context.Context, time.Duration) error
-	now    func() time.Time
-	lookup func(string) (string, bool)
+	cfg      OpenAICompatibleConfig
+	caps     ProviderCapabilities
+	apiKey   string
+	client   *http.Client
+	endpoint string // canonical absolute URL
+	sleep    func(context.Context, time.Duration) error
+	now      func() time.Time
+	lookup   func(string) (string, bool)
 }
 
 // NewOpenAICompatible builds a generic classifier adapter.
@@ -70,26 +67,13 @@ func NewOpenAICompatible(cfg OpenAICompatibleConfig) (*OpenAICompatibleProvider,
 	if model == "" {
 		return nil, newProviderError("config", "model is required", false, 0)
 	}
-	base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-	if base == "" {
-		return nil, newProviderError("config", "base_url is required", false, 0)
+	baseCanon, err := normalizeBaseURL(cfg.BaseURL, cfg.AllowRemote)
+	if err != nil {
+		return nil, err
 	}
-	u, err := url.Parse(base)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return nil, newProviderError("config", "invalid base_url", false, 0)
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https":
-		// ok
-	default:
-		return nil, newProviderError("config", "base_url scheme must be http or https", false, 0)
-	}
-	// Reject URL userinfo (credentials in URL must never be accepted or logged).
-	if u.User != nil {
-		return nil, newProviderError("config", "base_url must not include userinfo", false, 0)
-	}
-	if !cfg.AllowRemote && !isLoopbackHost(u.Hostname()) {
-		return nil, newProviderError("config", "base_url must be loopback unless AllowRemote", false, 0)
+	pathCanon, err := normalizePath(cfg.Path)
+	if err != nil {
+		return nil, err
 	}
 	if cfg.APIKeyRef != "" {
 		if !isEnvPlaceholder(cfg.APIKeyRef) {
@@ -112,7 +96,6 @@ func NewOpenAICompatible(cfg OpenAICompatibleConfig) (*OpenAICompatibleProvider,
 	if err := ValidateCapabilities(caps); err != nil {
 		return nil, newProviderError("capability", err.Error(), false, 0)
 	}
-	// generic-none must remain cache-neutral.
 	if caps.CacheMode != CacheModeNone {
 		return nil, newProviderError("capability", "generic adapter requires cache_mode=none", false, 0)
 	}
@@ -131,26 +114,18 @@ func NewOpenAICompatible(cfg OpenAICompatibleConfig) (*OpenAICompatibleProvider,
 		apiKey = v
 	}
 
-	path := cfg.Path
-	if path == "" {
-		path = "/v1/chat/completions"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	cfg.Path = path
+	// Store normalized values.
+	cfg.Model = model
+	cfg.BaseURL = baseCanon
+	cfg.Path = pathCanon
 
-	client := cfg.HTTPClient
-	if client == nil {
-		// No client-level Timeout: per-call budget is enforced via context.WithTimeout
-		// so configured/request timeouts (up to MaxAllowedTimeout) are honored.
-		// No redirects by default — prevent silent egress destination change.
-		client = &http.Client{
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
+	endpoint, err := joinEndpoint(baseCanon, pathCanon)
+	if err != nil {
+		return nil, err
 	}
+
+	client := wrapClientNoRedirect(cfg.HTTPClient)
+
 	sleep := cfg.Sleep
 	if sleep == nil {
 		sleep = func(ctx context.Context, d time.Duration) error {
@@ -179,14 +154,105 @@ func NewOpenAICompatible(cfg OpenAICompatibleConfig) (*OpenAICompatibleProvider,
 	}
 
 	return &OpenAICompatibleProvider{
-		cfg:    cfg,
-		caps:   caps,
-		apiKey: apiKey,
-		client: client,
-		sleep:  sleep,
-		now:    now,
-		lookup: lookup,
+		cfg:      cfg,
+		caps:     caps,
+		apiKey:   apiKey,
+		client:   client,
+		endpoint: endpoint,
+		sleep:    sleep,
+		now:      now,
+		lookup:   lookup,
 	}, nil
+}
+
+func normalizeBaseURL(raw string, allowRemote bool) (string, error) {
+	base := strings.TrimSpace(raw)
+	if base == "" {
+		return "", newProviderError("config", "base_url is required", false, 0)
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", newProviderError("config", "invalid base_url", false, 0)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
+		return "", newProviderError("config", "base_url scheme must be http or https", false, 0)
+	}
+	if u.User != nil {
+		return "", newProviderError("config", "base_url must not include userinfo", false, 0)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", newProviderError("config", "base_url must not include query or fragment", false, 0)
+	}
+	// Origin only: path must be empty or "/".
+	p := u.EscapedPath()
+	if p != "" && p != "/" {
+		return "", newProviderError("config", "base_url must be origin only (no path)", false, 0)
+	}
+	if !allowRemote && !isLoopbackHost(u.Hostname()) {
+		return "", newProviderError("config", "base_url must be loopback unless AllowRemote", false, 0)
+	}
+	// Canonical form without trailing slash path noise.
+	return strings.ToLower(u.Scheme) + "://" + u.Host, nil
+}
+
+func normalizePath(raw string) (string, error) {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		p = "/v1/chat/completions"
+	}
+	if !strings.HasPrefix(p, "/") {
+		return "", newProviderError("config", "path must begin with /", false, 0)
+	}
+	if strings.Contains(p, "://") {
+		return "", newProviderError("config", "path must not contain scheme/host", false, 0)
+	}
+	if strings.ContainsAny(p, "?#") {
+		return "", newProviderError("config", "path must not include query or fragment", false, 0)
+	}
+	// Reject ".." traversal components.
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return "", newProviderError("config", "path traversal rejected", false, 0)
+		}
+	}
+	if len(p) > 512 {
+		return "", newProviderError("config", "path too long", false, 0)
+	}
+	// Clean without removing leading slash (path.Clean("//a") ok).
+	cleaned := path.Clean(p)
+	if !strings.HasPrefix(cleaned, "/") {
+		cleaned = "/" + cleaned
+	}
+	return cleaned, nil
+}
+
+func joinEndpoint(baseCanon, pathCanon string) (string, error) {
+	u, err := url.Parse(baseCanon)
+	if err != nil {
+		return "", newProviderError("config", "invalid base_url", false, 0)
+	}
+	u.Path = pathCanon
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
+}
+
+// wrapClientNoRedirect clones client transport settings but always denies redirects.
+func wrapClientNoRedirect(in *http.Client) *http.Client {
+	out := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	if in != nil {
+		out.Transport = in.Transport
+		out.Jar = in.Jar
+		out.Timeout = in.Timeout
+		// Intentionally do NOT copy CheckRedirect — always deny.
+	}
+	return out
 }
 
 // Assess implements ClassifierProvider.
@@ -200,21 +266,22 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 	if err := ValidateProviderRequest(req); err != nil {
 		return ProviderResult{}, newProviderError("config", err.Error(), false, 0)
 	}
-	timeout, maxIn, maxOut := EffectiveBounds(req)
-	if p.cfg.Timeout > 0 {
-		timeout = p.cfg.Timeout
-	}
-	if p.cfg.MaxInputBytes > 0 {
-		maxIn = p.cfg.MaxInputBytes
-	}
-	if p.cfg.MaxOutputBytes > 0 {
-		maxOut = p.cfg.MaxOutputBytes
-	}
+
+	timeout, maxIn, maxOut := EffectiveProviderBounds(req, ProviderBoundSources{
+		ConfigTimeout:      p.cfg.Timeout,
+		ConfigMaxInput:     p.cfg.MaxInputBytes,
+		ConfigMaxOutput:    p.cfg.MaxOutputBytes,
+		CapabilityMaxInput: p.caps.MaxInputBytes,
+	})
+
+	// Overall Assess budget covers HTTP attempts, retry sleeps, and parsing.
+	opCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	if req.Prompt.PromptBytes() > maxIn {
 		return ProviderResult{}, newProviderError("oversized", "request exceeds max_input_bytes", false, 0)
 	}
 
-	// Build chat messages: stable prefix then dynamic suffix — no reorder.
 	msgs := make([]oaiMessage, 0, len(req.Prompt.Messages()))
 	for _, b := range req.Prompt.Messages() {
 		role := b.Role
@@ -229,11 +296,9 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 		Temperature: 0,
 		MaxTokens:   estimateMaxTokens(maxOut),
 	}
-	// JSON response_format only when capability allows native structured output.
 	if p.caps.NativeStructuredOutput {
 		body.ResponseFormat = &oaiResponseFormat{Type: "json_object"}
 	}
-	// Never set cache_control, prompt_cache_key, cachedContent, x-grok-conv-id, etc.
 
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -243,7 +308,6 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 		return ProviderResult{}, newProviderError("oversized", "serialized request exceeds max_input_bytes", false, 0)
 	}
 
-	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + p.cfg.Path
 	start := p.now()
 	var lastStatus int
 	var retryCount int
@@ -252,7 +316,7 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 	maxAttempts := p.cfg.MaxRetries + 1
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if err := ctx.Err(); err != nil {
+		if err := opCtx.Err(); err != nil {
 			return ProviderResult{}, err
 		}
 		if attempt > 0 {
@@ -264,20 +328,22 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 			if delay > MaxRetryAfter {
 				delay = MaxRetryAfter
 			}
-			if err := p.sleep(ctx, delay); err != nil {
+			// Respect remaining deadline.
+			if dl, ok := opCtx.Deadline(); ok {
+				rem := time.Until(dl)
+				if rem <= 0 {
+					return ProviderResult{}, opCtx.Err()
+				}
+				if delay > rem {
+					delay = rem
+				}
+			}
+			if err := p.sleep(opCtx, delay); err != nil {
 				return ProviderResult{}, err
 			}
 		}
 
-		callCtx := ctx
-		var cancel context.CancelFunc
-		if timeout > 0 {
-			callCtx, cancel = context.WithTimeout(ctx, timeout)
-		}
-		res, status, retryable, retryAfter, err := p.doOnce(callCtx, endpoint, payload, maxOut, req)
-		if cancel != nil {
-			cancel()
-		}
+		res, status, retryable, retryAfter, err := p.doOnce(opCtx, payload, maxOut, req)
 		lastStatus = status
 		nextDelay = retryAfter
 		if err == nil {
@@ -285,32 +351,22 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 			res.Meta.LatencyMS = p.now().Sub(start).Milliseconds()
 			res.Meta.HTTPStatus = status
 			res.Assessment.LatencyMS = res.Meta.LatencyMS
-			if res.Assessment.PromptHash == "" {
-				res.Assessment.PromptHash = req.Prompt.PromptHash
-			}
-			if res.Assessment.RulesetHash == "" {
-				res.Assessment.RulesetHash = req.Input.RulesetHash
-			}
-			if res.Assessment.RulesetID == "" {
-				res.Assessment.RulesetID = req.Input.RulesetID
-			}
+			res.Assessment.PromptHash = req.Prompt.PromptHash
+			res.Assessment.RulesetHash = req.Input.RulesetHash
+			res.Assessment.RulesetID = req.Input.RulesetID
 			return res, nil
 		}
 		lastErr = err
 		if !retryable || attempt+1 >= maxAttempts {
 			break
 		}
-		// Only retry selected 429/5xx / transport.
 	}
 
-	// Terminal failure — no assessment decision; typed error for resolver.
 	pe, ok := lastErr.(*ProviderError)
 	if !ok {
 		pe = newProviderError("transport", "provider call failed", false, lastStatus)
 	}
-	// Ensure error message never contains API key.
 	pe.Message = redactSecret(pe.Message, p.apiKey)
-	_ = retryCount
 	return ProviderResult{
 		Meta: ProviderMeta{
 			Provider:            "openai_compatible",
@@ -326,10 +382,8 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 	}, pe
 }
 
-// doOnce performs one HTTP attempt. retryAfter is the capped delay from Retry-After
-// (zero when absent); callers must still clamp to MaxRetryAfter before sleep.
-func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, endpoint string, payload []byte, maxOut int, req ProviderRequest) (ProviderResult, int, bool, time.Duration, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, payload []byte, maxOut int, req ProviderRequest) (ProviderResult, int, bool, time.Duration, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return ProviderResult{}, 0, true, 0, newProviderError("transport", "build request", true, 0)
 	}
@@ -349,7 +403,7 @@ func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, endpoint string, 
 
 	status := resp.StatusCode
 	retryAfter := ParseRetryAfterMs(resp.Header)
-	body, err := readBounded(resp.Body, maxOut+1024) // small slack for envelope
+	body, err := readBounded(resp.Body, maxOut+1024)
 	if err != nil {
 		if err == errOversized {
 			return ProviderResult{}, status, false, 0, newProviderError("oversized", "response exceeds max_output_bytes", false, status)
@@ -361,8 +415,15 @@ func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, endpoint string, 
 		return ProviderResult{}, status, true, retryAfter, newProviderError("http", fmt.Sprintf("HTTP %d", status), true, status)
 	}
 	if status < 200 || status >= 300 {
-		// Non-retryable 4xx
 		return ProviderResult{}, status, false, 0, newProviderError("http", fmt.Sprintf("HTTP %d", status), false, status)
+	}
+
+	// Content-Type: if present, must be JSON media type.
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		ctLower := strings.ToLower(ct)
+		if !strings.Contains(ctLower, "application/json") && !strings.Contains(ctLower, "+json") {
+			return ProviderResult{}, status, false, 0, newProviderError("parse", "non-JSON content-type", false, status)
+		}
 	}
 
 	content, usage, reqID, err := parseOAIChatEnvelope(body)
@@ -370,20 +431,17 @@ func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, endpoint string, 
 		return ProviderResult{}, status, false, 0, newProviderError("parse", err.Error(), false, status)
 	}
 
-	// Usage only from transport metadata.
-	// Ignore any usage-like fields inside content (parser also rejects them).
 	assessment, err := ParseRawAssessmentStrict([]byte(content), maxOut, AllowedEvidenceSet(req.Input))
 	if err != nil {
 		return ProviderResult{}, status, false, 0, newProviderError("parse", err.Error(), false, status)
 	}
-	// Host-owned identity fields — never trust model content for these.
 	assessment.ModelID = p.cfg.Model
 	assessment.ModelVersion = ""
 	assessment.PromptHash = req.Prompt.PromptHash
 	assessment.RulesetID = req.Input.RulesetID
 	assessment.RulesetHash = req.Input.RulesetHash
 	assessment.ParseStatus = ParseStatusOK
-	assessment.LatencyMS = 0 // filled by caller from wall clock
+	assessment.LatencyMS = 0
 
 	return ProviderResult{
 		Assessment: assessment,
@@ -417,7 +475,10 @@ type oaiResponseFormat struct {
 }
 
 func parseOAIChatEnvelope(body []byte) (content string, usage ProviderUsage, reqID string, err error) {
-	// Closed envelope: choices[0].message.content + optional usage + optional id.
+	// Reject duplicate critical keys at top level via token walk for "choices"/"usage"/"id".
+	if err := rejectDuplicateKeys(body); err != nil {
+		return "", ProviderUsage{}, "", fmt.Errorf("envelope duplicate keys")
+	}
 	var env struct {
 		ID      string `json:"id"`
 		Choices []struct {
@@ -429,11 +490,13 @@ func parseOAIChatEnvelope(body []byte) (content string, usage ProviderUsage, req
 			PromptTokens     int64 `json:"prompt_tokens"`
 			CompletionTokens int64 `json:"completion_tokens"`
 			TotalTokens      int64 `json:"total_tokens"`
-			// Generic endpoints may omit cache splits — do not fabricate.
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
 		return "", ProviderUsage{}, "", fmt.Errorf("envelope json")
+	}
+	if len(env.Choices) == 0 {
+		return "", ProviderUsage{}, "", fmt.Errorf("zero choices")
 	}
 	if len(env.Choices) != 1 {
 		return "", ProviderUsage{}, "", fmt.Errorf("expected exactly one choice")
@@ -451,8 +514,6 @@ func parseOAIChatEnvelope(body []byte) (content string, usage ProviderUsage, req
 			InputTokens:  env.Usage.PromptTokens,
 			OutputTokens: env.Usage.CompletionTokens,
 			UsagePresent: true,
-			// CacheHit stays false — generic-none has no cache telemetry.
-			CacheBackend: "",
 		}
 	}
 	return content, usage, reqID, nil
@@ -464,7 +525,6 @@ func readBounded(r io.Reader, max int) ([]byte, error) {
 	if max <= 0 {
 		max = DefaultMaxOutputBytes
 	}
-	// Read max+1 to detect overflow without unbounded allocation.
 	lr := io.LimitReader(r, int64(max)+1)
 	b, err := io.ReadAll(lr)
 	if err != nil {
@@ -477,7 +537,6 @@ func readBounded(r io.Reader, max int) ([]byte, error) {
 }
 
 func estimateMaxTokens(maxOutBytes int) int {
-	// Rough lower bound; keep small to enforce bounded output.
 	if maxOutBytes <= 0 {
 		return 1024
 	}
@@ -492,7 +551,6 @@ func estimateMaxTokens(maxOutBytes int) int {
 }
 
 func retryBackoff(attempt int) time.Duration {
-	// attempt is 1-based retry index here when called with attempt>0 from loop.
 	d := time.Duration(attempt) * 50 * time.Millisecond
 	if d > MaxRetryAfter {
 		d = MaxRetryAfter
@@ -507,7 +565,26 @@ func isLoopbackHost(host string) bool {
 
 func isEnvPlaceholder(s string) bool {
 	s = strings.TrimSpace(s)
-	return strings.HasPrefix(s, "${") && strings.HasSuffix(s, "}") && len(s) > 3
+	if !strings.HasPrefix(s, "${") || !strings.HasSuffix(s, "}") || len(s) < 4 {
+		return false
+	}
+	inner := s[2 : len(s)-1]
+	if inner == "" {
+		return false
+	}
+	// [A-Za-z_][A-Za-z0-9_]*
+	for i, r := range inner {
+		if i == 0 {
+			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_') {
+				return false
+			}
+			continue
+		}
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func envNameFromPlaceholder(s string) string {
@@ -531,23 +608,24 @@ func redactSecret(msg, secret string) string {
 
 // RedactedConfig returns a copy safe for logging/serialization (no resolved secrets).
 func (p *OpenAICompatibleProvider) RedactedConfig() map[string]any {
-	base := p.cfg.BaseURL
-	if u, err := url.Parse(base); err == nil {
-		u.User = nil
-		base = u.String()
-	}
 	return map[string]any{
 		"kind":                 "openai_compatible",
 		"model":                p.cfg.Model,
-		"base_url":             base,
+		"base_url":             p.cfg.BaseURL,
 		"path":                 p.cfg.Path,
-		"api_key_ref":          p.cfg.APIKeyRef, // placeholder only
+		"api_key_ref":          p.cfg.APIKeyRef,
 		"capabilities_profile": profileName(p.cfg.CapabilitiesProfile),
 		"cache_mode":           p.caps.CacheMode,
 		"timeout_ms":           p.cfg.Timeout.Milliseconds(),
 		"max_input_bytes":      p.cfg.MaxInputBytes,
 		"max_output_bytes":     p.cfg.MaxOutputBytes,
+		"endpoint":             p.endpoint,
 	}
+}
+
+// Endpoint returns the canonical request URL (tests).
+func (p *OpenAICompatibleProvider) Endpoint() string {
+	return p.endpoint
 }
 
 // ParseRetryAfterMs bounds Retry-After header to MaxRetryAfter.

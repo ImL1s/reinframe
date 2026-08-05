@@ -2,54 +2,25 @@
 
 Generic foundation only. **Not** native OpenAI Responses, Anthropic Messages, Gemini, xAI, provider-native caching, memoization, singleflight, voting/failover, or hard-gate calibration.
 
-## Canonical contract
+## Construction path
 
-`ClassifierProvider.Assess(ctx, ProviderRequest) (ProviderResult, error)`
+YAML alone does **not** auto-wire a network provider. Use:
 
-- `ProviderRequest`: versioned input + `PromptPlan` + timeout/byte bounds.
-- `ProviderResult`: `RawAssessment` + transport-only `ProviderUsage` + bounded `ProviderMeta`.
-- Provider failures are typed; resolver owns PRODUCTIVITY fail-open vs SECURITY fail-closed.
-- Public decision remains exactly `ALLOW | BLOCK`. Shadow remains `Enforced=false`.
+```go
+p, err := classifier.NewClassifierProviderFromConfig(cfg.ClassifierProvider, classifier.ProviderFactoryOptions{})
+```
 
-## PromptPlan
+- `kind` empty / `none` → `FakeClassifierProvider` (no network)
+- `kind: openai_compatible` → `OpenAICompatibleProvider` (loopback-only by default)
 
-- **StablePrefix**: policy, closed schema, reason codes, rules, stable examples, version labels.
-- **DynamicSuffix**: session/task/action/evidence and request-specific meta.
-- Hashes use deterministic structured JSON encoding (not delimiter concatenation).
-- Dynamic-only changes preserve `StablePrefixHash`; change `InputHash` / `PromptHash`.
-
-## Capabilities
-
-- Trusted profiles only. Unknown profile fails closed.
-- Default profile: `generic-none-v1` → `CacheMode=none`, no native structured output, no cache key/telemetry/continuation.
-- Never infer capabilities from model text.
-- Generic adapter never sends `cache_control`, `prompt_cache_key`, `cachedContent`, `x-grok-conv-id`.
-
-## Strict RawAssessment parser
-
-Exactly one JSON object; closed fields; integer severity 0–100; closed reason codes; evidence IDs validated against request input; reject fences, prose, duplicates, floats, coercion, oversized, invalid UTF-8, deep nesting, and usage/meta injection keys in content.
-
-## Generic OpenAI-compatible adapter
-
-- Env placeholder API key only (`${REINFRAME_CLASSIFIER_API_KEY}`).
-- Loopback base URL by default (ADR 003); tests may set `AllowRemote`.
-- Bounded request/response reads; no unbounded `io.ReadAll`.
-- No redirect following to alternate hosts by default.
-- Bounded retries for 429/5xx/transport only; non-retryable 4xx not retried.
-- Usage only from response `usage` object — never from model content.
-
-## Audit
-
-`ProviderCallAudit` records provider/model/profile, hashes, usage, HTTP status, latency, retries, request id, parse/fallback class. No raw prompts, secrets, or unrestricted bodies.
-
-## Configuration
+## Canonical endpoint URL contract
 
 ```yaml
 classifier_provider:
-  kind: openai_compatible   # or none/empty
+  kind: openai_compatible
   model: "..."
-  base_url: "http://127.0.0.1:11434/v1"
-  path: "/v1/chat/completions"
+  base_url: "http://127.0.0.1:11434"   # origin only — no path, query, fragment, or userinfo
+  path: "/v1/chat/completions"           # absolute path; default if empty
   api_key_ref: "${REINFRAME_CLASSIFIER_API_KEY}"
   timeout_ms: 1500
   max_input_bytes: 65536
@@ -57,4 +28,51 @@ classifier_provider:
   capabilities_profile: "generic-none-v1"
 ```
 
-Separate from `reviewer.*`. Empty kind keeps FakeClassifierProvider / no network.
+Built with `url.URL` join — never `base + path` string concat.  
+Documented config reaches **`/v1/chat/completions`**, never `/v1/v1/chat/completions`.
+
+## Canonical contract
+
+`ClassifierProvider.Assess(ctx, ProviderRequest) (ProviderResult, error)`
+
+- `ProviderRequest` is the per-call authority for timeout and byte limits.
+- Config and capability values are **upper bounds only** (never widen a stricter request).
+- Provider failures are typed; resolver owns PRODUCTIVITY fail-open vs SECURITY fail-closed.
+- Public decision remains exactly `ALLOW | BLOCK`. Shadow remains `Enforced=false`.
+
+## PromptPlan
+
+- **StablePrefix**: classifier policy, schema, reason codes, rules, examples, version labels.
+  Stable `RulesetHash` is the **classifier prompt/policy** hash (`builtin-ruleset-v1` by default).
+- **DynamicSuffix**: session/task, **current** `RulesetID`/`RulesetHash`, evidence, proposed action.
+- Changing only current task RulesetHash preserves StablePrefixHash and changes InputHash/PromptHash.
+- `ValidateProviderRequest` recomputes hashes and binds Input ↔ DynamicSuffix (rejects mutation / stale hashes).
+
+## Capabilities
+
+- Trusted profiles only. Unknown profile fails closed.
+- Default: `generic-none-v1` → `CacheMode=none`, no native structured output.
+- Generic adapter never sends `cache_control`, `prompt_cache_key`, `cachedContent`, `x-grok-conv-id`.
+
+## Strict RawAssessment parser
+
+Exactly one JSON object; second Decode must return `io.EOF`.  
+JSON whitespace only: SP/TAB/LF/CR (NBSP/EM SPACE rejected at boundaries).  
+Evidence IDs require a non-empty allowlist when present.
+
+## Retry / timeout
+
+- Overall Assess context timeout covers HTTP attempts, Retry-After sleeps, and parsing.
+- `Retry-After` honored, capped at 5s and remaining deadline.
+- Bounded retries for 429/5xx/transport only.
+
+## Secrets
+
+- `${ENV}` placeholders only; identifier `[A-Za-z_][A-Za-z0-9_]*`.
+- Disabled `kind: none` requires all other fields empty.
+- Validation errors never echo raw secret values.
+
+## Audit
+
+`ProviderCallAudit` includes model_version, reasoning_tokens, cache_key_hash, and `usage_present`.  
+No raw prompts, secrets, or unrestricted bodies.

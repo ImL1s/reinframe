@@ -36,13 +36,15 @@ type PromptBlock struct {
 }
 
 // PromptPlan separates stable reusable policy from request-specific dynamic state.
+// RulesetHash on the plan is the *classifier prompt/policy* ruleset (stable).
+// Current task/repository RulesetID/Hash live only in DynamicSuffix.
 type PromptPlan struct {
 	SchemaVersion    string        `json:"schema_version"`
 	StablePrefix     []PromptBlock `json:"stable_prefix"`
 	DynamicSuffix    []PromptBlock `json:"dynamic_suffix"`
 	StablePrefixHash string        `json:"stable_prefix_hash"`
 	PromptHash       string        `json:"prompt_hash"`
-	RulesetHash      string        `json:"ruleset_hash"`
+	RulesetHash      string        `json:"ruleset_hash"` // classifier prompt policy hash (stable)
 	InputHash        string        `json:"input_hash"`
 }
 
@@ -59,7 +61,8 @@ type PromptPlanMaterial struct {
 	DecisionRulesText string
 	// StableExamples are fixed few-shot blocks (optional).
 	StableExamples []PromptBlock
-	// RulesetHash is the policy ruleset content hash.
+	// RulesetHash is the *classifier* prompt/policy ruleset content hash (stable).
+	// Not the same as ClassifierInput.RulesetHash (task/repo dynamic state).
 	RulesetHash string
 }
 
@@ -83,16 +86,28 @@ func BuildPromptPlan(mat PromptPlanMaterial, in ClassifierInput) (PromptPlan, er
 	if mat.PromptSchemaVersion == "" {
 		mat.PromptSchemaVersion = SchemaPromptPlan
 	}
+	// Stable classifier policy hash — never silently filled from dynamic Input.RulesetHash.
 	if mat.RulesetHash == "" {
-		mat.RulesetHash = in.RulesetHash
+		mat.RulesetHash = "builtin-ruleset-v1"
 	}
 
-	// Stable prefix: policy, schema, reason codes, rules, examples — no session/action noise.
 	codes := sortedReasonCodes()
+	codeText, err := encodeCanonStrict(codes)
+	if err != nil {
+		return PromptPlan{}, err
+	}
+	metaText, err := encodeCanonStrict(map[string]string{
+		"prompt_schema": mat.PromptSchemaVersion,
+		"ruleset_hash":  mat.RulesetHash,
+	})
+	if err != nil {
+		return PromptPlan{}, err
+	}
+
 	stable := []PromptBlock{
 		{Role: PromptRoleSystem, Type: PromptTypePolicy, Text: mat.PolicyText},
 		{Role: PromptRoleSystem, Type: PromptTypeSchema, Text: mat.OutputSchemaText},
-		{Role: PromptRoleSystem, Type: PromptTypeReasonCodes, Text: encodeCanon(codes)},
+		{Role: PromptRoleSystem, Type: PromptTypeReasonCodes, Text: codeText},
 		{Role: PromptRoleSystem, Type: PromptTypeRules, Text: mat.DecisionRulesText},
 	}
 	for _, ex := range mat.StableExamples {
@@ -104,46 +119,15 @@ func BuildPromptPlan(mat PromptPlanMaterial, in ClassifierInput) (PromptPlan, er
 		}
 		stable = append(stable, ex)
 	}
-	// Version label is stable (not a request id).
 	stable = append(stable, PromptBlock{
 		Role: PromptRoleSystem,
 		Type: PromptTypeMeta,
-		Text: encodeCanon(map[string]string{
-			"prompt_schema": mat.PromptSchemaVersion,
-			"ruleset_hash":  mat.RulesetHash,
-		}),
+		Text: metaText,
 	})
 
-	// Dynamic suffix: task/action/evidence/session-specific.
-	dyn := []PromptBlock{
-		{Role: PromptRoleUser, Type: PromptTypeTask, Text: encodeCanon(map[string]string{
-			"session_id":   in.SessionID,
-			"policy_class": in.PolicyClass,
-			"ruleset_id":   in.RulesetID,
-			"fixture":      in.FixtureName,
-		})},
-		{Role: PromptRoleUser, Type: PromptTypeEvidence, Text: encodeCanon(map[string]any{
-			"recent_event_ids":  append([]string(nil), in.RecentEventIDs...),
-			"related_event_ids": append([]string(nil), in.RelatedEventIDs...),
-		})},
-	}
-	if in.ProposedAction != nil {
-		dyn = append(dyn, PromptBlock{
-			Role: PromptRoleUser,
-			Type: PromptTypeAction,
-			Text: encodeProposedAction(*in.ProposedAction),
-		})
-	}
-	if in.UserException || in.RepoPolicyException || in.FlakyInvestigation {
-		dyn = append(dyn, PromptBlock{
-			Role: PromptRoleUser,
-			Type: PromptTypeMeta,
-			Text: encodeCanon(map[string]bool{
-				"user_exception":        in.UserException,
-				"repo_policy_exception": in.RepoPolicyException,
-				"flaky_investigation":   in.FlakyInvestigation,
-			}),
-		})
+	dyn, err := buildDynamicSuffix(in)
+	if err != nil {
+		return PromptPlan{}, err
 	}
 
 	plan := PromptPlan{
@@ -152,26 +136,176 @@ func BuildPromptPlan(mat PromptPlanMaterial, in ClassifierInput) (PromptPlan, er
 		DynamicSuffix: dyn,
 		RulesetHash:   mat.RulesetHash,
 	}
+	if err := recomputePlanHashes(&plan, mat.PromptSchemaVersion); err != nil {
+		return PromptPlan{}, err
+	}
+	return plan, nil
+}
+
+func buildDynamicSuffix(in ClassifierInput) ([]PromptBlock, error) {
+	taskText, err := encodeCanonStrict(map[string]string{
+		"session_id":   in.SessionID,
+		"policy_class": in.PolicyClass,
+		// Current task/repository policy identity (dynamic — not stable classifier ruleset).
+		"ruleset_id":   in.RulesetID,
+		"ruleset_hash": in.RulesetHash,
+		"fixture":      in.FixtureName,
+	})
+	if err != nil {
+		return nil, err
+	}
+	evText, err := encodeCanonStrict(map[string]any{
+		"recent_event_ids":  append([]string(nil), in.RecentEventIDs...),
+		"related_event_ids": append([]string(nil), in.RelatedEventIDs...),
+	})
+	if err != nil {
+		return nil, err
+	}
+	dyn := []PromptBlock{
+		{Role: PromptRoleUser, Type: PromptTypeTask, Text: taskText},
+		{Role: PromptRoleUser, Type: PromptTypeEvidence, Text: evText},
+	}
+	if in.ProposedAction != nil {
+		act, err := encodeProposedAction(*in.ProposedAction)
+		if err != nil {
+			return nil, err
+		}
+		dyn = append(dyn, PromptBlock{
+			Role: PromptRoleUser,
+			Type: PromptTypeAction,
+			Text: act,
+		})
+	}
+	if in.UserException || in.RepoPolicyException || in.FlakyInvestigation {
+		meta, err := encodeCanonStrict(map[string]bool{
+			"user_exception":        in.UserException,
+			"repo_policy_exception": in.RepoPolicyException,
+			"flaky_investigation":   in.FlakyInvestigation,
+		})
+		if err != nil {
+			return nil, err
+		}
+		dyn = append(dyn, PromptBlock{
+			Role: PromptRoleUser,
+			Type: PromptTypeMeta,
+			Text: meta,
+		})
+	}
+	return dyn, nil
+}
+
+func recomputePlanHashes(plan *PromptPlan, promptSchema string) error {
 	var err error
-	plan.StablePrefixHash, err = hashBlocks(stable)
+	plan.StablePrefixHash, err = hashBlocks(plan.StablePrefix)
 	if err != nil {
-		return PromptPlan{}, err
+		return err
 	}
-	plan.InputHash, err = hashBlocks(dyn)
+	plan.InputHash, err = hashBlocks(plan.DynamicSuffix)
 	if err != nil {
-		return PromptPlan{}, err
+		return err
 	}
-	// PromptHash binds both halves via structured encoding (not string concat).
+	if promptSchema == "" {
+		promptSchema = plan.SchemaVersion
+	}
 	plan.PromptHash, err = hashCanon(map[string]string{
 		"stable": plan.StablePrefixHash,
 		"input":  plan.InputHash,
 		"rules":  plan.RulesetHash,
-		"schema": mat.PromptSchemaVersion,
+		"schema": promptSchema,
+	})
+	return err
+}
+
+// ValidatePromptPlan recomputes hashes from actual blocks, validates closed roles/types
+// and placement, and binds DynamicSuffix to ClassifierInput.
+func ValidatePromptPlan(plan PromptPlan, input ClassifierInput) error {
+	if plan.SchemaVersion != SchemaPromptPlan {
+		return fmt.Errorf("classifier: unsupported prompt plan schema")
+	}
+	stableTypes := map[string]struct{}{
+		PromptTypePolicy: {}, PromptTypeSchema: {}, PromptTypeReasonCodes: {},
+		PromptTypeRules: {}, PromptTypeExample: {}, PromptTypeMeta: {},
+	}
+	dynTypes := map[string]struct{}{
+		PromptTypeTask: {}, PromptTypeEvidence: {}, PromptTypeAction: {},
+		PromptTypeChallenge: {}, PromptTypeMeta: {},
+	}
+	roles := map[string]struct{}{
+		PromptRoleSystem: {}, PromptRoleUser: {}, PromptRoleAssistant: {},
+	}
+	for _, b := range plan.StablePrefix {
+		if _, ok := roles[b.Role]; !ok {
+			return fmt.Errorf("classifier: unknown prompt role")
+		}
+		if _, ok := stableTypes[b.Type]; !ok {
+			return fmt.Errorf("classifier: misplaced or unknown stable block type")
+		}
+		// Stable must not carry session/task types
+		if b.Type == PromptTypeTask || b.Type == PromptTypeEvidence || b.Type == PromptTypeAction || b.Type == PromptTypeChallenge {
+			return fmt.Errorf("classifier: dynamic type in stable prefix")
+		}
+	}
+	for _, b := range plan.DynamicSuffix {
+		if _, ok := roles[b.Role]; !ok {
+			return fmt.Errorf("classifier: unknown prompt role")
+		}
+		if _, ok := dynTypes[b.Type]; !ok {
+			return fmt.Errorf("classifier: misplaced or unknown dynamic block type")
+		}
+		if b.Type == PromptTypePolicy || b.Type == PromptTypeSchema || b.Type == PromptTypeReasonCodes || b.Type == PromptTypeRules || b.Type == PromptTypeExample {
+			return fmt.Errorf("classifier: stable type in dynamic suffix")
+		}
+	}
+
+	// Bind Input → DynamicSuffix: rebuild expected dynamic and compare.
+	expectedDyn, err := buildDynamicSuffix(input)
+	if err != nil {
+		return err
+	}
+	if !blocksEqual(expectedDyn, plan.DynamicSuffix) {
+		return fmt.Errorf("classifier: prompt dynamic suffix does not match input")
+	}
+
+	// Recompute hashes from actual bytes.
+	wantStable, err := hashBlocks(plan.StablePrefix)
+	if err != nil {
+		return err
+	}
+	wantInput, err := hashBlocks(plan.DynamicSuffix)
+	if err != nil {
+		return err
+	}
+	wantPrompt, err := hashCanon(map[string]string{
+		"stable": wantStable,
+		"input":  wantInput,
+		"rules":  plan.RulesetHash,
+		"schema": plan.SchemaVersion,
 	})
 	if err != nil {
-		return PromptPlan{}, err
+		return err
 	}
-	return plan, nil
+	if plan.StablePrefixHash != wantStable {
+		return fmt.Errorf("classifier: stale StablePrefixHash")
+	}
+	if plan.InputHash != wantInput {
+		return fmt.Errorf("classifier: stale InputHash")
+	}
+	if plan.PromptHash != wantPrompt {
+		return fmt.Errorf("classifier: stale PromptHash")
+	}
+	return nil
+}
+
+func blocksEqual(a, b []PromptBlock) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // PromptBytes returns the wire-oriented message payload size estimate (UTF-8).
@@ -203,17 +337,16 @@ func sortedReasonCodes() []string {
 	return out
 }
 
-func encodeCanon(v any) string {
+func encodeCanonStrict(v any) (string, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
-		return "{}"
+		return "", fmt.Errorf("classifier: prompt encode: %w", err)
 	}
-	return string(b)
+	return string(b), nil
 }
 
-func encodeProposedAction(pa adapter.ProposedAction) string {
-	// Deterministic subset — no secrets (ProposedAction redaction is host-side).
-	return encodeCanon(map[string]any{
+func encodeProposedAction(pa adapter.ProposedAction) (string, error) {
+	return encodeCanonStrict(map[string]any{
 		"tool_name":  pa.ToolName,
 		"tool_class": pa.ToolClass,
 		"command":    pa.Command,

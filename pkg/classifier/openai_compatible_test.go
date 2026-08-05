@@ -87,6 +87,7 @@ func TestOpenAICompatible_ModelContentCannotInjectUsage(t *testing.T) {
 	// Content tries to inject usage; parser rejects forbidden fields → Assess error.
 	// Separate path: valid content but we verify transport usage wins when content is clean.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"x",
 			"choices":[{"message":{"content":"{\"schema_version\":\"reinframe.raw_assessment.v1\",\"severity\":5,\"reason_code\":\"NORMAL_PROGRESS\",\"input_tokens\":999,\"cached_tokens\":1,\"cache_hit\":true,\"provider_request_id\":\"evil\"}"}}],
@@ -113,6 +114,7 @@ func TestOpenAICompatible_NoCacheFieldsInRequest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		raw = string(b)
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"schema_version\":\"reinframe.raw_assessment.v1\",\"severity\":1,\"reason_code\":\"NORMAL_PROGRESS\"}"}}]}`))
 	}))
 	defer srv.Close()
@@ -141,6 +143,7 @@ func TestOpenAICompatible_Retry429Bounded(t *testing.T) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"schema_version\":\"reinframe.raw_assessment.v1\",\"severity\":1,\"reason_code\":\"NORMAL_PROGRESS\"}"}}]}`))
 	}))
 	defer srv.Close()
@@ -183,6 +186,7 @@ func TestOpenAICompatible_RetryAfterBounded(t *testing.T) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"schema_version\":\"reinframe.raw_assessment.v1\",\"severity\":1,\"reason_code\":\"NORMAL_PROGRESS\"}"}}]}`))
 	}))
 	defer srv.Close()
@@ -190,6 +194,7 @@ func TestOpenAICompatible_RetryAfterBounded(t *testing.T) {
 	p, err := classifier.NewOpenAICompatible(classifier.OpenAICompatibleConfig{
 		Model: "m", BaseURL: srv.URL, Path: "/", AllowRemote: true, HTTPClient: srv.Client(),
 		MaxRetries: 2,
+		Timeout:    30 * time.Second, // overall budget must exceed MaxRetryAfter for this assertion
 		Sleep: func(ctx context.Context, d time.Duration) error {
 			seen = append(seen, d)
 			return nil
@@ -199,6 +204,7 @@ func TestOpenAICompatible_RetryAfterBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	req, _ := classifier.NewProviderRequest(classifier.ClassifierInput{})
+	req.Timeout = 30 * time.Second
 	if _, err := p.Assess(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -208,9 +214,8 @@ func TestOpenAICompatible_RetryAfterBounded(t *testing.T) {
 	if seen[0] > classifier.MaxRetryAfter {
 		t.Fatalf("sleep %v exceeds MaxRetryAfter %v", seen[0], classifier.MaxRetryAfter)
 	}
-	// Parsed 999s would be 999*time.Second; must have been capped.
+	// Parsed 999s would be 999*time.Second; must have been capped to MaxRetryAfter.
 	if seen[0] != classifier.MaxRetryAfter {
-		// ParseRetryAfterMs already caps; sleep path also caps — exact MaxRetryAfter expected.
 		t.Fatalf("want sleep==MaxRetryAfter got %v", seen[0])
 	}
 }
@@ -293,6 +298,7 @@ func TestOpenAICompatible_HostOwnsIdentityFields(t *testing.T) {
 	t.Parallel()
 	// Even if model tried to spoof prompt_hash (now rejected by parser), host fills fields.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"rid","choices":[{"message":{"content":"{\"schema_version\":\"reinframe.raw_assessment.v1\",\"severity\":3,\"reason_code\":\"NORMAL_PROGRESS\"}"}}]}`))
 	}))
 	defer srv.Close()

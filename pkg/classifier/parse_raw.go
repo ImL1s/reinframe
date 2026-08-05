@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"unicode/utf8"
 )
@@ -34,9 +35,88 @@ func parseFail(reason, msg string) *ParseError {
 	return &ParseError{Reason: reason, Message: msg}
 }
 
+// isJSONWhitespace is the closed RFC 8259 whitespace set only.
+func isJSONWhitespace(b byte) bool {
+	return b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D
+}
+
+// trimJSONWhitespace trims only JSON whitespace (space/tab/LF/CR).
+// Does not strip NBSP, EM SPACE, or other Unicode spaces.
+func trimJSONWhitespace(s []byte) []byte {
+	start := 0
+	for start < len(s) && isJSONWhitespace(s[start]) {
+		start++
+	}
+	end := len(s)
+	for end > start && isJSONWhitespace(s[end-1]) {
+		end--
+	}
+	return s[start:end]
+}
+
+// hasNonJSONBoundaryWhitespace is true when leading/trailing bytes exist that are
+// not JSON whitespace but would be stripped by strings/bytes.TrimSpace (e.g. NBSP).
+func hasNonJSONBoundaryWhitespace(s []byte) bool {
+	// Leading non-JSON whitespace that is Unicode space or other trim targets.
+	i := 0
+	for i < len(s) {
+		r, size := utf8.DecodeRune(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			break
+		}
+		if size == 1 && isJSONWhitespace(s[i]) {
+			i++
+			continue
+		}
+		// Non-ASCII space or other Unicode whitespace at boundary is rejected.
+		if r != utf8.RuneError && isUnicodeSpaceNotJSON(r) {
+			return true
+		}
+		break
+	}
+	// Trailing
+	j := len(s)
+	for j > 0 {
+		r, size := utf8.DecodeLastRune(s[:j])
+		if r == utf8.RuneError && size == 1 {
+			break
+		}
+		if size == 1 && isJSONWhitespace(s[j-1]) {
+			j--
+			continue
+		}
+		if r != utf8.RuneError && isUnicodeSpaceNotJSON(r) {
+			return true
+		}
+		break
+	}
+	return false
+}
+
+func isUnicodeSpaceNotJSON(r rune) bool {
+	// JSON whitespace is only SP/TAB/LF/CR. Any other Unicode space is forbidden at boundary.
+	switch r {
+	case 0x20, 0x09, 0x0A, 0x0D:
+		return false
+	}
+	// Common separators that TrimSpace would strip.
+	if r == 0xA0 || r == 0x2003 || r == 0x2002 || r == 0x2009 || r == 0x2028 || r == 0x2029 || r == 0xFEFF {
+		return true
+	}
+	// General Unicode space category (Zs) and a few controls.
+	if r > 0x7F {
+		// Use simple ranges for Zs
+		if r == 0x1680 || (r >= 0x2000 && r <= 0x200A) || r == 0x202F || r == 0x205F || r == 0x3000 {
+			return true
+		}
+	}
+	return false
+}
+
 // ParseRawAssessmentStrict parses exactly one closed RawAssessment JSON object.
 // content must be the model text only (already extracted from transport).
 // allowedEvidence is the set of event IDs present in the ProviderRequest input.
+// Nil or empty allowlist rejects any non-empty evidence_event_ids (fail closed).
 func ParseRawAssessmentStrict(content []byte, maxBytes int, allowedEvidence map[string]struct{}) (RawAssessment, error) {
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxOutputBytes
@@ -47,9 +127,10 @@ func ParseRawAssessmentStrict(content []byte, maxBytes int, allowedEvidence map[
 	if !utf8.Valid(content) {
 		return RawAssessment{}, parseFail("utf8", "invalid UTF-8")
 	}
-	// Trim only ASCII space/tab/LF/CR at edges for fence detection — do not
-	// rewrite interior content.
-	trimmed := bytes.TrimSpace(content)
+	if hasNonJSONBoundaryWhitespace(content) {
+		return RawAssessment{}, parseFail("whitespace", "non-JSON boundary whitespace rejected")
+	}
+	trimmed := trimJSONWhitespace(content)
 	if len(trimmed) == 0 {
 		return RawAssessment{}, parseFail("empty", "empty content")
 	}
@@ -61,7 +142,7 @@ func ParseRawAssessmentStrict(content []byte, maxBytes int, allowedEvidence map[
 		return RawAssessment{}, parseFail("prose", "content must start with JSON object")
 	}
 
-	// Token-level scan: one object, no duplicate keys, no trailing junk.
+	// Token-level scan: one object, no duplicate keys, trailing must be exactly EOF.
 	if err := validateSingleJSONObject(trimmed); err != nil {
 		return RawAssessment{}, err
 	}
@@ -72,18 +153,14 @@ func ParseRawAssessmentStrict(content []byte, maxBytes int, allowedEvidence map[
 	if err := dec.Decode(&raw); err != nil {
 		return RawAssessment{}, parseFail("json", "decode failed")
 	}
-	// Trailing non-whitespace already checked by validateSingleJSONObject.
 
 	// Closed field allowlist — assessment content may only carry score evidence.
-	// Host-owned identity (model_id, prompt_hash, ruleset_*, latency) is rejected
-	// here so the adapter always overwrites from trusted request/config.
 	allowed := map[string]struct{}{
 		"schema_version":     {},
 		"severity":           {},
 		"reason_code":        {},
 		"evidence_event_ids": {},
 	}
-	// Reject usage/meta / host-identity injection keys in assessment content.
 	forbidden := []string{
 		"input_tokens", "output_tokens", "cached_tokens", "cache_hit",
 		"provider_request_id", "usage", "cache_read_tokens", "uncached_input_tokens",
@@ -101,7 +178,6 @@ func ParseRawAssessmentStrict(content []byte, maxBytes int, allowedEvidence map[
 		}
 	}
 
-	// Required fields.
 	for _, req := range []string{"schema_version", "severity", "reason_code"} {
 		if _, ok := raw[req]; !ok {
 			return RawAssessment{}, parseFail("missing_field", "missing "+req)
@@ -141,6 +217,10 @@ func ParseRawAssessmentStrict(content []byte, maxBytes int, allowedEvidence map[
 		if len(evidence) > MaxEvidenceIDs {
 			return RawAssessment{}, parseFail("evidence", "too many evidence ids")
 		}
+		// Fail closed: any non-empty evidence requires a non-nil, non-empty allowlist.
+		if len(evidence) > 0 && len(allowedEvidence) == 0 {
+			return RawAssessment{}, parseFail("evidence", "evidence ids require allowlist")
+		}
 		seen := map[string]struct{}{}
 		for _, id := range evidence {
 			if id == "" || len(id) > MaxEvidenceIDLen {
@@ -150,22 +230,19 @@ func ParseRawAssessmentStrict(content []byte, maxBytes int, allowedEvidence map[
 				return RawAssessment{}, parseFail("evidence", "duplicate evidence id")
 			}
 			seen[id] = struct{}{}
-			if allowedEvidence != nil {
-				if _, ok := allowedEvidence[id]; !ok {
-					return RawAssessment{}, parseFail("evidence", "unknown evidence id")
-				}
+			if _, ok := allowedEvidence[id]; !ok {
+				return RawAssessment{}, parseFail("evidence", "unknown evidence id")
 			}
 		}
 	}
 
-	out := RawAssessment{
+	return RawAssessment{
 		SchemaVersion:    SchemaRawAssessment,
 		Severity:         sev,
 		ReasonCode:       rc,
 		EvidenceEventIDs: evidence,
 		ParseStatus:      ParseStatusOK,
-	}
-	return out, nil
+	}, nil
 }
 
 func decodeStrictString(raw json.RawMessage) (string, error) {
@@ -186,7 +263,6 @@ func decodeStrictInt(raw json.RawMessage) (int, error) {
 		return 0, parseFail("type", "empty number")
 	}
 	s := string(raw)
-	// Reject floats, NaN, Inf, quoted numbers — plain integers only.
 	if s[0] == '"' {
 		return 0, parseFail("type", "no string coercion")
 	}
@@ -203,7 +279,6 @@ func decodeStrictInt(raw json.RawMessage) (int, error) {
 	if err != nil {
 		return 0, parseFail("type", "severity must be integer")
 	}
-	// Overflow into platform int is not expected for severity 0–100, but guard.
 	const maxInt = int64(^uint(0) >> 1)
 	if i64 > maxInt || i64 < -maxInt-1 {
 		return 0, parseFail("type", "integer overflow")
@@ -248,37 +323,30 @@ func decodeStrictStringArray(raw json.RawMessage) ([]string, error) {
 }
 
 // validateSingleJSONObject ensures one top-level object, no duplicate keys,
-// and no trailing non-whitespace after the object.
+// and that nothing remains after the first value except EOF.
 func validateSingleJSONObject(data []byte) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	tok, err := dec.Token()
-	if err != nil {
-		return parseFail("json", "token error")
-	}
-	d, ok := tok.(json.Delim)
-	if !ok || d != '{' {
-		return parseFail("json", "expected object")
-	}
-	// Consume full first value via standard decode into raw map after duplicate check.
 	if err := rejectDuplicateKeys(data); err != nil {
 		return err
 	}
-	// Re-decode and ensure no second JSON value.
-	dec2 := json.NewDecoder(bytes.NewReader(data))
-	dec2.UseNumber()
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
 	var first any
-	if err := dec2.Decode(&first); err != nil {
+	if err := dec.Decode(&first); err != nil {
 		return parseFail("json", "decode failed")
 	}
+	// Second Decode must return exactly io.EOF. nil = second value;
+	// syntax/token error = trailing non-JSON or malformed suffix.
 	var extra any
-	if err := dec2.Decode(&extra); err == nil {
+	err := dec.Decode(&extra)
+	if err == nil {
 		return parseFail("json", "multiple JSON values")
+	}
+	if err != io.EOF {
+		return parseFail("json", "trailing non-JSON content")
 	}
 	return nil
 }
 
-// rejectDuplicateKeys scans objects with a decoder stack for duplicate keys at each object level.
 func rejectDuplicateKeys(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
@@ -295,7 +363,7 @@ func walkObjectKeys(dec *json.Decoder, depth int) error {
 	}
 	d, ok := tok.(json.Delim)
 	if !ok {
-		return nil // scalar at top — already rejected elsewhere
+		return nil
 	}
 	switch d {
 	case '{':
@@ -313,12 +381,10 @@ func walkObjectKeys(dec *json.Decoder, depth int) error {
 				return parseFail("duplicate_key", "duplicate key "+key)
 			}
 			seen[key] = struct{}{}
-			// Value
 			if err := walkValue(dec, depth+1); err != nil {
 				return err
 			}
 		}
-		// consume closing }
 		if _, err := dec.Token(); err != nil {
 			return parseFail("json", "object end")
 		}
@@ -342,7 +408,6 @@ func walkValue(dec *json.Decoder, depth int) error {
 	if depth > MaxNestedJSONDepth {
 		return parseFail("json", "nesting too deep")
 	}
-	// Peek by decoding token
 	tok, err := dec.Token()
 	if err != nil {
 		return parseFail("json", "value")
@@ -350,7 +415,6 @@ func walkValue(dec *json.Decoder, depth int) error {
 	if d, ok := tok.(json.Delim); ok {
 		switch d {
 		case '{':
-			// re-enter object body: we already consumed '{', so handle like walkObjectKeys mid-object
 			seen := map[string]struct{}{}
 			for dec.More() {
 				keyTok, err := dec.Token()
@@ -387,7 +451,6 @@ func walkValue(dec *json.Decoder, depth int) error {
 			return parseFail("json", "unexpected delim")
 		}
 	}
-	// scalar already consumed
 	return nil
 }
 

@@ -29,11 +29,14 @@ type ProviderCallAudit struct {
 	UsagePresent        bool   `json:"usage_present"`
 	InputTokens         int64  `json:"input_tokens,omitempty"`
 	OutputTokens        int64  `json:"output_tokens,omitempty"`
+	ReasoningTokens     int64  `json:"reasoning_tokens,omitempty"`
 	CacheReadTokens     int64  `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens    int64  `json:"cache_write_tokens,omitempty"`
 	UncachedInputTokens int64  `json:"uncached_input_tokens,omitempty"`
 	CacheHit            bool   `json:"cache_hit,omitempty"`
 	CacheBackend        string `json:"cache_backend,omitempty"`
+	CacheKeyHash        string `json:"cache_key_hash,omitempty"`
+	ModelVersion        string `json:"model_version,omitempty"`
 	// Correlation
 	CorrelationID string `json:"correlation_id,omitempty"`
 	CausationID   string `json:"causation_id,omitempty"`
@@ -67,13 +70,16 @@ func BuildProviderCallAudit(req ProviderRequest, res ProviderResult, corr, cause
 		FallbackReason:      truncateAudit(res.Meta.FallbackReason),
 		ErrorClass:          truncateAudit(res.Meta.ErrorClass),
 		UsagePresent:        res.Usage.UsagePresent,
-		InputTokens:         res.Usage.InputTokens,
-		OutputTokens:        res.Usage.OutputTokens,
-		CacheReadTokens:     res.Usage.CacheReadTokens,
-		CacheWriteTokens:    res.Usage.CacheWriteTokens,
-		UncachedInputTokens: res.Usage.UncachedInputTokens,
+		InputTokens:         nonNeg(res.Usage.InputTokens),
+		OutputTokens:        nonNeg(res.Usage.OutputTokens),
+		ReasoningTokens:     nonNeg(res.Usage.ReasoningTokens),
+		CacheReadTokens:     nonNeg(res.Usage.CacheReadTokens),
+		CacheWriteTokens:    nonNeg(res.Usage.CacheWriteTokens),
+		UncachedInputTokens: nonNeg(res.Usage.UncachedInputTokens),
 		CacheHit:            res.Usage.CacheHit,
 		CacheBackend:        truncateAudit(res.Usage.CacheBackend),
+		CacheKeyHash:        truncateAudit(res.Usage.CacheKeyHash),
+		ModelVersion:        truncateAudit(res.Meta.ModelVersion),
 		CorrelationID:       truncateAudit(corr),
 		CausationID:         truncateAudit(cause),
 		Severity:            res.Assessment.Severity,
@@ -108,4 +114,11 @@ func truncateAudit(s string) string {
 		return s
 	}
 	return s[:MaxAuditStringBytes]
+}
+
+func nonNeg(v int64) int64 {
+	if v < 0 {
+		return 0
+	}
+	return v
 }

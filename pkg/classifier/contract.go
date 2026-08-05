@@ -84,7 +84,7 @@ type ProviderMeta struct {
 	ErrorClass          string
 }
 
-// ValidateProviderRequest checks closed bounds before transport.
+// ValidateProviderRequest checks closed bounds and PromptPlan integrity before transport.
 func ValidateProviderRequest(req ProviderRequest) error {
 	if req.SchemaVersion != "" && req.SchemaVersion != SchemaProviderRequest {
 		return fmt.Errorf("classifier: unsupported provider request schema %q", boundErr(req.SchemaVersion))
@@ -104,24 +104,79 @@ func ValidateProviderRequest(req ProviderRequest) error {
 	if req.Timeout > MaxAllowedTimeout {
 		return fmt.Errorf("classifier: timeout exceeds ceiling")
 	}
+	if err := ValidatePromptPlan(req.Prompt, req.Input); err != nil {
+		return err
+	}
 	return nil
 }
 
-// EffectiveBounds fills zero defaults for timeout and byte limits.
-func EffectiveBounds(req ProviderRequest) (timeout time.Duration, maxIn, maxOut int) {
-	timeout = req.Timeout
+// ProviderBoundSources are optional upper bounds that may only tighten a request.
+// Zero means "not constrained by this source".
+type ProviderBoundSources struct {
+	ConfigTimeout      time.Duration
+	ConfigMaxInput     int
+	ConfigMaxOutput    int
+	CapabilityMaxInput int
+}
+
+// EffectiveProviderBounds computes limits as the minimum positive constraint.
+// Request is the per-call authority; config/capabilities only cap, never widen.
+func EffectiveProviderBounds(req ProviderRequest, src ProviderBoundSources) (timeout time.Duration, maxIn, maxOut int) {
+	timeout = minPositiveDuration(req.Timeout, src.ConfigTimeout)
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
-	maxIn = req.MaxInputBytes
+	if timeout > MaxAllowedTimeout {
+		timeout = MaxAllowedTimeout
+	}
+
+	maxIn = minPositiveInt(req.MaxInputBytes, src.ConfigMaxInput, src.CapabilityMaxInput)
 	if maxIn <= 0 {
 		maxIn = DefaultMaxInputBytes
 	}
-	maxOut = req.MaxOutputBytes
+	if maxIn > MaxAllowedInputBytes {
+		maxIn = MaxAllowedInputBytes
+	}
+
+	maxOut = minPositiveInt(req.MaxOutputBytes, src.ConfigMaxOutput)
 	if maxOut <= 0 {
 		maxOut = DefaultMaxOutputBytes
 	}
+	if maxOut > MaxAllowedOutputBytes {
+		maxOut = MaxAllowedOutputBytes
+	}
 	return timeout, maxIn, maxOut
+}
+
+// EffectiveBounds is the request-only helper (no config/capability caps).
+func EffectiveBounds(req ProviderRequest) (timeout time.Duration, maxIn, maxOut int) {
+	return EffectiveProviderBounds(req, ProviderBoundSources{})
+}
+
+func minPositiveDuration(vals ...time.Duration) time.Duration {
+	var min time.Duration
+	for _, v := range vals {
+		if v <= 0 {
+			continue
+		}
+		if min == 0 || v < min {
+			min = v
+		}
+	}
+	return min
+}
+
+func minPositiveInt(vals ...int) int {
+	min := 0
+	for _, v := range vals {
+		if v <= 0 {
+			continue
+		}
+		if min == 0 || v < min {
+			min = v
+		}
+	}
+	return min
 }
 
 // Typed provider errors (bounded messages; never include secrets or raw bodies).

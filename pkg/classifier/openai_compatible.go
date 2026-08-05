@@ -575,16 +575,24 @@ func isEnvPlaceholder(s string) bool {
 	// [A-Za-z_][A-Za-z0-9_]*
 	for i, r := range inner {
 		if i == 0 {
-			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_') {
+			if !envIdentStart(r) {
 				return false
 			}
 			continue
 		}
-		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+		if !envIdentCont(r) {
 			return false
 		}
 	}
 	return true
+}
+
+func envIdentStart(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_'
+}
+
+func envIdentCont(r rune) bool {
+	return envIdentStart(r) || (r >= '0' && r <= '9')
 }
 
 func envNameFromPlaceholder(s string) string {

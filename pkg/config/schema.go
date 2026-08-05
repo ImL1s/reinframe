@@ -353,16 +353,24 @@ func IsEnvPlaceholder(s string) bool {
 	}
 	for i, r := range inner {
 		if i == 0 {
-			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_') {
+			if !isEnvIdentStart(r) {
 				return false
 			}
 			continue
 		}
-		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+		if !isEnvIdentCont(r) {
 			return false
 		}
 	}
 	return true
+}
+
+func isEnvIdentStart(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_'
+}
+
+func isEnvIdentCont(r rune) bool {
+	return isEnvIdentStart(r) || (r >= '0' && r <= '9')
 }
 
 func validateEnvPlaceholder(field, value string) error {

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -190,7 +192,30 @@ func normalizeBaseURL(raw string, allowRemote bool) (string, error) {
 	if p != "" && p != "/" {
 		return "", newProviderError("config", "base_url must be origin only (no path)", false, 0)
 	}
-	if !allowRemote && !isLoopbackHost(u.Hostname()) {
+	host := u.Hostname()
+	if strings.TrimSpace(host) == "" {
+		return "", newProviderError("config", "base_url hostname is required", false, 0)
+	}
+	if port := u.Port(); port != "" {
+		if _, err := strconv.Atoi(port); err != nil {
+			return "", newProviderError("config", "base_url port must be numeric", false, 0)
+		}
+	}
+	// Reject hosts that are not a valid IP and contain no DNS label chars.
+	if ip := net.ParseIP(host); ip == nil {
+		// Hostname: at least one letter or digit (after stripping brackets for IPv6 already handled).
+		okHost := false
+		for _, r := range host {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '-' {
+				okHost = true
+				break
+			}
+		}
+		if !okHost || strings.Contains(host, " ") {
+			return "", newProviderError("config", "base_url hostname is invalid", false, 0)
+		}
+	}
+	if !allowRemote && !isLoopbackHost(host) {
 		return "", newProviderError("config", "base_url must be loopback unless AllowRemote", false, 0)
 	}
 	// Canonical form without trailing slash path noise.
@@ -239,7 +264,8 @@ func joinEndpoint(baseCanon, pathCanon string) (string, error) {
 	return u.String(), nil
 }
 
-// wrapClientNoRedirect clones client transport settings but always denies redirects.
+// wrapClientNoRedirect clones transport/timeout but always denies redirects
+// and never copies CookieJar (session cookies must not leak across destinations).
 func wrapClientNoRedirect(in *http.Client) *http.Client {
 	out := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -248,9 +274,8 @@ func wrapClientNoRedirect(in *http.Client) *http.Client {
 	}
 	if in != nil {
 		out.Transport = in.Transport
-		out.Jar = in.Jar
 		out.Timeout = in.Timeout
-		// Intentionally do NOT copy CheckRedirect — always deny.
+		// Intentionally do NOT copy CheckRedirect or Jar.
 	}
 	return out
 }
@@ -316,7 +341,7 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 	maxAttempts := p.cfg.MaxRetries + 1
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if err := opCtx.Err(); err != nil {
+		if err := preserveContextError(ctx, opCtx); err != nil {
 			return ProviderResult{}, err
 		}
 		if attempt > 0 {
@@ -328,18 +353,18 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 			if delay > MaxRetryAfter {
 				delay = MaxRetryAfter
 			}
-			// Respect remaining deadline.
+			// Respect remaining deadline of the overall Assess budget.
 			if dl, ok := opCtx.Deadline(); ok {
 				rem := time.Until(dl)
 				if rem <= 0 {
-					return ProviderResult{}, opCtx.Err()
+					return ProviderResult{}, preserveContextError(ctx, opCtx)
 				}
 				if delay > rem {
 					delay = rem
 				}
 			}
 			if err := p.sleep(opCtx, delay); err != nil {
-				return ProviderResult{}, err
+				return ProviderResult{}, preserveContextError(ctx, opCtx)
 			}
 		}
 
@@ -356,12 +381,25 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 			res.Assessment.RulesetID = req.Input.RulesetID
 			return res, nil
 		}
+		// Cancellation/deadline must not become ordinary provider errors.
+		if cerr := preserveContextError(ctx, opCtx); cerr != nil {
+			return ProviderResult{}, cerr
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return ProviderResult{}, err
+		}
 		lastErr = err
 		if !retryable || attempt+1 >= maxAttempts {
 			break
 		}
 	}
 
+	if cerr := preserveContextError(ctx, opCtx); cerr != nil {
+		return ProviderResult{}, cerr
+	}
+	if lastErr != nil && (errors.Is(lastErr, context.Canceled) || errors.Is(lastErr, context.DeadlineExceeded)) {
+		return ProviderResult{}, lastErr
+	}
 	pe, ok := lastErr.(*ProviderError)
 	if !ok {
 		pe = newProviderError("transport", "provider call failed", false, lastStatus)
@@ -382,6 +420,22 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 	}, pe
 }
 
+// preserveContextError returns the parent cancellation/deadline when either parent
+// or the derived op context is canceled/expired, preferring parent identity.
+func preserveContextError(parent, op context.Context) error {
+	if parent != nil {
+		if err := parent.Err(); err != nil {
+			return err
+		}
+	}
+	if op != nil {
+		if err := op.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, payload []byte, maxOut int, req ProviderRequest) (ProviderResult, int, bool, time.Duration, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(payload))
 	if err != nil {
@@ -394,6 +448,9 @@ func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, payload []byte, m
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return ProviderResult{}, 0, false, 0, err
+		}
 		if ctx.Err() != nil {
 			return ProviderResult{}, 0, false, 0, ctx.Err()
 		}
@@ -507,8 +564,9 @@ func parseOAIChatEnvelope(body []byte) (content string, usage ProviderUsage, req
 	}
 	reqID = env.ID
 	if env.Usage != nil {
-		if env.Usage.PromptTokens < 0 || env.Usage.CompletionTokens < 0 {
-			return "", ProviderUsage{}, "", fmt.Errorf("negative token counts")
+		// Negative tokens are invalid telemetry — reject; do not clamp to a genuine zero.
+		if env.Usage.PromptTokens < 0 || env.Usage.CompletionTokens < 0 || env.Usage.TotalTokens < 0 {
+			return "", ProviderUsage{}, "", fmt.Errorf("invalid negative token counts")
 		}
 		usage = ProviderUsage{
 			InputTokens:  env.Usage.PromptTokens,

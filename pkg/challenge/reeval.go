@@ -120,10 +120,26 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			RepoPolicyException: in.RepoPolicyException,
 			FlakyInvestigation:  in.FlakyInvestigation,
 		}
-		// Include justification evidence ids as related evidence (not auto-allow).
+		// Closed challenge/justification summary for model-backed re-eval (no private CoT).
+		ch := &classifier.ChallengeContext{
+			ChallengeID:   rec.ChallengeID,
+			State:         string(rec.State),
+			BlockClass:    rec.BlockClass,
+			Appealability: rec.Appealability,
+		}
 		if just != nil {
+			ch.ConcreteValue = just.ConcreteValue
+			ch.PreventedFailureOrThreat = just.PreventedFailureOrThreat
+			ch.EstimatedCost = just.EstimatedCost
+			ch.AlternativesConsidered = just.AlternativesConsidered
+			ch.ScopeLimit = just.ScopeLimit
+			ch.VerificationPlan = just.VerificationPlan
+			ch.RollbackPlan = just.RollbackPlan
+			ch.EvidenceEventIDs = append([]string(nil), just.SupportingEvidenceEventIDs...)
+			// Include justification evidence ids as related evidence (not auto-allow).
 			cin.RelatedEventIDs = append([]string(nil), just.SupportingEvidenceEventIDs...)
 		}
+		cin.Challenge = ch
 		preq, perr := classifier.NewProviderRequest(cin)
 		if perr != nil {
 			if in.PolicyClass == PolicyClassSecurity {

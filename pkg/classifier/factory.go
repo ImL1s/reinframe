@@ -33,8 +33,9 @@ func NewClassifierProviderFromConfig(cfg config.ClassifierProviderConfig, opts P
 		return nil, fmt.Errorf("classifier factory: config invalid")
 	}
 
-	switch cfg.Kind {
-	case "", "none":
+	// Use the same normalized kind as Validate (single source of truth).
+	switch cfg.NormalizeKind() {
+	case "none":
 		return FakeClassifierProvider{}, nil
 	case "openai_compatible":
 		oai := OpenAICompatibleConfig{

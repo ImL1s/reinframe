@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -63,7 +64,7 @@ type ClassifierProviderConfig struct {
 	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
 	// Model identifier (required when kind is openai_compatible).
 	Model string `json:"model,omitempty" yaml:"model,omitempty"`
-	// BaseURL for OpenAI-compatible endpoint.
+	// BaseURL for OpenAI-compatible endpoint (origin only).
 	BaseURL string `json:"base_url,omitempty" yaml:"base_url,omitempty"`
 	// Path defaults to /v1/chat/completions.
 	Path string `json:"path,omitempty" yaml:"path,omitempty"`
@@ -76,6 +77,30 @@ type ClassifierProviderConfig struct {
 	MaxOutputBytes int `json:"max_output_bytes,omitempty" yaml:"max_output_bytes,omitempty"`
 	// CapabilitiesProfile defaults to generic-none-v1.
 	CapabilitiesProfile string `json:"capabilities_profile,omitempty" yaml:"capabilities_profile,omitempty"`
+}
+
+// NormalizeKind returns the closed, trimmed kind used by validation and factory.
+func (cp ClassifierProviderConfig) NormalizeKind() string {
+	k := strings.TrimSpace(strings.ToLower(cp.Kind))
+	switch k {
+	case "", "none":
+		return "none"
+	case "openai_compatible":
+		return "openai_compatible"
+	default:
+		return k
+	}
+}
+
+// MarshalJSON redacts secret-like api_key_ref values that are not env placeholders,
+// so diagnostics remain secret-safe even before Validate succeeds.
+func (cp ClassifierProviderConfig) MarshalJSON() ([]byte, error) {
+	type alias ClassifierProviderConfig
+	out := alias(cp)
+	if out.APIKeyRef != "" && !IsEnvPlaceholder(out.APIKeyRef) {
+		out.APIKeyRef = "[REDACTED]"
+	}
+	return json.Marshal(out)
 }
 
 // SessionDefaults are applied to new supervised sessions unless overridden.
@@ -221,7 +246,7 @@ func (c Config) Validate() error {
 }
 
 func validateClassifierProvider(cp ClassifierProviderConfig) error {
-	kind := strings.TrimSpace(cp.Kind)
+	kind := cp.NormalizeKind()
 	// Secret-like fields always validated with redacted errors (even when disabled).
 	if cp.APIKeyRef != "" {
 		if err := validateEnvPlaceholder("classifier_provider.api_key_ref", cp.APIKeyRef); err != nil {
@@ -230,7 +255,7 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 		}
 	}
 	switch kind {
-	case "", "none":
+	case "none":
 		// Disabled: every other field must be empty/zero.
 		if strings.TrimSpace(cp.Model) != "" || strings.TrimSpace(cp.BaseURL) != "" ||
 			strings.TrimSpace(cp.Path) != "" || strings.TrimSpace(cp.APIKeyRef) != "" ||
@@ -266,6 +291,14 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("classifier_provider.base_url must not include query or fragment")
+	}
+	if strings.TrimSpace(u.Hostname()) == "" {
+		return fmt.Errorf("classifier_provider.base_url hostname is required")
+	}
+	if port := u.Port(); port != "" {
+		if _, err := strconv.Atoi(port); err != nil {
+			return fmt.Errorf("classifier_provider.base_url port must be numeric")
+		}
 	}
 	p := u.EscapedPath()
 	if p != "" && p != "/" {

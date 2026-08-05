@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -145,8 +146,19 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 			raw = pres.Assessment
 		}
 		if err != nil {
-			// PRODUCTIVITY fail-open / SECURITY fail-closed — resolver owns this.
-			if in.PolicyClass == PolicyClassSecurity {
+			// Preserve cancel/deadline identity — never convert to productivity fail-open ALLOW.
+			if isContextAbort(err) {
+				raw.ParseStatus = ParseStatusError
+				res.Decision = DecisionBlock
+				res.ResolverReason = "provider_context_canceled"
+				res.ReasonCode = "provider_unavailable"
+				ih := hashShadowInput(in)
+				return ShadowResult{
+					Raw: raw, Resolved: res, Disagreement: false,
+					HookGateAction: in.HookGateAction, InputHash: ih, CreatedAt: now,
+				}, err
+			} else if in.PolicyClass == PolicyClassSecurity {
+				// PRODUCTIVITY fail-open / SECURITY fail-closed — resolver owns ordinary failures.
 				res.Decision = DecisionBlock
 				res.ResolverReason = "fail_closed_security"
 				res.ReasonCode = "provider_unavailable"
@@ -232,6 +244,10 @@ func hashShadowInput(in ShadowInput) string {
 	}{in.SessionID, in.Proposed.ToolName, in.Proposed.Command, in.HookGateAction})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:8])
+}
+
+func isContextAbort(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // Stage0FullSuiteBlock is a helper: simple disproportionate full suite → Stage0 block signal.

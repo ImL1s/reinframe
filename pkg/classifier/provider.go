@@ -25,10 +25,33 @@ type ClassifierInput struct {
 	ProposedAction  *adapter.ProposedAction
 	RecentEventIDs  []string
 	RelatedEventIDs []string
+	// Challenge is optional closed challenge/justification context for model-backed re-eval (#131/#132).
+	// Never includes private chain-of-thought.
+	Challenge *ChallengeContext
 	// Exception flags applied in Stage2 after raw score (#105).
 	UserException       bool
 	RepoPolicyException bool
 	FlakyInvestigation  bool
+}
+
+// ChallengeContext is a closed, provider-neutral summary of challenge/justification
+// state for Stage-1 assessment. No private chain-of-thought.
+type ChallengeContext struct {
+	ChallengeID              string
+	State                    string
+	BlockClass               string
+	Appealability            string
+	ConcreteValue            string
+	PreventedFailureOrThreat string
+	EstimatedCost            string
+	AlternativesConsidered   string
+	ScopeLimit               string
+	VerificationPlan         string
+	RollbackPlan             string
+	// Claims are closed claim names only (no free-form private reasoning).
+	Claims []string
+	// EvidenceEventIDs are justification-supporting evidence ids (also mirrored into RelatedEventIDs when building).
+	EvidenceEventIDs []string
 }
 
 // RawAssessment is the closed Stage 1 output.

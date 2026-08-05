@@ -27,6 +27,7 @@ type ProviderCallAudit struct {
 	ErrorClass          string   `json:"error_class,omitempty"`
 	// Usage telemetry (transport only).
 	UsagePresent        bool   `json:"usage_present"`
+	UsageInvalid        bool   `json:"usage_invalid,omitempty"` // true when source had negative/overflow tokens
 	InputTokens         int64  `json:"input_tokens,omitempty"`
 	OutputTokens        int64  `json:"output_tokens,omitempty"`
 	ReasoningTokens     int64  `json:"reasoning_tokens,omitempty"`
@@ -70,25 +71,37 @@ func BuildProviderCallAudit(req ProviderRequest, res ProviderResult, corr, cause
 		FallbackReason:      truncateAudit(res.Meta.FallbackReason),
 		ErrorClass:          truncateAudit(res.Meta.ErrorClass),
 		UsagePresent:        res.Usage.UsagePresent,
-		InputTokens:         nonNeg(res.Usage.InputTokens),
-		OutputTokens:        nonNeg(res.Usage.OutputTokens),
-		ReasoningTokens:     nonNeg(res.Usage.ReasoningTokens),
-		CacheReadTokens:     nonNeg(res.Usage.CacheReadTokens),
-		CacheWriteTokens:    nonNeg(res.Usage.CacheWriteTokens),
-		UncachedInputTokens: nonNeg(res.Usage.UncachedInputTokens),
-		CacheHit:            res.Usage.CacheHit,
-		CacheBackend:        truncateAudit(res.Usage.CacheBackend),
-		CacheKeyHash:        truncateAudit(res.Usage.CacheKeyHash),
-		ModelVersion:        truncateAudit(res.Meta.ModelVersion),
-		CorrelationID:       truncateAudit(corr),
-		CausationID:         truncateAudit(cause),
-		Severity:            res.Assessment.Severity,
-		ReasonCode:          truncateAudit(res.Assessment.ReasonCode),
+		// Do not clamp invalid negatives into genuine zeros.
+		CacheHit:      res.Usage.CacheHit && res.Usage.UsagePresent && !usageHasNegative(res.Usage),
+		CacheBackend:  truncateAudit(res.Usage.CacheBackend),
+		CacheKeyHash:  truncateAudit(res.Usage.CacheKeyHash),
+		ModelVersion:  truncateAudit(res.Meta.ModelVersion),
+		CorrelationID: truncateAudit(corr),
+		CausationID:   truncateAudit(cause),
+		Severity:      res.Assessment.Severity,
+		ReasonCode:    truncateAudit(res.Assessment.ReasonCode),
+	}
+	if usageHasNegative(res.Usage) {
+		a.UsagePresent = false
+		a.UsageInvalid = true
+		// Leave token fields zero without claiming a measured zero.
+	} else if res.Usage.UsagePresent {
+		a.InputTokens = res.Usage.InputTokens
+		a.OutputTokens = res.Usage.OutputTokens
+		a.ReasoningTokens = res.Usage.ReasoningTokens
+		a.CacheReadTokens = res.Usage.CacheReadTokens
+		a.CacheWriteTokens = res.Usage.CacheWriteTokens
+		a.UncachedInputTokens = res.Usage.UncachedInputTokens
 	}
 	if !now.IsZero() {
 		a.CreatedAt = now.UTC().Format(time.RFC3339Nano)
 	}
 	return a
+}
+
+func usageHasNegative(u ProviderUsage) bool {
+	return u.InputTokens < 0 || u.OutputTokens < 0 || u.ReasoningTokens < 0 ||
+		u.CacheReadTokens < 0 || u.CacheWriteTokens < 0 || u.UncachedInputTokens < 0
 }
 
 // MarshalJSON deterministic closed serialization.
@@ -114,11 +127,4 @@ func truncateAudit(s string) string {
 		return s
 	}
 	return s[:MaxAuditStringBytes]
-}
-
-func nonNeg(v int64) int64 {
-	if v < 0 {
-		return 0
-	}
-	return v
 }

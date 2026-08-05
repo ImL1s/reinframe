@@ -176,6 +176,17 @@ func buildDynamicSuffix(in ClassifierInput) ([]PromptBlock, error) {
 			Text: act,
 		})
 	}
+	if in.Challenge != nil {
+		ch, err := encodeChallengeContext(*in.Challenge)
+		if err != nil {
+			return nil, err
+		}
+		dyn = append(dyn, PromptBlock{
+			Role: PromptRoleUser,
+			Type: PromptTypeChallenge,
+			Text: ch,
+		})
+	}
 	if in.UserException || in.RepoPolicyException || in.FlakyInvestigation {
 		meta, err := encodeCanonStrict(map[string]bool{
 			"user_exception":        in.UserException,
@@ -346,12 +357,43 @@ func encodeCanonStrict(v any) (string, error) {
 }
 
 func encodeProposedAction(pa adapter.ProposedAction) (string, error) {
+	// Every behavior-relevant field must bind identity (same path, different content → different hash).
+	payload := string(pa.RedactedPayload)
 	return encodeCanonStrict(map[string]any{
-		"tool_name":  pa.ToolName,
-		"tool_class": pa.ToolClass,
-		"command":    pa.Command,
-		"file_path":  pa.FilePath,
-		"action_id":  pa.ActionID,
+		"schema_version":     pa.SchemaVersion,
+		"session_id":         pa.SessionID,
+		"action_id":          pa.ActionID,
+		"tool_name":          pa.ToolName,
+		"tool_class":         pa.ToolClass,
+		"command":            pa.Command,
+		"arguments":          append([]string(nil), pa.Arguments...),
+		"file_path":          pa.FilePath,
+		"target_scope":       append([]string(nil), pa.TargetScope...),
+		"workspace_revision": pa.WorkspaceRevision,
+		"contract_revision":  pa.ContractRevision,
+		"redacted_payload":   payload,
+		"source":             pa.Source,
+		"truncated":          pa.Truncated,
+		"parse_status":       pa.ParseStatus,
+	})
+}
+
+func encodeChallengeContext(c ChallengeContext) (string, error) {
+	// Closed justification summary only — never private chain-of-thought.
+	return encodeCanonStrict(map[string]any{
+		"challenge_id":                c.ChallengeID,
+		"state":                       c.State,
+		"block_class":                 c.BlockClass,
+		"appealability":               c.Appealability,
+		"concrete_value":              c.ConcreteValue,
+		"prevented_failure_or_threat": c.PreventedFailureOrThreat,
+		"estimated_cost":              c.EstimatedCost,
+		"alternatives_considered":     c.AlternativesConsidered,
+		"scope_limit":                 c.ScopeLimit,
+		"verification_plan":           c.VerificationPlan,
+		"rollback_plan":               c.RollbackPlan,
+		"claims":                      append([]string(nil), c.Claims...),
+		"evidence_event_ids":          append([]string(nil), c.EvidenceEventIDs...),
 	})
 }
 

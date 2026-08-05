@@ -187,6 +187,7 @@ func TestReEval_PassesChallengeContextIntoProvider(t *testing.T) {
 		ChallengeID: "cid-1", SessionID: "s", State: challenge.StateJustified,
 		BlockClass: challenge.BlockClassOverSOP, Appealability: challenge.AppealAppealable,
 		SideEffectClass: challenge.SideEffectShellGeneric,
+		RequiredClaims:  []string{"concrete_value", "verification_plan"},
 	}
 	just := &challenge.Justification{
 		ConcreteValue: "ship fix", PreventedFailureOrThreat: "bug", EstimatedCost: "low",
@@ -210,6 +211,9 @@ func TestReEval_PassesChallengeContextIntoProvider(t *testing.T) {
 	}
 	if saw.VerificationPlan != "test" || len(saw.EvidenceEventIDs) != 1 {
 		t.Fatalf("%+v", saw)
+	}
+	if len(saw.Claims) != 2 || saw.Claims[0] != "concrete_value" || saw.Claims[1] != "verification_plan" {
+		t.Fatalf("RequiredClaims not bound into ChallengeContext.Claims: %+v", saw.Claims)
 	}
 	_ = svc
 }
@@ -316,6 +320,21 @@ func TestOpenAICompatible_RejectsEmptyHostnameAndNonNumericPort(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("non-numeric port must fail")
+	}
+	for _, bad := range []string{"http://127.0.0.1:0", "http://127.0.0.1:65536", "http://127.0.0.1:99999"} {
+		_, err = classifier.NewOpenAICompatible(classifier.OpenAICompatibleConfig{
+			Model: "m", BaseURL: bad, AllowRemote: true,
+		})
+		if err == nil {
+			t.Fatalf("port out of range must fail: %s", bad)
+		}
+	}
+	// Valid port in range still constructs.
+	_, err = classifier.NewOpenAICompatible(classifier.OpenAICompatibleConfig{
+		Model: "m", BaseURL: "http://127.0.0.1:65535", AllowRemote: true,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

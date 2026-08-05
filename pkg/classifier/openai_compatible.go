@@ -197,8 +197,8 @@ func normalizeBaseURL(raw string, allowRemote bool) (string, error) {
 		return "", newProviderError("config", "base_url hostname is required", false, 0)
 	}
 	if port := u.Port(); port != "" {
-		if _, err := strconv.Atoi(port); err != nil {
-			return "", newProviderError("config", "base_url port must be numeric", false, 0)
+		if err := validateTCPPort(port); err != nil {
+			return "", newProviderError("config", "base_url port must be 1-65535", false, 0)
 		}
 	}
 	// Reject hosts that are not a valid IP and contain no DNS label chars.
@@ -619,6 +619,18 @@ func retryBackoff(attempt int) time.Duration {
 func isLoopbackHost(host string) bool {
 	h := strings.ToLower(host)
 	return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]"
+}
+
+// validateTCPPort requires a decimal port in [1, 65535].
+func validateTCPPort(port string) error {
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		return err
+	}
+	if n < 1 || n > 65535 {
+		return fmt.Errorf("port out of range")
+	}
+	return nil
 }
 
 func isEnvPlaceholder(s string) bool {

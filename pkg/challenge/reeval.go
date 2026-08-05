@@ -126,6 +126,7 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			State:         string(rec.State),
 			BlockClass:    rec.BlockClass,
 			Appealability: rec.Appealability,
+			Claims:        append([]string(nil), rec.RequiredClaims...),
 		}
 		if just != nil {
 			ch.ConcreteValue = just.ConcreteValue

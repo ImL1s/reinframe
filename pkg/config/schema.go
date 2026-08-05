@@ -296,8 +296,9 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 		return fmt.Errorf("classifier_provider.base_url hostname is required")
 	}
 	if port := u.Port(); port != "" {
-		if _, err := strconv.Atoi(port); err != nil {
-			return fmt.Errorf("classifier_provider.base_url port must be numeric")
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("classifier_provider.base_url port must be 1-65535")
 		}
 	}
 	p := u.EscapedPath()

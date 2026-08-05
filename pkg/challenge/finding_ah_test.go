@@ -827,14 +827,14 @@ func TestFindLeadingOptionsAndDoubleDash(t *testing.T) {
 	if len(l.TargetResources) != 1 || l.TargetResources[0] != "build" {
 		t.Fatalf("targets=%v", l.TargetResources)
 	}
-	// -D debugopts must consume the following argument (not treat it as a root).
+	// Any -D form fails closed for privileged delete (not skippable into path roots).
 	d := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -D search a -delete"), SessionID: "sess-1"})
 	wide := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find search a -delete"), SessionID: "sess-1"})
 	if d.Fingerprint == wide.Fingerprint {
 		t.Fatal("find -D search a must not equal find search a")
 	}
-	if len(d.TargetResources) != 1 || d.TargetResources[0] != "a" {
-		t.Fatalf("find -D search a targets=%v want [a]", d.TargetResources)
+	if d.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("find -D must not be privileged delete_tree, got %s", d.SideEffectClass)
 	}
 }
 
@@ -2258,5 +2258,68 @@ func TestEditConflictingPathAliasesRejected(t *testing.T) {
 	_, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa, SessionID: "sess-1"})
 	if err == nil {
 		t.Fatal("conflicting file_path/path aliases must fail closed")
+	}
+}
+
+// Codex 3b77c10: attached find -Dfoo must not share delete identity with plain find -delete.
+func TestFindAttachedDDebugNotDeleteIdentity(t *testing.T) {
+	attached := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -Dfoo build -delete"), SessionID: "sess-1"})
+	plain := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find build -delete"), SessionID: "sess-1"})
+	if attached.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("-Dfoo must not be delete_tree, got %s", attached.SideEffectClass)
+	}
+	if attached.Fingerprint == plain.Fingerprint {
+		t.Fatal("find -Dfoo must not share fingerprint with find build -delete")
+	}
+	// Separate -D rates also fail closed.
+	rates := mustFP(t, challenge.FingerprintInput{Proposed: samplePA("find -D rates build -delete"), SessionID: "sess-1"})
+	if rates.SideEffectClass == challenge.SideEffectDeleteTree {
+		t.Fatalf("-D rates must not be delete_tree, got %s", rates.SideEffectClass)
+	}
+}
+
+// Codex 3b77c10: compound suite+deploy must not hide as shell_generic (irreversible first).
+func TestCompoundSuiteDeployPreservesDeploySideEffect(t *testing.T) {
+	cmd := "go test ./...; kubectl apply -f prod.yaml"
+	fp := mustFP(t, challenge.FingerprintInput{Proposed: samplePA(cmd), SessionID: "sess-1"})
+	if fp.SideEffectClass != challenge.SideEffectDeploy {
+		t.Fatalf("suite+deploy want deploy, got %s", fp.SideEffectClass)
+	}
+	if fp.SideEffectClass == challenge.SideEffectTestSuite || fp.SideEffectClass == challenge.SideEffectShellGeneric {
+		t.Fatal("must not fall back to suite/generic")
+	}
+}
+
+// Codex 3b77c10: camelCase filePath payload alias is accepted when it matches FilePath.
+func TestEditFilePathCamelCaseAliasAccepted(t *testing.T) {
+	payload, _ := json.Marshal(map[string]string{"content": "body", "filePath": "main.go"})
+	pa := adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, SessionID: "sess-1",
+		ActionID: "fp-camel", ToolName: "Write", ToolClass: adapter.ToolClassEdit,
+		FilePath: "main.go", RedactedPayload: payload, ParseStatus: "ok",
+		WorkspaceRevision: "ws-1", ContractRevision: 3,
+	}
+	if _, err := challenge.ComputeFingerprint(challenge.FingerprintInput{Proposed: pa, SessionID: "sess-1"}); err != nil {
+		t.Fatalf("filePath alias must be accepted: %v", err)
+	}
+}
+
+// Codex 3b77c10: exported Replay projects ALLOWED_ONCE Stage2Decision via ApplyEvent.
+func TestReplayAllowedOnceProjectsStage2(t *testing.T) {
+	evs := []challenge.ChallengeEvent{
+		{ChallengeID: "c1", SessionID: "s1", Sequence: 1, Type: "opened", ToState: challenge.StateOpen},
+		{ChallengeID: "c1", SessionID: "s1", Sequence: 2, Type: "justified", FromState: challenge.StateOpen, ToState: challenge.StateJustified},
+		{ChallengeID: "c1", SessionID: "s1", Sequence: 3, Type: "budget_consumed", FromState: challenge.StateJustified, ToState: challenge.StateRetryPending},
+		{ChallengeID: "c1", SessionID: "s1", Sequence: 4, Type: "allowed_once", FromState: challenge.StateRetryPending, ToState: challenge.StateAllowedOnce},
+	}
+	rec, err := challenge.Replay(evs, challenge.ChallengeRecord{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.State != challenge.StateAllowedOnce {
+		t.Fatalf("state=%s", rec.State)
+	}
+	if rec.Stage2Decision != challenge.DecisionAllow {
+		t.Fatalf("Stage2Decision=%s want ALLOW (ApplyEvent projection)", rec.Stage2Decision)
 	}
 }

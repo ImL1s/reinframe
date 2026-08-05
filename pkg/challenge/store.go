@@ -322,6 +322,8 @@ func (s *Store) putLocked(rec ChallengeRecord, ev ChallengeEvent, just *Justific
 // Replay rebuilds a ChallengeRecord from append-only events only (ignores snapshot).
 // Expired challenges cannot be revived: EXPIRED is terminal even if later events exist
 // with lower sequence (we process in order; expiry is terminal).
+// Mutable fields (State, Stage2Decision, Intervention, budgets) are projected via
+// ApplyEvent so exported Replay matches live/ReplayFromStore semantics.
 func Replay(events []ChallengeEvent, seed ChallengeRecord) (ChallengeRecord, error) {
 	rec := seed
 	// If seed empty, require opened event.
@@ -352,25 +354,19 @@ func Replay(events []ChallengeEvent, seed ChallengeRecord) (ChallengeRecord, err
 				return ChallengeRecord{}, fmt.Errorf("replay: %w", err)
 			}
 		}
+		// Seed defaults for first OPEN when budget not preset (e.g. human-review seed).
 		if rec.State == "" && ev.ToState == StateOpen {
-			rec.State = StateOpen
-			rec.RetryBudget = InitialRetryBudget
-			rec.RetryBudgetInitial = InitialRetryBudget
-			rec.Stage2Decision = DecisionBlock
-			rec.CreatedSequence = ev.Sequence
-			rec.CreatedAt = ev.At
-			applied = true
-		} else {
-			rec.State = ev.ToState
-			applied = true
-		}
-		rec.UpdatedSequence = ev.Sequence
-		rec.UpdatedAt = ev.At
-		if ev.Type == "budget_consumed" {
-			if rec.RetryBudget > 0 {
-				rec.RetryBudget--
+			if rec.RetryBudgetInitial == 0 && rec.RetryBudget == 0 && rec.Appealability != AppealHumanReview {
+				rec.RetryBudget = InitialRetryBudget
+				rec.RetryBudgetInitial = InitialRetryBudget
 			}
 		}
+		next, err := ApplyEvent(rec, ev)
+		if err != nil {
+			return ChallengeRecord{}, fmt.Errorf("replay: %w", err)
+		}
+		rec = next
+		applied = true
 	}
 	if !applied {
 		return ChallengeRecord{}, fmt.Errorf("replay: no events")

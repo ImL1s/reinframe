@@ -175,24 +175,17 @@ func classifySideEffect(pa adapter.ProposedAction) (side string, targets []strin
 	if adapter.FullSuiteCommand(pa) {
 		// Compound shells that merely contain ./... must not collapse to test_suite identity.
 		if shellHasCompoundOrQuoting(cmd) || shellHasResolutionEnv(cmd) {
+			// Irreversible detectors first — suite→generic fallback must not hide
+			// deploy/payment/permission/secret/git-mut that re-eval routes to HUMAN_REVIEW.
+			if side, targets, hit := irreversibleSideEffect(cmd); hit {
+				return side, targets, nil
+			}
 			return SideEffectShellGeneric, extractPaths(cmd), nil
 		}
 		return SideEffectTestSuite, []string{"./..."}, nil
 	}
-	if reSecretOut.MatchString(cmd) {
-		return SideEffectUnknown, extractPaths(cmd), nil
-	}
-	if reDeploy.MatchString(cmd) {
-		return SideEffectDeploy, extractPaths(cmd), nil
-	}
-	if rePayment.MatchString(cmd) {
-		return SideEffectPayment, nil, nil
-	}
-	if reChmod.MatchString(cmd) {
-		return SideEffectPermission, extractPaths(cmd), nil
-	}
-	if reGitMut.MatchString(cmd) {
-		return SideEffectGitMutate, nil, nil
+	if side, targets, hit := irreversibleSideEffect(cmd); hit {
+		return side, targets, nil
 	}
 	if reCurl.MatchString(cmd) {
 		return SideEffectNetwork, nil, nil
@@ -340,10 +333,11 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 	}
 
 	// Closed payload keys only — unknown control fields are rejected (e.g. replace_all).
+	// filePath is a host-projected camelCase alias retained in RedactedPayload.
 	allowedEditPayloadKeys := map[string]struct{}{
 		"old_string": {}, "old_str": {},
 		"new_string": {}, "new_str": {}, "content": {}, "contents": {},
-		"file_path": {}, "path": {},
+		"file_path": {}, "path": {}, "filePath": {},
 		"replace_all": {},
 	}
 	if len(pa.RedactedPayload) > 0 && string(pa.RedactedPayload) != "{}" && string(pa.RedactedPayload) != "null" {
@@ -387,7 +381,7 @@ func editOperationDigest(pa adapter.ProposedAction) (string, error) {
 		// Path aliases must not diverge from ProposedAction.FilePath (only FilePath binds).
 		// Compare lexical spelling so build/ vs build cannot agree via path.Clean.
 		// Propagate stringFieldsAgree errors (conflicting/non-string aliases) like content fields.
-		if s, ok, err := stringFieldsAgree(m, "file_path", "path"); err != nil {
+		if s, ok, err := stringFieldsAgree(m, "file_path", "path", "filePath"); err != nil {
 			return "", err
 		} else if ok {
 			if lexicalEditPathIdentity(s) != lexicalEditPathIdentity(pa.FilePath) {
@@ -789,7 +783,9 @@ func isValidFindOLevel(f string) bool {
 	return true
 }
 
-// findFailClosedGlobals is true for malformed -O or exit-only -D help (no privileged delete).
+// findFailClosedGlobals is true for malformed -O or any -D debug global (no privileged delete).
+// Attached forms like -Dfoo are not skippable: GNU find rejects unknown debugopts / predicates
+// before delete, so they must not share delete identity with plain find PATH -delete.
 func findFailClosedGlobals(cmd string) bool {
 	if shellArgv0(cmd) != "find" {
 		return false
@@ -819,22 +815,9 @@ func findFailClosedGlobals(cmd string) bool {
 			i++
 			continue
 		}
-		if f == "-D" {
-			i++
-			if i < len(fields) {
-				if fields[i] == "help" {
-					return true // exit-only debug help
-				}
-				i++
-			}
-			continue
-		}
-		if strings.HasPrefix(f, "-D") && len(f) > 2 {
-			if f == "-Dhelp" {
-				return true
-			}
-			i++
-			continue
+		// Any -D form is fail-closed for privileged delete identity.
+		if f == "-D" || (strings.HasPrefix(f, "-D") && len(f) > 2) {
+			return true
 		}
 		if f == "--help" || f == "--version" {
 			return true
@@ -842,6 +825,28 @@ func findFailClosedGlobals(cmd string) bool {
 		break
 	}
 	return false
+}
+
+// irreversibleSideEffect reports high-impact side effects that re-eval routes away from
+// productivity one-shot ALLOW (deploy/payment/permission/secret/git-mut). Used before
+// suite→generic fallback so compound suite+deploy cannot hide as shell_generic.
+func irreversibleSideEffect(cmd string) (side string, targets []string, ok bool) {
+	if reSecretOut.MatchString(cmd) {
+		return SideEffectUnknown, extractPaths(cmd), true
+	}
+	if reDeploy.MatchString(cmd) {
+		return SideEffectDeploy, extractPaths(cmd), true
+	}
+	if rePayment.MatchString(cmd) {
+		return SideEffectPayment, nil, true
+	}
+	if reChmod.MatchString(cmd) {
+		return SideEffectPermission, extractPaths(cmd), true
+	}
+	if reGitMut.MatchString(cmd) {
+		return SideEffectGitMutate, nil, true
+	}
+	return "", nil, false
 }
 
 // rmHasExitOnlyOrUnknownOption is true when rm carries --help/--version or an

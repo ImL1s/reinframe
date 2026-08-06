@@ -22,11 +22,10 @@ func TestCacheEvalFakeCI(t *testing.T) {
 	if rep.StaleHitRate != 0 {
 		t.Fatal("stale hit rate")
 	}
-	// -1 = not_measured for invalid admission in this harness
-	if rep.InvalidAdmissionCount != -1 && rep.InvalidAdmissionCount != 0 {
-		t.Fatalf("invalid admission %d", rep.InvalidAdmissionCount)
+	if rep.InvalidAdmissionCount != 0 {
+		t.Fatalf("invalid admission must be proven 0, got %d", rep.InvalidAdmissionCount)
 	}
-	if len(rep.Rows) < 8 {
+	if len(rep.Rows) < 11 {
 		t.Fatalf("rows %d", len(rep.Rows))
 	}
 	if !rep.AllModesOK {
@@ -37,33 +36,44 @@ func TestCacheEvalFakeCI(t *testing.T) {
 		}
 		t.Fatal("all modes not ok")
 	}
-	foundExact, foundSF, foundMissM, foundMissE := false, false, false, false
+	found := map[evaluation.CacheEvalMode]bool{}
 	for _, r := range rep.Rows {
+		found[r.Mode] = true
 		switch r.Mode {
+		case evaluation.ModeStage0Only:
+			if r.ProviderCalls != 0 {
+				t.Fatalf("stage0 calls=%d", r.ProviderCalls)
+			}
 		case evaluation.ModeReinframeExactHit:
-			foundExact = true
 			if r.ProviderCalls != 1 {
 				t.Fatalf("exact hit calls=%d", r.ProviderCalls)
 			}
 		case evaluation.ModeSingleflightN:
-			foundSF = true
 			if r.ProviderCalls != 1 {
 				t.Fatalf("singleflight calls=%d", r.ProviderCalls)
 			}
-		case evaluation.ModeRequiredMissModel:
-			foundMissM = true
+		case evaluation.ModeRequiredMissModel, evaluation.ModeRequiredMissEvents, evaluation.ModeDynamicOnlyProvider:
 			if r.ProviderCalls != 2 {
-				t.Fatalf("model miss calls=%d", r.ProviderCalls)
+				t.Fatalf("%s calls=%d", r.Mode, r.ProviderCalls)
 			}
-		case evaluation.ModeRequiredMissEvents:
-			foundMissE = true
-			if r.ProviderCalls != 2 {
-				t.Fatalf("event miss calls=%d", r.ProviderCalls)
+		case evaluation.ModeProviderCacheCold:
+			if r.CacheHit {
+				t.Fatal("cold write must not be a hit")
+			}
+		case evaluation.ModeInvalidAdmission:
+			if !r.OK {
+				t.Fatal("invalid admission must prove zero admissions")
 			}
 		}
 	}
-	if !foundExact || !foundSF || !foundMissM || !foundMissE {
-		t.Fatal("missing required mode rows")
+	for _, m := range []evaluation.CacheEvalMode{
+		evaluation.ModeStage0Only, evaluation.ModeProviderCacheCold, evaluation.ModeDynamicOnlyProvider,
+		evaluation.ModeReinframeExactHit, evaluation.ModeSingleflightN,
+		evaluation.ModeRequiredMissModel, evaluation.ModeRequiredMissEvents, evaluation.ModeInvalidAdmission,
+	} {
+		if !found[m] {
+			t.Fatalf("missing mode %s", m)
+		}
 	}
 	if rep.StaleHitRate != 0 {
 		t.Fatalf("stale_hit_rate=%v", rep.StaleHitRate)

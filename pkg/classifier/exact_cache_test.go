@@ -244,6 +244,89 @@ func TestExactCache_SingleflightOneCall(t *testing.T) {
 	}
 }
 
+// Singleflight must attribute real provider tokens to exactly one result (the leader).
+// Waiters return zero-usage coalesced hits so cost ledgers do not double-count.
+func TestExactCache_SingleflightUsageAccounting(t *testing.T) {
+	t.Parallel()
+	cache, _ := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+		Enabled: true, MaxEntries: 16, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: true,
+	}, nil)
+	inner := &countingProvider{}
+	var started sync.WaitGroup
+	started.Add(1)
+	release := make(chan struct{})
+	slow := &blockingProvider{countingProvider: inner, started: &started, release: release}
+	p := &classifier.CachingClassifierProvider{Inner: slow, Cache: cache, Identity: testIdentity()}
+	req, err := classifier.NewProviderRequest(baseInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 8
+	results := make([]classifier.ProviderResult, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	// First goroutine starts the shared flight (leader); remaining join as waiters.
+	go func() {
+		defer wg.Done()
+		results[0], errs[0] = p.Assess(context.Background(), req)
+	}()
+	started.Wait()
+	for i := 1; i < n; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = p.Assess(context.Background(), req)
+		}()
+	}
+	// Brief yield so waiters attach to inflight before provider returns.
+	time.Sleep(30 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	for i, e := range errs {
+		if e != nil {
+			t.Fatalf("caller %d: %v", i, e)
+		}
+	}
+	if inner.n.Load() != 1 {
+		t.Fatalf("provider calls=%d", inner.n.Load())
+	}
+
+	var owners, waiters int
+	var sumIn int64
+	for i, r := range results {
+		sumIn += r.Usage.InputTokens
+		if r.Usage.InputTokens > 0 {
+			owners++
+			if r.Usage.InputTokens != 100 || r.Usage.OutputTokens != 5 {
+				t.Fatalf("owner %d unexpected usage %+v", i, r.Usage)
+			}
+			if r.Usage.CacheBackend == classifier.ExactCacheLayerReinframeExact {
+				t.Fatalf("owner must not be tagged reinframe_exact: %+v", r.Usage)
+			}
+			continue
+		}
+		waiters++
+		if !r.Usage.CacheHit || r.Usage.CacheBackend != classifier.ExactCacheLayerReinframeExact {
+			t.Fatalf("waiter %d want zero-usage exact layer got %+v", i, r.Usage)
+		}
+		if r.Usage.OutputTokens != 0 {
+			t.Fatalf("waiter %d invented output tokens", i)
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("exactly one owner of real usage, got %d (sumIn=%d)", owners, sumIn)
+	}
+	if waiters != n-1 {
+		t.Fatalf("waiters=%d want %d", waiters, n-1)
+	}
+	if sumIn != 100 {
+		t.Fatalf("token sum must equal one provider response, got %d", sumIn)
+	}
+}
+
 type blockingProvider struct {
 	countingProvider *countingProvider
 	started          *sync.WaitGroup
@@ -410,7 +493,7 @@ func TestExactCache_MissOnArgsAndExceptions(t *testing.T) {
 	}
 }
 
-func TestExactCache_HitRebindsPromptHash(t *testing.T) {
+func TestExactCache_SessionPartitionMiss(t *testing.T) {
 	t.Parallel()
 	cache, _ := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
 		Enabled: true, MaxEntries: 16, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: false,
@@ -429,7 +512,47 @@ func TestExactCache_HitRebindsPromptHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Different sessions may share exact key (session omitted) but PromptHash differs.
+	if _, err := p.Assess(context.Background(), r1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Assess(context.Background(), r2); err != nil {
+		t.Fatal(err)
+	}
+	if inner.n.Load() != 2 {
+		t.Fatalf("different sessions must not share exact cache: calls=%d", inner.n.Load())
+	}
+}
+
+func TestExactCache_HitRebindsPromptHash(t *testing.T) {
+	t.Parallel()
+	cache, _ := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+		Enabled: true, MaxEntries: 16, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: false,
+	}, nil)
+	inner := &countingProvider{}
+	p := &classifier.CachingClassifierProvider{Inner: inner, Cache: cache, Identity: testIdentity()}
+	// Same session; RetryBudget is excluded from exact key but participates in PromptPlan/PromptHash.
+	in1 := baseInput()
+	in1.SessionID = "sess-rebind"
+	in1.Challenge = &classifier.ChallengeContext{ChallengeID: "c1", State: "OPEN", RetryBudget: 2, ConcreteValue: "same"}
+	in2 := baseInput()
+	in2.SessionID = "sess-rebind"
+	in2.Challenge = &classifier.ChallengeContext{ChallengeID: "c1", State: "OPEN", RetryBudget: 1, ConcreteValue: "same"}
+	r1, err := classifier.NewProviderRequest(in1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := classifier.NewProviderRequest(in2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.Prompt.PromptHash == r2.Prompt.PromptHash {
+		t.Fatal("expected PromptHash to differ when retry budget changes")
+	}
+	k1, ok1 := classifier.BuildExactCacheKeyHash(testIdentity(), r1)
+	k2, ok2 := classifier.BuildExactCacheKeyHash(testIdentity(), r2)
+	if !ok1 || !ok2 || k1 != k2 {
+		t.Fatalf("exact key must ignore retry budget: ok=%v/%v k1=%s k2=%s", ok1, ok2, k1, k2)
+	}
 	if _, err := p.Assess(context.Background(), r1); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +561,7 @@ func TestExactCache_HitRebindsPromptHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	if inner.n.Load() != 1 {
-		t.Fatalf("expected exact hit across sessions: calls=%d", inner.n.Load())
+		t.Fatalf("expected exact hit within session: calls=%d", inner.n.Load())
 	}
 	if res2.Assessment.PromptHash != r2.Prompt.PromptHash {
 		t.Fatalf("hit must rebind PromptHash got %q want %q", res2.Assessment.PromptHash, r2.Prompt.PromptHash)
@@ -449,4 +572,116 @@ func TestExactCache_HitRebindsPromptHash(t *testing.T) {
 	if err := classifier.ValidateProviderResultForRequest(r2, res2); err != nil {
 		t.Fatalf("validate after hit: %v", err)
 	}
+}
+
+func TestExactCache_SingleflightLeaderCancelDoesNotCancelWaiters(t *testing.T) {
+	t.Parallel()
+	cache, _ := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+		Enabled: true, MaxEntries: 16, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: true,
+	}, nil)
+	inner := &countingProvider{sev: 33}
+	var started sync.WaitGroup
+	started.Add(1)
+	release := make(chan struct{})
+	slow := &blockingProvider{countingProvider: inner, started: &started, release: release}
+	p := &classifier.CachingClassifierProvider{Inner: slow, Cache: cache, Identity: testIdentity()}
+	req, err := classifier.NewProviderRequest(baseInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	leaderCtx, leaderCancel := context.WithCancel(context.Background())
+	waiterCtx := context.Background()
+
+	var leaderErr, waiterErr error
+	var waiterRes classifier.ProviderResult
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, leaderErr = p.Assess(leaderCtx, req)
+	}()
+	// Ensure leader started the shared flight before waiters attach.
+	started.Wait()
+	go func() {
+		defer wg.Done()
+		// Small yield so waiter joins inflight while provider still blocked.
+		time.Sleep(20 * time.Millisecond)
+		waiterRes, waiterErr = p.Assess(waiterCtx, req)
+	}()
+	time.Sleep(40 * time.Millisecond) // let waiter join
+	leaderCancel()
+	close(release)
+	wg.Wait()
+
+	if leaderErr == nil {
+		// Leader may still succeed if cancel raced after waitInflight select preferred done.
+		// Either cancel error or success is acceptable for the leader; waiters must succeed.
+	} else if !errors.Is(leaderErr, context.Canceled) {
+		t.Fatalf("leader unexpected err: %v", leaderErr)
+	}
+	if waiterErr != nil {
+		t.Fatalf("waiter must not be canceled by leader: %v", waiterErr)
+	}
+	if waiterRes.Assessment.Severity != 33 {
+		t.Fatalf("waiter severity=%d", waiterRes.Assessment.Severity)
+	}
+	if inner.n.Load() != 1 {
+		t.Fatalf("provider calls=%d", inner.n.Load())
+	}
+}
+
+func TestExactCache_Stage2ReResolvesOnHit(t *testing.T) {
+	t.Parallel()
+	// Cached Stage-1 assessment must not freeze Stage-2: same assessment, different exceptions.
+	cache, _ := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+		Enabled: true, MaxEntries: 16, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: false,
+	}, nil)
+	inner := &countingProvider{sev: 90} // above typical threshold 50 → BLOCK before exceptions
+	p := &classifier.CachingClassifierProvider{Inner: inner, Cache: cache, Identity: testIdentity()}
+	in := baseInput()
+	in.SessionID = "sess-s2"
+	req, err := classifier.NewProviderRequest(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pres, err := p.Assess(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Second call exact-hit — still one provider call.
+	pres2, err := p.Assess(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inner.n.Load() != 1 {
+		t.Fatalf("calls=%d", inner.n.Load())
+	}
+	if !pres2.Usage.CacheHit {
+		t.Fatal("expected exact hit")
+	}
+	// Stage 2 resolve without provider: threshold BLOCK, then UserException ALLOW.
+	block := resolveStage2ForTest(pres2.Assessment, 50, false)
+	if block != "BLOCK" {
+		t.Fatalf("want BLOCK got %s", block)
+	}
+	allow := resolveStage2ForTest(pres2.Assessment, 50, true)
+	if allow != "ALLOW" {
+		t.Fatalf("want ALLOW via exception got %s", allow)
+	}
+	// Cached assessment itself unchanged.
+	if pres.Assessment.Severity != pres2.Assessment.Severity {
+		t.Fatal("cached assessment mutated")
+	}
+}
+
+// resolveStage2ForTest mirrors shadow Stage-2 threshold + UserException without network.
+func resolveStage2ForTest(raw classifier.RawAssessment, threshold int, userException bool) string {
+	if raw.Severity >= threshold {
+		if userException {
+			return "ALLOW"
+		}
+		return "BLOCK"
+	}
+	return "ALLOW"
 }

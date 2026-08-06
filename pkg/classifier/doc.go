@@ -27,7 +27,12 @@
 //     through the dynamic last message — wrong for stable-prefix classify);
 //   - hosted platforms fail closed; CacheHit only from positive cache_read tokens.
 //
-// Non-claims for this package revision: Gemini/xAI native adapters, hosted
-// Anthropic equivalence (Bedrock/Vertex/Azure), exact-assessment memoization
-// (#138), voting/failover, measured cache savings (#141), or hard-gate enforcement.
+// #136 adds:
+//   - native Gemini generateContent adapter (gemini_generate_content);
+//   - implicit-cache-aware stable-prefix ordering; explicit cache objects deferred;
+//   - model-profile min-token eligibility without padding; CacheHit from transport only.
+//
+// Non-claims for this package revision: xAI native adapter, Gemini Interactions API,
+// Gemini explicit cache object lifecycle, hosted Anthropic equivalence, exact-assessment
+// memoization (#138), voting/failover, measured cache savings (#141), or hard-gate.
 package classifier

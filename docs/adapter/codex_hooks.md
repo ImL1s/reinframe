@@ -37,7 +37,7 @@ Install writes only `<project>/.codex/hooks.json` with Reinframe ownership marke
 | `SessionStart` | Optional bounded `additionalContext` |
 | `UserPromptSubmit` | Optional bounded `additionalContext` |
 | `PreToolUse` | ProposedAction + EvaluateHook → allow/deny + optional challenge context |
-| `PermissionRequest` | allow / deny / fall-through (empty decision) |
+| `PermissionRequest` | Official `hookSpecificOutput.decision.behavior` allow/deny (`message` on deny); fall-through = `{}` |
 | `PostToolUse` | No-op foundation |
 | `Stop` / `SessionEnd` | No-op foundation |
 

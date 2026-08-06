@@ -184,23 +184,39 @@ func (m *CodexHooksManager) Doctor() (CodexHooksDoctorResult, error) {
 		res.Messages = append(res.Messages, "no hooks object")
 		return res, nil
 	}
-	for _, event := range []string{CodexEventPreToolUse, CodexEventPermissionRequest} {
+	// Validate every installed event that Reinframe owns (all six foundation events).
+	requiredEvents := []string{
+		CodexEventSessionStart, CodexEventUserPromptSubmit, CodexEventPreToolUse,
+		CodexEventPermissionRequest, CodexEventPostToolUse, CodexEventStop,
+	}
+	missing := 0
+	for _, event := range requiredEvents {
 		arr, _ := hooks[event].([]any)
+		eventOwned := 0
+		eventValid := 0
 		for _, item := range arr {
 			mg, ok := item.(map[string]any)
 			if !ok || !isOwnedMatcherGroup(mg) {
 				continue
 			}
+			eventOwned++
 			res.OwnedHandlers++
 			if err := validateOwnedMatcherGroup(mg, m.BridgeCommand); err != nil {
 				res.Messages = append(res.Messages, event+": "+err.Error())
 				continue
 			}
+			eventValid++
 			res.ValidOwned++
 		}
+		if eventOwned == 0 || eventValid == 0 {
+			missing++
+			res.Messages = append(res.Messages, "missing or invalid owned handler for "+event)
+		}
 	}
-	if res.ValidOwned == 0 {
-		res.Messages = append(res.Messages, "no valid reinframe-owned PreToolUse/PermissionRequest handlers")
+	if res.ValidOwned == 0 || missing > 0 {
+		if res.ValidOwned == 0 {
+			res.Messages = append(res.Messages, "no valid reinframe-owned handlers")
+		}
 		return res, nil
 	}
 	if res.TrustStale {

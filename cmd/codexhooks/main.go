@@ -44,18 +44,17 @@ func runHook(r io.Reader, w io.Writer) {
 	if err != nil {
 		fail(err)
 	}
+	// Peek event name for fail-closed shape even when full parse fails.
+	rawEvent := ""
+	var peek map[string]any
+	if json.Unmarshal(raw, &peek) == nil {
+		if s, ok := peek["hook_event_name"].(string); ok {
+			rawEvent = s
+		}
+	}
 	in, err := adapter.ParseCodexHookStdin(raw)
 	if err != nil {
-		// Fail closed for control: deny PreToolUse when parse fails and event looks tool-like.
-		out, _ := adapter.EncodeCodexHookResponse(map[string]any{
-			"decision": "block",
-			"hookSpecificOutput": map[string]any{
-				"hookEventName":            "PreToolUse",
-				"permissionDecision":       "deny",
-				"permissionDecisionReason": "parse_fail_closed",
-			},
-			"systemMessage": "reinframe: hook input rejected",
-		})
+		out, _ := adapter.EncodeCodexHookResponse(adapter.CodexFailClosedResponse(rawEvent))
 		_, _ = w.Write(out)
 		os.Exit(0)
 	}
@@ -79,8 +78,16 @@ func runHook(r io.Reader, w io.Writer) {
 		}
 		_, _ = w.Write(out)
 	case adapter.CodexEventPermissionRequest:
-		// Default fall-through (empty decision) — host surfaces approval.
-		out, _ := adapter.EncodeCodexHookResponse(map[string]any{})
+		// Default fall-through (empty object) — host surfaces approval.
+		// Policy-driven allow/deny available via CodexPermissionResponseFromDecision.
+		if deny := os.Getenv("REINFRAME_CODEX_DENY_TOOLS"); deny != "" && in.ToolName == deny {
+			out, _ := adapter.EncodeCodexHookResponse(adapter.CodexPermissionResponseFromDecision(
+				adapter.HookDecision{Action: adapter.HookActionDeny, ReasonCode: "denied_tool"}, false))
+			_, _ = w.Write(out)
+			return
+		}
+		out, _ := adapter.EncodeCodexHookResponse(adapter.CodexPermissionResponseFromDecision(
+			adapter.HookDecision{Action: adapter.HookActionAllow}, true))
 		_, _ = w.Write(out)
 	case adapter.CodexEventSessionStart, adapter.CodexEventUserPromptSubmit:
 		ctx := "Reinframe Codex hooks foundation active (" + adapter.CodexHooksProfileV1 + "). Observe+gate foundation only; not live smoke."

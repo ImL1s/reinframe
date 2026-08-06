@@ -318,29 +318,71 @@ func CodexPreToolResponseFromDecision(in CodexHookInput, dec HookDecision, chall
 	return out
 }
 
-// CodexPermissionResponseFromDecision maps to PermissionRequest decision object.
-// Fall-through is represented as empty decision (no JSON decision field).
+// CodexPermissionResponseFromDecision maps to official PermissionRequest stdout.
+// Shape (docs 2026-08-06):
+//
+//	{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow|deny","message":"..."}}}
+//
+// Fall-through is an empty object (no decision) so the host surfaces the approval prompt.
 func CodexPermissionResponseFromDecision(dec HookDecision, fallThrough bool) map[string]any {
 	if fallThrough {
-		// No decision → host surfaces approval prompt.
 		return map[string]any{}
 	}
+	behavior := "deny"
+	msg := boundReason(dec.ReasonCode)
 	switch dec.Action {
 	case HookActionAllow:
-		return map[string]any{
-			"decision": map[string]any{"behavior": "allow"},
-		}
+		behavior = "allow"
+		msg = ""
 	case HookActionDeny, HookActionDefer:
+		behavior = "deny"
+		if msg == "" {
+			msg = "denied_by_policy"
+		}
+	default:
+		behavior = "deny"
+		msg = "unsupported_decision"
+	}
+	decision := map[string]any{"behavior": behavior}
+	if msg != "" && behavior == "deny" {
+		decision["message"] = msg // official field name is message, not reason
+	}
+	return map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName": CodexEventPermissionRequest,
+			"decision":      decision,
+		},
+	}
+}
+
+// CodexFailClosedResponse returns a safe no-op or deny for parse failures by event.
+// PreToolUse → deny tool; other events → empty object (do not forge PreToolUse deny).
+func CodexFailClosedResponse(rawEventName string) map[string]any {
+	switch rawEventName {
+	case CodexEventPreToolUse:
 		return map[string]any{
-			"decision": map[string]any{
-				"behavior": "deny",
-				"reason":   boundReason(dec.ReasonCode),
+			"decision": "block",
+			"hookSpecificOutput": map[string]any{
+				"hookEventName":            CodexEventPreToolUse,
+				"permissionDecision":       "deny",
+				"permissionDecisionReason": "parse_fail_closed",
+			},
+			"systemMessage": "reinframe: hook input rejected",
+		}
+	case CodexEventPermissionRequest:
+		// Fail closed on permission: deny approval request.
+		return map[string]any{
+			"hookSpecificOutput": map[string]any{
+				"hookEventName": CodexEventPermissionRequest,
+				"decision": map[string]any{
+					"behavior": "deny",
+					"message":  "parse_fail_closed",
+				},
 			},
 		}
 	default:
-		return map[string]any{
-			"decision": map[string]any{"behavior": "deny", "reason": "unsupported_decision"},
-		}
+		// Non-tool events: empty success (host fail-open for advisory hooks).
+		return map[string]any{}
 	}
 }
 

@@ -114,16 +114,46 @@ func TestCodexPreToolResponse_AllowDenyChallenge(t *testing.T) {
 func TestCodexPermissionResponse_AllowDenyFallThrough(t *testing.T) {
 	t.Parallel()
 	a := adapter.CodexPermissionResponseFromDecision(adapter.HookDecision{Action: adapter.HookActionAllow}, false)
-	if a["decision"].(map[string]any)["behavior"] != "allow" {
+	hso := a["hookSpecificOutput"].(map[string]any)
+	if hso["hookEventName"] != adapter.CodexEventPermissionRequest {
+		t.Fatalf("%v", a)
+	}
+	if hso["decision"].(map[string]any)["behavior"] != "allow" {
 		t.Fatalf("%v", a)
 	}
 	d := adapter.CodexPermissionResponseFromDecision(adapter.HookDecision{Action: adapter.HookActionDeny, ReasonCode: "x"}, false)
-	if d["decision"].(map[string]any)["behavior"] != "deny" {
+	hso2 := d["hookSpecificOutput"].(map[string]any)
+	dec := hso2["decision"].(map[string]any)
+	if dec["behavior"] != "deny" {
 		t.Fatalf("%v", d)
+	}
+	if dec["message"] != "x" {
+		t.Fatalf("deny must use message field, got %v", dec)
+	}
+	if _, hasReason := dec["reason"]; hasReason {
+		t.Fatal("official field is message, not reason")
 	}
 	ft := adapter.CodexPermissionResponseFromDecision(adapter.HookDecision{Action: adapter.HookActionAllow}, true)
 	if len(ft) != 0 {
 		t.Fatalf("fall-through must be empty decision: %v", ft)
+	}
+}
+
+func TestCodexFailClosedResponse_ByEvent(t *testing.T) {
+	t.Parallel()
+	pre := adapter.CodexFailClosedResponse(adapter.CodexEventPreToolUse)
+	if pre["decision"] != "block" {
+		t.Fatalf("%v", pre)
+	}
+	perm := adapter.CodexFailClosedResponse(adapter.CodexEventPermissionRequest)
+	hso := perm["hookSpecificOutput"].(map[string]any)
+	if hso["hookEventName"] != adapter.CodexEventPermissionRequest {
+		t.Fatalf("%v", perm)
+	}
+	// Non-tool: empty (do not forge PreToolUse deny)
+	other := adapter.CodexFailClosedResponse(adapter.CodexEventStop)
+	if len(other) != 0 {
+		t.Fatalf("%v", other)
 	}
 }
 

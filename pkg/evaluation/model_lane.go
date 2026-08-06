@@ -79,7 +79,9 @@ func RunModelLaneB(ctx context.Context, commit string) (ModelLaneReport, error) 
 		ChallengeID: rec.ChallengeID, SessionID: "sess-ml", Proposed: pa,
 		CorrelationID: "ml-1",
 		ReEval: &challenge.ReEvalContext{
+			// clear_block → high severity; UserException must flip Stage2 ALLOW.
 			UserException: true,
+			FixtureName:   "clear_block",
 			Provider:      classifier.FakeClassifierProvider{ProviderKind: "fake"},
 		},
 	})
@@ -178,10 +180,14 @@ func RunModelLaneB(ctx context.Context, commit string) (ModelLaneReport, error) 
 	}
 	rep.ExactCacheProviderCalls = int(cacheCalls.Load())
 	rep.ExactCacheHitOK = cacheCalls.Load() == 1 &&
+		!a1.Usage.CacheHit &&
+		a2.Usage.CacheHit &&
 		a2.Usage.CacheBackend == classifier.ExactCacheLayerReinframeExact &&
+		a2.Usage.InputTokens == 0 &&
 		a1.Assessment.Severity == a2.Assessment.Severity
-	// Stage2 not cached: equal assessment only; ResolvedDecision is never stored.
-	rep.Stage2InvariantOK = a1.Assessment.ReasonCode == a2.Assessment.ReasonCode
+	// Stage-1 assessment equality only; ResolvedDecision is never stored in exact cache.
+	rep.Stage2InvariantOK = a1.Assessment.ReasonCode == a2.Assessment.ReasonCode &&
+		a2.Usage.CacheBackend == classifier.ExactCacheLayerReinframeExact
 
 	// 4) Malformed assessment rejected.
 	msrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -244,6 +244,89 @@ func TestExactCache_SingleflightOneCall(t *testing.T) {
 	}
 }
 
+// Singleflight must attribute real provider tokens to exactly one result (the leader).
+// Waiters return zero-usage coalesced hits so cost ledgers do not double-count.
+func TestExactCache_SingleflightUsageAccounting(t *testing.T) {
+	t.Parallel()
+	cache, _ := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+		Enabled: true, MaxEntries: 16, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: true,
+	}, nil)
+	inner := &countingProvider{}
+	var started sync.WaitGroup
+	started.Add(1)
+	release := make(chan struct{})
+	slow := &blockingProvider{countingProvider: inner, started: &started, release: release}
+	p := &classifier.CachingClassifierProvider{Inner: slow, Cache: cache, Identity: testIdentity()}
+	req, err := classifier.NewProviderRequest(baseInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 8
+	results := make([]classifier.ProviderResult, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	// First goroutine starts the shared flight (leader); remaining join as waiters.
+	go func() {
+		defer wg.Done()
+		results[0], errs[0] = p.Assess(context.Background(), req)
+	}()
+	started.Wait()
+	for i := 1; i < n; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = p.Assess(context.Background(), req)
+		}()
+	}
+	// Brief yield so waiters attach to inflight before provider returns.
+	time.Sleep(30 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	for i, e := range errs {
+		if e != nil {
+			t.Fatalf("caller %d: %v", i, e)
+		}
+	}
+	if inner.n.Load() != 1 {
+		t.Fatalf("provider calls=%d", inner.n.Load())
+	}
+
+	var owners, waiters int
+	var sumIn int64
+	for i, r := range results {
+		sumIn += r.Usage.InputTokens
+		if r.Usage.InputTokens > 0 {
+			owners++
+			if r.Usage.InputTokens != 100 || r.Usage.OutputTokens != 5 {
+				t.Fatalf("owner %d unexpected usage %+v", i, r.Usage)
+			}
+			if r.Usage.CacheBackend == classifier.ExactCacheLayerReinframeExact {
+				t.Fatalf("owner must not be tagged reinframe_exact: %+v", r.Usage)
+			}
+			continue
+		}
+		waiters++
+		if !r.Usage.CacheHit || r.Usage.CacheBackend != classifier.ExactCacheLayerReinframeExact {
+			t.Fatalf("waiter %d want zero-usage exact layer got %+v", i, r.Usage)
+		}
+		if r.Usage.OutputTokens != 0 {
+			t.Fatalf("waiter %d invented output tokens", i)
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("exactly one owner of real usage, got %d (sumIn=%d)", owners, sumIn)
+	}
+	if waiters != n-1 {
+		t.Fatalf("waiters=%d want %d", waiters, n-1)
+	}
+	if sumIn != 100 {
+		t.Fatalf("token sum must equal one provider response, got %d", sumIn)
+	}
+}
+
 type blockingProvider struct {
 	countingProvider *countingProvider
 	started          *sync.WaitGroup

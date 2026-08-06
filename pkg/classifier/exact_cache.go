@@ -47,8 +47,9 @@ func (c ExactCacheConfig) Normalize() ExactCacheConfig {
 	if out.TTL <= 0 {
 		out.TTL = 10 * time.Minute
 	}
-	// Singleflight defaults on when enabled (zero value false only if explicitly disabled via separate flag;
-	// callers should set Singleflight true when enabling).
+	// Singleflight is not auto-flipped here: config-layer SingleflightEnabled() defaults
+	// true when exact cache is enabled. Raw ExactCacheConfig constructors must set
+	// Singleflight explicitly if coalescing is desired.
 	return out
 }
 
@@ -544,6 +545,10 @@ func (p *CachingClassifierProvider) assessCoalesced(ctx context.Context, req Pro
 // waitInflight waits for a shared flight. Caller cancel only abandons this waiter;
 // it does not cancel the shared provider call or other waiters.
 // asLeader receives the real provider usage; additional waiters get zero-usage coalesced results.
+//
+// Usage is best-effort: if the leader cancels before observing done, surviving waiters
+// still receive the assessment via coalesced (zero-token) results — paid tokens may be
+// unattributed rather than double-counted.
 func (p *CachingClassifierProvider) waitInflight(ctx context.Context, inf *exactInflight, asLeader bool, keyHash string, req ProviderRequest) (ProviderResult, error) {
 	select {
 	case <-ctx.Done():

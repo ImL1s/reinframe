@@ -683,8 +683,8 @@ func RunCacheEvalFakeCI(ctx context.Context, commit string) (CacheEvalReport, er
 			rep.StaleHitRate = float64(stale) / float64(missModes)
 		}
 	}
-	// InvalidAdmissionCount is set by ModeInvalidAdmission row (0 when failures are not admitted).
-	// If that mode is absent, leave as -1 not_measured; if present and OK, force 0.
+	// InvalidAdmissionCount is set by ModeInvalidAdmission (0 when no bad admissions).
+	// Zero value remains 0 if that mode is absent from Rows.
 	for _, row := range rep.Rows {
 		if row.Mode == ModeInvalidAdmission {
 			if row.OK {

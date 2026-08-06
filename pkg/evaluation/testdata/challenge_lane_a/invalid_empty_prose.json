@@ -1,0 +1,29 @@
+{
+  "schema_version": "reinframe.challenge_eval_case.v1",
+  "case_id": "la-invalid-empty",
+  "source": "synthetic",
+  "kind": "invalid_appeal",
+  "policy_class": "PRODUCTIVITY",
+  "block_class": "OVER_SOP",
+  "session_id": "sess-inv",
+  "proposed": {
+    "tool_name": "Bash",
+    "tool_class": "shell",
+    "command": "rm -rf build",
+    "workspace_revision": "ws-1",
+    "contract_revision": 1,
+    "action_id": "pa-inv"
+  },
+  "expect_appealability": "APPEALABLE",
+  "expect_open_state": "OPEN",
+  "justification": {
+    "concrete_value": "",
+    "prevented_failure_or_threat": "",
+    "estimated_cost": "",
+    "scope_limit": "",
+    "verification_plan": "",
+    "rollback_plan": ""
+  },
+  "expect_justify_ok": false,
+  "expect_justify_error": "missing"
+}

@@ -22,8 +22,10 @@
 // #135 adds:
 //   - native Anthropic Messages adapter (anthropic_messages) for direct Claude API;
 //   - versioned off / automatic / explicit_stable_prefix profiles with 5m|1h TTL;
-//   - cache_control on last stable system block only; hosted platforms fail closed;
-//   - CacheHit only from positive cache_read_input_tokens.
+//   - explicit: cache_control on last stable system block only (recommended);
+//   - automatic-*: no wire cache enablement (Anthropic automatic would cache
+//     through the dynamic last message — wrong for stable-prefix classify);
+//   - hosted platforms fail closed; CacheHit only from positive cache_read tokens.
 //
 // Non-claims for this package revision: Gemini/xAI native adapters, hosted
 // Anthropic equivalence (Bedrock/Vertex/Azure), exact-assessment memoization

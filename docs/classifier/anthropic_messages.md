@@ -13,13 +13,15 @@
 
 ## Capability profiles
 
-| Profile | CacheMode | Wire `cache_control` | TTL |
-|---------|-----------|----------------------|-----|
-| `anthropic-off-v1` | none | none | — |
-| `anthropic-automatic-5m-v1` | implicit_prefix | none (provider may still cache) | 5m (documented intent) |
-| `anthropic-automatic-1h-v1` | implicit_prefix | none | 1h (documented intent) |
-| `anthropic-explicit-prefix-5m-v1` | explicit_breakpoint | last **stable** system text block: `{"type":"ephemeral","ttl":"5m"}` | 5m |
-| `anthropic-explicit-prefix-1h-v1` | explicit_breakpoint | last stable system text: `ttl=1h` | 1h |
+| Profile | CacheMode | Wire content-block `cache_control` | Notes |
+|---------|-----------|--------------------------------------|-------|
+| `anthropic-off-v1` | none | none | No Anthropic cache enablement. |
+| `anthropic-automatic-5m-v1` | implicit_prefix | **none** (wire-identical to off for breakpoints) | **Not** Anthropic top-level automatic caching. Classifier single-shot calls should use **explicit** stable-prefix profiles; automatic-* reserves config identity / audit TTL metadata only and does not claim wire enablement. |
+| `anthropic-automatic-1h-v1` | implicit_prefix | **none** (same honesty as 5m) | Same as above with 1h audit TTL identity. |
+| `anthropic-explicit-prefix-5m-v1` | explicit_breakpoint | last **stable** system text: `{"type":"ephemeral","ttl":"5m"}` | **Recommended** production cache mode for this adapter. |
+| `anthropic-explicit-prefix-1h-v1` | explicit_breakpoint | last stable system text: `ttl=1h` | Same with 1h TTL. |
+
+**Why automatic has no wire fields:** Anthropic's documented automatic/top-level caching breakpoints through the **last message**, which for a classify request is the dynamic task/events suffix — the opposite of Reinframe's stable-prefix design. This adapter therefore **does not** send top-level automatic `cache_control`. Prefer `anthropic-explicit-prefix-*`.
 
 Dynamic task/action/events/challenge blocks never receive `cache_control`.
 

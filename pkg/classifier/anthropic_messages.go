@@ -431,7 +431,8 @@ func (p *AnthropicMessagesProvider) buildRequestJSON(req ProviderRequest, maxIn 
 		Tools: []anthTool{{
 			Name:        "reinframe_raw_assessment",
 			Description: "Emit exactly one closed RawAssessment object for Reinframe Stage-1.",
-			InputSchema: rawAssessmentJSONSchema(),
+			// Minimal tool schema for Anthropic wire; Reinframe enforces closed fields in ParseRawAssessmentStrict.
+			InputSchema: rawAssessmentJSONSchemaAnthropicTool(),
 		}},
 		ToolChoice: &anthToolChoice{Type: "tool", Name: "reinframe_raw_assessment"},
 	}
@@ -579,6 +580,23 @@ type anthToolChoice struct {
 	Name string `json:"name,omitempty"`
 }
 
+// rawAssessmentJSONSchemaAnthropicTool is a minimal tool input_schema for Messages API.
+// Avoids const/min/max/maxItems constraints that some Anthropic tool paths reject;
+// ParseRawAssessmentStrict still enforces the closed Reinframe contract.
+func rawAssessmentJSONSchemaAnthropicTool() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"schema_version", "severity", "reason_code", "evidence_event_ids"},
+		"properties": map[string]any{
+			"schema_version":     map[string]any{"type": "string"},
+			"severity":           map[string]any{"type": "integer"},
+			"reason_code":        map[string]any{"type": "string"},
+			"evidence_event_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		},
+	}
+}
+
 func parseAnthropicMessagesEnvelope(body []byte) (content string, usage ProviderUsage, reqID string, err error) {
 	if err := rejectDuplicateKeys(body); err != nil {
 		return "", ProviderUsage{}, "", fmt.Errorf("envelope duplicate keys")
@@ -601,29 +619,18 @@ func parseAnthropicMessagesEnvelope(body []byte) (content string, usage Provider
 	if err := json.Unmarshal(body, &env); err != nil {
 		return "", ProviderUsage{}, "", fmt.Errorf("envelope json")
 	}
-	// Prefer forced tool_use input as the closed assessment payload.
+	// Fail-closed: forced tool_choice requires exactly one matching tool_use.
+	// Do not accept free-form text as an assessment payload.
 	var toolInputs []json.RawMessage
-	var texts []string
 	for _, c := range env.Content {
-		switch c.Type {
-		case "tool_use":
-			if c.Name == "reinframe_raw_assessment" && len(c.Input) > 0 {
-				toolInputs = append(toolInputs, c.Input)
-			}
-		case "text":
-			if strings.TrimSpace(c.Text) != "" {
-				texts = append(texts, c.Text)
-			}
+		if c.Type == "tool_use" && c.Name == "reinframe_raw_assessment" && len(c.Input) > 0 {
+			toolInputs = append(toolInputs, c.Input)
 		}
 	}
-	switch {
-	case len(toolInputs) == 1:
-		content = string(toolInputs[0])
-	case len(toolInputs) == 0 && len(texts) == 1:
-		content = texts[0]
-	default:
-		return "", ProviderUsage{}, "", fmt.Errorf("expected exactly one structured assessment payload")
+	if len(toolInputs) != 1 {
+		return "", ProviderUsage{}, "", fmt.Errorf("expected exactly one reinframe_raw_assessment tool_use")
 	}
+	content = string(toolInputs[0])
 	reqID = env.ID
 	if env.Usage != nil {
 		if env.Usage.InputTokens < 0 || env.Usage.OutputTokens < 0 ||

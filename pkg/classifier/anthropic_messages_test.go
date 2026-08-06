@@ -152,6 +152,14 @@ func TestAnthropicMessages_AutomaticVsExplicitFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	off, err := classifier.NewAnthropicMessages(classifier.AnthropicMessagesConfig{
+		Model: "m", BaseURL: "http://127.0.0.1:1", Path: "/v1/messages", AllowRemote: true,
+		CapabilitiesProfile: classifier.CapabilitiesProfileAnthropicOffV1,
+		LookupEnv:           func(string) (string, bool) { return "k", true }, APIKeyRef: "${K}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	expl, err := classifier.NewAnthropicMessages(classifier.AnthropicMessagesConfig{
 		Model: "m", BaseURL: "http://127.0.0.1:1", Path: "/v1/messages", AllowRemote: true,
 		CapabilitiesProfile: classifier.CapabilitiesProfileAnthropicExplicitPrefix5mV1,
@@ -164,12 +172,23 @@ func TestAnthropicMessages_AutomaticVsExplicitFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bOff, _, err := off.BuildRequestJSONForTest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	bExpl, _, err := expl.BuildRequestJSONForTest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Honesty: automatic does not enable Anthropic wire caching (same as off for cache_control).
 	if strings.Contains(string(bAuto), "cache_control") {
 		t.Fatal("automatic profile must omit cache_control on wire")
+	}
+	if strings.Contains(string(bOff), "cache_control") {
+		t.Fatal("off profile must omit cache_control")
+	}
+	if strings.Contains(string(bAuto), "cache_control") != strings.Contains(string(bOff), "cache_control") {
+		t.Fatal("automatic and off must both omit content-block cache_control")
 	}
 	if !strings.Contains(string(bExpl), `"cache_control"`) {
 		t.Fatal("explicit profile must include cache_control")
@@ -179,6 +198,22 @@ func TestAnthropicMessages_AutomaticVsExplicitFixtures(t *testing.T) {
 	}
 	if auto.CacheTTL() != "5m" || expl.CacheTTL() != "5m" {
 		t.Fatalf("ttl auto=%s expl=%s", auto.CacheTTL(), expl.CacheTTL())
+	}
+	// Minimal tool schema (no const/min/max) on wire.
+	var wire map[string]any
+	if err := json.Unmarshal(bExpl, &wire); err != nil {
+		t.Fatal(err)
+	}
+	tools, _ := wire["tools"].([]any)
+	tool, _ := tools[0].(map[string]any)
+	schema, _ := tool["input_schema"].(map[string]any)
+	props, _ := schema["properties"].(map[string]any)
+	sev, _ := props["severity"].(map[string]any)
+	if _, ok := sev["minimum"]; ok {
+		t.Fatal("anthropic tool schema must not send minimum/maximum constraints")
+	}
+	if _, ok := sev["const"]; ok {
+		t.Fatal("anthropic tool schema must not send const")
 	}
 }
 

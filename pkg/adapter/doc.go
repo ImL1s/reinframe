@@ -13,6 +13,9 @@
 // CapAdviceDelivery is missing (observe-only sessions).
 //
 // Capability flags such as CapAdviceDelivery may land in pkg/protocol (#65).
+//
+// Codex hooks control foundation: codex_hooks.go / codex_hooks_install.go (#163).
+// Profile reinframe.codex_hooks.2026-08-06.v1 — foundation only; live smoke is #164.
 // Until then, advisory delivery accepts an explicit SupportsAdviceDelivery option
 // so observe-only degradation can be tested without protocol edits.
 //

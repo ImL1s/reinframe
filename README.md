@@ -25,8 +25,10 @@ Shipped:
   #140 Lane A/B offline · #141 fake-CI cache eval (MORE-DATA)
   Codex JSONL offline/tail observation (observe-only L0)
 
+Shipped host foundations:
+  #163 Codex project-local hooks control (foundation; live #164)
+
 Ready (repository-executable foundations):
-  #163 Codex project-local hooks control
   #165 Grok Build native hooks
   #166 Grok Build ACP stdio bridge
 
@@ -60,7 +62,7 @@ Evaluation:
 | Supervisor Orchestrator (#70/#71) | ✅ Complete (composition root + vertical-slice tests) |
 | TaskSubmitted intake mappers (#84) | ✅ Fixture/host mappers (no protocol host type names) |
 | Codex EventSource offline + near-live tail (#95/#107/#118) | ✅ Observe-only L0; collision-safe source identity |
-| Codex project-local hooks control (#163) | 🔲 Open — Ready; **not implemented yet** |
+| Codex project-local hooks control (#163) | ✅ Foundation — project-local hooks.json install/doctor + PreTool/Permission mapping; **live proof #164** |
 | Grok Build native hooks (#165) | 🔲 Open — Ready; **not implemented yet** |
 | Grok Build ACP stdio bridge (#166) | 🔲 Open — Ready; **not implemented yet** |
 | Live Codex hooks proof (#164) | 🔲 Open — blocked until #163 + interactive Codex |

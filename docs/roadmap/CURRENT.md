@@ -21,11 +21,16 @@
 | Codex EventSource | **#95/#107/#118** | JSONL offline/tail **observe-only** (L0); hooks not shipped |
 | Claude PreTool bridge | **#96/#106/#117** | Experimental API + project-local install; **not** live smoke |
 
+## Implemented host foundations
+
+| Track | Issues/PRs | Honesty boundary |
+|-------|------------|------------------|
+| Codex project-local hooks | **#163** | Foundation only; live proof **#164**; not Level 2 / not explicit ACK |
+
 ## Ready (repository-executable host foundations)
 
 | Issue | Notes |
 |-------|-------|
-| **#163** | Codex project-local hooks control foundation |
 | **#165** | Grok Build native hooks foundation |
 | **#166** | Grok Build ACP stdio bridge |
 

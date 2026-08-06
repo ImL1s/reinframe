@@ -12,7 +12,10 @@ const (
 
 // Capability profile names (versioned, trusted config only).
 const (
-	CapabilitiesProfileGenericNoneV1 = "generic-none-v1"
+	CapabilitiesProfileGenericNoneV1          = "generic-none-v1"
+	CapabilitiesProfileOpenAIOffV1            = "openai-off-v1"
+	CapabilitiesProfileOpenAIImplicitV1       = "openai-implicit-v1"
+	CapabilitiesProfileOpenAIExplicitPrefixV1 = "openai-explicit-prefix-v1"
 )
 
 // ProviderCapabilities is the closed capability contract for a provider profile.
@@ -35,6 +38,33 @@ func LookupCapabilitiesProfile(name string) (ProviderCapabilities, error) {
 			CacheMode:              CacheModeNone,
 			CacheKey:               false,
 			CacheUsageTelemetry:    false,
+			StatefulContinuation:   false,
+			MaxInputBytes:          DefaultMaxInputBytes,
+		}, nil
+	case CapabilitiesProfileOpenAIOffV1:
+		return ProviderCapabilities{
+			NativeStructuredOutput: true,
+			CacheMode:              CacheModeNone,
+			CacheKey:               false,
+			CacheUsageTelemetry:    true,
+			StatefulContinuation:   false,
+			MaxInputBytes:          DefaultMaxInputBytes,
+		}, nil
+	case CapabilitiesProfileOpenAIImplicitV1:
+		return ProviderCapabilities{
+			NativeStructuredOutput: true,
+			CacheMode:              CacheModeImplicitPrefix,
+			CacheKey:               false,
+			CacheUsageTelemetry:    true,
+			StatefulContinuation:   false,
+			MaxInputBytes:          DefaultMaxInputBytes,
+		}, nil
+	case CapabilitiesProfileOpenAIExplicitPrefixV1:
+		return ProviderCapabilities{
+			NativeStructuredOutput: true,
+			CacheMode:              CacheModeExplicitBreakpoint,
+			CacheKey:               true,
+			CacheUsageTelemetry:    true,
 			StatefulContinuation:   false,
 			MaxInputBytes:          DefaultMaxInputBytes,
 		}, nil

@@ -60,9 +60,9 @@ type Config struct {
 // ClassifierProviderConfig selects the optional real classifier provider (#132).
 // kind empty or "none" disables network providers (default).
 type ClassifierProviderConfig struct {
-	// Kind: ""|"none"|"openai_compatible".
+	// Kind: ""|"none"|"openai_compatible"|"openai_responses".
 	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
-	// Model identifier (required when kind is openai_compatible).
+	// Model identifier (required when kind is a network provider).
 	Model string `json:"model,omitempty" yaml:"model,omitempty"`
 	// BaseURL for OpenAI-compatible endpoint (origin only).
 	BaseURL string `json:"base_url,omitempty" yaml:"base_url,omitempty"`
@@ -87,6 +87,8 @@ func (cp ClassifierProviderConfig) NormalizeKind() string {
 		return "none"
 	case "openai_compatible":
 		return "openai_compatible"
+	case "openai_responses":
+		return "openai_responses"
 	default:
 		return k
 	}
@@ -306,7 +308,7 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 			return fmt.Errorf("classifier_provider: disabled kind requires empty fields")
 		}
 		return nil
-	case "openai_compatible":
+	case "openai_compatible", "openai_responses":
 		// ok
 	default:
 		return fmt.Errorf("classifier_provider.kind is not supported")
@@ -370,9 +372,18 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 		return fmt.Errorf("classifier_provider.max_output_bytes out of range")
 	}
 	switch strings.TrimSpace(cp.CapabilitiesProfile) {
-	case "", "generic-none-v1":
+	case "", "generic-none-v1",
+		"openai-off-v1", "openai-implicit-v1", "openai-explicit-prefix-v1":
+		// closed capability profiles (#132/#134)
 	default:
 		return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
+	}
+	// Explicit OpenAI cache profiles are invalid on generic openai_compatible.
+	if kind == "openai_compatible" {
+		switch strings.TrimSpace(cp.CapabilitiesProfile) {
+		case "openai-implicit-v1", "openai-explicit-prefix-v1":
+			return fmt.Errorf("classifier_provider: openai cache profiles require kind openai_responses")
+		}
 	}
 	return nil
 }

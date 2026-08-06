@@ -260,11 +260,13 @@ func (c *ExactAssessmentCache) removeLocked(key string) {
 }
 
 func validateCachedAssessment(v CachedAssessment) error {
+	if v.SchemaVersion != "" && v.SchemaVersion != SchemaCachedAssessment {
+		return fmt.Errorf("bad cached assessment schema")
+	}
 	if v.Assessment.SchemaVersion != SchemaRawAssessment {
 		return fmt.Errorf("bad assessment schema")
 	}
 	if v.Assessment.ParseStatus != ParseStatusOK && v.Assessment.ParseStatus != "" {
-		// Require OK when set; empty treated as ok for fakes that omit it after success path.
 		return fmt.Errorf("parse status not ok")
 	}
 	if v.ProviderMeta.ParseStatus == ParseStatusError || v.ProviderMeta.ParseStatus == ParseStatusInvalid {
@@ -344,31 +346,42 @@ func BuildExactCacheKeyHash(id ExactCacheIdentity, req ProviderRequest) (string,
 
 	var actionFP string
 	if req.Input.ProposedAction != nil {
-		// Semantic fingerprint: tool + command/path/workspace — not session ActionID.
+		// Semantic fingerprint for Stage-1-visible action fields (not session ActionID).
 		pa := req.Input.ProposedAction
-		actionFP = shortHash(fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%v",
+		args := append([]string(nil), pa.Arguments...)
+		sort.Strings(args)
+		scope := append([]string(nil), pa.TargetScope...)
+		sort.Strings(scope)
+		actionFP = shortHash(fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%v|%s|%s|%s",
 			pa.SchemaVersion, pa.ToolName, pa.ToolClass, pa.Command, pa.FilePath,
-			pa.WorkspaceRevision, pa.ContractRevision, pa.Truncated))
+			pa.WorkspaceRevision, pa.ContractRevision, pa.Truncated,
+			strings.Join(args, ","), strings.Join(scope, ","), shortHash(string(pa.RedactedPayload))))
 	}
 	var ch any
 	if req.Input.Challenge != nil {
 		c := req.Input.Challenge
-		// Justification fields hashed; IDs included. Retry budget excluded from key so
-		// unchanged retry may hit without budget restoration by the cache itself.
+		// Full Stage-1-visible challenge identity. RetryBudget excluded so unchanged
+		// retries may hit; cache never restores/consumes budget.
 		ch = map[string]any{
 			"id": c.ChallengeID, "state": c.State, "block_class": c.BlockClass,
-			"reason": c.ReasonCode, "claims": append([]string(nil), c.Claims...),
-			"evidence":  append([]string(nil), c.EvidenceEventIDs...),
-			"concrete":  shortHash(c.ConcreteValue),
-			"prevented": shortHash(c.PreventedFailureOrThreat),
-			"cost":      shortHash(c.EstimatedCost),
-			"alts":      shortHash(c.AlternativesConsidered),
-			"scope":     shortHash(c.ScopeLimit),
-			"verify":    shortHash(c.VerificationPlan),
-			"rollback":  shortHash(c.RollbackPlan),
-			"action_fp": c.ActionFingerprint,
+			"reason": c.ReasonCode, "appealability": c.Appealability,
+			"required_claims": append([]string(nil), c.RequiredClaims...),
+			"claims":          append([]string(nil), c.Claims...),
+			"evidence":        append([]string(nil), c.EvidenceEventIDs...),
+			"expires_seq":     c.ExpiresAtSequence,
+			"original_action": c.OriginalActionID,
+			"concrete":        shortHash(c.ConcreteValue),
+			"prevented":       shortHash(c.PreventedFailureOrThreat),
+			"cost":            shortHash(c.EstimatedCost),
+			"alts":            shortHash(c.AlternativesConsidered),
+			"scope":           shortHash(c.ScopeLimit),
+			"verify":          shortHash(c.VerificationPlan),
+			"rollback":        shortHash(c.RollbackPlan),
+			"action_fp":       c.ActionFingerprint,
 		}
 	}
+	acc := append([]string(nil), req.Input.TaskAnchor.Acceptance...)
+	sort.Strings(acc)
 
 	payload := map[string]any{
 		"schema":             SchemaExactCacheKey,
@@ -385,6 +398,7 @@ func BuildExactCacheKeyHash(id ExactCacheIdentity, req ProviderRequest) (string,
 		"policy_class":       req.Input.PolicyClass,
 		"task_id":            req.Input.TaskAnchor.TaskID,
 		"task_obj_hash":      shortHash(req.Input.TaskAnchor.Objective),
+		"task_acceptance":    acc,
 		"contract_rev":       req.Input.ContractRevision,
 		"evidence_rev":       req.Input.EvidenceRevision,
 		"window":             req.Input.Window,
@@ -392,9 +406,12 @@ func BuildExactCacheKeyHash(id ExactCacheIdentity, req ProviderRequest) (string,
 		"related":            canonEvents(req.Input.RelatedEvents),
 		"action_fp":          actionFP,
 		"challenge":          ch,
-		// SessionID intentionally omitted: exact assessment is content-addressed;
-		// egress/tenant isolation uses EgressProfile. Session-scoped partitions can
-		// be layered by setting EgressProfile per session if required.
+		// Model-visible exception flags (in dynamic prompt suffix).
+		"user_exception": req.Input.UserException,
+		"repo_exception": req.Input.RepoPolicyException,
+		"flaky_invest":   req.Input.FlakyInvestigation,
+		// SessionID intentionally omitted: content-addressed; use EgressProfile for partitions.
+		// RetryBudget intentionally omitted (Stage-2 budget authority, not Stage-1 identity).
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -446,27 +463,7 @@ func (p *CachingClassifierProvider) Assess(ctx context.Context, req ProviderRequ
 	}
 
 	if hit, ok := p.Cache.Get(keyHash); ok {
-		// Exact hit: zero provider tokens for this call; do not rewrite historical source usage.
-		return ProviderResult{
-			SchemaVersion: SchemaProviderResult,
-			Assessment:    hit.Assessment,
-			Usage: ProviderUsage{
-				UsagePresent: true,
-				// Explicit zeros: this invocation did not call the provider.
-				CacheHit:     true,
-				CacheBackend: ExactCacheLayerReinframeExact,
-				CacheKeyHash: keyHash,
-			},
-			Meta: ProviderMeta{
-				Provider:            p.Identity.ProviderKind,
-				ModelID:             p.Identity.ModelID,
-				ModelVersion:        p.Identity.ModelVersion,
-				CapabilitiesProfile: p.Identity.CapabilitiesProfile,
-				ProviderRequestID:   hit.SourceAuditID,
-				ParseStatus:         ParseStatusOK,
-				FallbackReason:      ExactCacheLayerReinframeExact,
-			},
-		}, nil
+		return p.hitResult(hit, keyHash, req), nil
 	}
 
 	if !p.Cache.cfg.Singleflight {
@@ -494,7 +491,7 @@ func (p *CachingClassifierProvider) assessCoalesced(ctx context.Context, req Pro
 			c.touchLocked(keyHash)
 			val := hit.val
 			c.mu.Unlock()
-			return p.hitResult(val, keyHash), nil
+			return p.hitResult(val, keyHash, req), nil
 		}
 		c.removeLocked(keyHash)
 		c.stats.Evictions++
@@ -507,29 +504,42 @@ func (p *CachingClassifierProvider) assessCoalesced(ctx context.Context, req Pro
 		case <-ctx.Done():
 			return ProviderResult{}, ctx.Err()
 		case <-inf.done:
-			return inf.res, inf.err
+			if inf.err != nil {
+				return ProviderResult{}, inf.err
+			}
+			// Waiters did not own the provider call — zero usage + exact layer (no token double-count).
+			return p.coalescedWaiterResult(inf.res, keyHash, req), nil
 		}
 	}
 	inf := &exactInflight{done: make(chan struct{})}
 	c.inflight[keyHash] = inf
 	c.mu.Unlock()
 
+	defer func() {
+		c.mu.Lock()
+		delete(c.inflight, keyHash)
+		close(inf.done)
+		c.mu.Unlock()
+	}()
+
 	res, err := p.Inner.Assess(ctx, req)
 	if err == nil {
 		p.tryAdmit(keyHash, res)
 	}
-	inf.res, inf.err = res, err
-	c.mu.Lock()
-	delete(c.inflight, keyHash)
-	close(inf.done)
-	c.mu.Unlock()
+	// Store a deep copy for waiters.
+	inf.res, inf.err = copyProviderResult(res), err
 	return res, err
 }
 
-func (p *CachingClassifierProvider) hitResult(hit CachedAssessment, keyHash string) ProviderResult {
+func (p *CachingClassifierProvider) hitResult(hit CachedAssessment, keyHash string, req ProviderRequest) ProviderResult {
+	a := copyRawAssessment(hit.Assessment)
+	// Rebind host-owned fields to the current request (session/retry may change PromptHash).
+	a.PromptHash = req.Prompt.PromptHash
+	a.RulesetID = req.Input.RulesetID
+	a.RulesetHash = req.Input.RulesetHash
 	return ProviderResult{
 		SchemaVersion: SchemaProviderResult,
-		Assessment:    hit.Assessment,
+		Assessment:    a,
 		Usage: ProviderUsage{
 			UsagePresent: true,
 			CacheHit:     true,
@@ -543,9 +553,48 @@ func (p *CachingClassifierProvider) hitResult(hit CachedAssessment, keyHash stri
 			CapabilitiesProfile: p.Identity.CapabilitiesProfile,
 			ProviderRequestID:   hit.SourceAuditID,
 			ParseStatus:         ParseStatusOK,
-			FallbackReason:      ExactCacheLayerReinframeExact,
+			// Do not set FallbackReason — success path; layer is Usage.CacheBackend.
 		},
 	}
+}
+
+func (p *CachingClassifierProvider) coalescedWaiterResult(leader ProviderResult, keyHash string, req ProviderRequest) ProviderResult {
+	a := copyRawAssessment(leader.Assessment)
+	a.PromptHash = req.Prompt.PromptHash
+	a.RulesetID = req.Input.RulesetID
+	a.RulesetHash = req.Input.RulesetHash
+	return ProviderResult{
+		SchemaVersion: SchemaProviderResult,
+		Assessment:    a,
+		Usage: ProviderUsage{
+			UsagePresent: true,
+			CacheHit:     true,
+			CacheBackend: ExactCacheLayerReinframeExact,
+			CacheKeyHash: keyHash,
+		},
+		Meta: ProviderMeta{
+			Provider:            p.Identity.ProviderKind,
+			ModelID:             p.Identity.ModelID,
+			ModelVersion:        p.Identity.ModelVersion,
+			CapabilitiesProfile: p.Identity.CapabilitiesProfile,
+			ProviderRequestID:   leader.Meta.ProviderRequestID,
+			ParseStatus:         ParseStatusOK,
+		},
+	}
+}
+
+func copyRawAssessment(a RawAssessment) RawAssessment {
+	out := a
+	if a.EvidenceEventIDs != nil {
+		out.EvidenceEventIDs = append([]string(nil), a.EvidenceEventIDs...)
+	}
+	return out
+}
+
+func copyProviderResult(r ProviderResult) ProviderResult {
+	out := r
+	out.Assessment = copyRawAssessment(r.Assessment)
+	return out
 }
 
 func (p *CachingClassifierProvider) tryAdmit(keyHash string, res ProviderResult) {
@@ -561,25 +610,24 @@ func (p *CachingClassifierProvider) tryAdmit(keyHash string, res ProviderResult)
 		p.Cache.mu.Unlock()
 		return
 	}
-	if res.Meta.ErrorClass != "" {
+	if res.Meta.ErrorClass != "" || res.Meta.FallbackReason != "" {
 		p.Cache.mu.Lock()
 		p.Cache.stats.Rejections++
 		p.Cache.mu.Unlock()
 		return
 	}
-	// Never admit provider-layer fail-open markers or exact-hit echoes.
-	if res.Meta.FallbackReason != "" && res.Meta.FallbackReason != ExactCacheLayerReinframeExact {
-		p.Cache.mu.Lock()
-		p.Cache.stats.Rejections++
-		p.Cache.mu.Unlock()
+	// Never re-admit an exact-hit echo (already layer-tagged).
+	if res.Usage.CacheBackend == ExactCacheLayerReinframeExact {
 		return
 	}
 	now := p.now()
+	meta := res.Meta
+	meta.FallbackReason = "" // never persist failure-class markers
 	_ = p.Cache.Admit(keyHash, CachedAssessment{
 		SchemaVersion:   SchemaCachedAssessment,
-		Assessment:      res.Assessment,
+		Assessment:      copyRawAssessment(res.Assessment),
 		SourceAuditID:   res.Meta.ProviderRequestID,
-		ProviderMeta:    res.Meta,
+		ProviderMeta:    meta,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(p.Cache.cfg.TTL),
 		CacheKeyVersion: SchemaExactCacheKey,

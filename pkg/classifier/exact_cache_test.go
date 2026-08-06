@@ -238,8 +238,9 @@ func TestExactCache_SingleflightOneCall(t *testing.T) {
 		t.Fatalf("singleflight calls=%d", inner.n.Load())
 	}
 	st := cache.Stats()
-	if st.Coalesced < 1 {
-		t.Fatalf("expected coalesced waiters stats=%+v", st)
+	// Under load, followers may join inflight (Coalesced) or hit after admit (Hits).
+	if st.Coalesced+st.Hits < 1 {
+		t.Fatalf("expected coalesced or post-admit hits stats=%+v", st)
 	}
 }
 
@@ -337,5 +338,79 @@ func TestExactCache_DisabledNoOp(t *testing.T) {
 	_, _ = p.Assess(context.Background(), req)
 	if inner.n.Load() != 2 {
 		t.Fatalf("disabled must always call: %d", inner.n.Load())
+	}
+}
+
+func TestExactCache_MissOnArgsAndExceptions(t *testing.T) {
+	t.Parallel()
+	cache, _ := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+		Enabled: true, MaxEntries: 16, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: false,
+	}, nil)
+	inner := &countingProvider{}
+	p := &classifier.CachingClassifierProvider{Inner: inner, Cache: cache, Identity: testIdentity()}
+	in1 := baseInput()
+	in1.ProposedAction = &adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, ToolName: "Bash", Command: "go test",
+		Arguments: []string{"-v"},
+	}
+	in2 := baseInput()
+	in2.ProposedAction = &adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, ToolName: "Bash", Command: "go test",
+		Arguments: []string{"-race"},
+	}
+	r1, _ := classifier.NewProviderRequest(in1)
+	r2, _ := classifier.NewProviderRequest(in2)
+	_, _ = p.Assess(context.Background(), r1)
+	_, _ = p.Assess(context.Background(), r2)
+	if inner.n.Load() != 2 {
+		t.Fatalf("args change must miss: %d", inner.n.Load())
+	}
+	in3 := baseInput()
+	in3.UserException = true
+	r3, _ := classifier.NewProviderRequest(in3)
+	_, _ = p.Assess(context.Background(), r3)
+	if inner.n.Load() != 3 {
+		t.Fatalf("exception flag must miss: %d", inner.n.Load())
+	}
+}
+
+func TestExactCache_HitRebindsPromptHash(t *testing.T) {
+	t.Parallel()
+	cache, _ := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+		Enabled: true, MaxEntries: 16, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: false,
+	}, nil)
+	inner := &countingProvider{}
+	p := &classifier.CachingClassifierProvider{Inner: inner, Cache: cache, Identity: testIdentity()}
+	in1 := baseInput()
+	in1.SessionID = "sess-a"
+	in2 := baseInput()
+	in2.SessionID = "sess-b"
+	r1, err := classifier.NewProviderRequest(in1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := classifier.NewProviderRequest(in2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Different sessions may share exact key (session omitted) but PromptHash differs.
+	if _, err := p.Assess(context.Background(), r1); err != nil {
+		t.Fatal(err)
+	}
+	res2, err := p.Assess(context.Background(), r2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inner.n.Load() != 1 {
+		t.Fatalf("expected exact hit across sessions: calls=%d", inner.n.Load())
+	}
+	if res2.Assessment.PromptHash != r2.Prompt.PromptHash {
+		t.Fatalf("hit must rebind PromptHash got %q want %q", res2.Assessment.PromptHash, r2.Prompt.PromptHash)
+	}
+	if res2.Meta.FallbackReason != "" {
+		t.Fatal("hit must not set FallbackReason")
+	}
+	if err := classifier.ValidateProviderResultForRequest(r2, res2); err != nil {
+		t.Fatalf("validate after hit: %v", err)
 	}
 }

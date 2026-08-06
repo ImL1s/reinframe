@@ -347,15 +347,41 @@ func validateClassifierCache(cc ClassifierCacheConfig) error {
 	return nil
 }
 
-// ExactCacheToClassifier maps YAML config into classifier.ExactCacheConfig.
-// Kept as plain fields here to avoid import cycles; callers convert durations.
+// ExactEnabled reports whether exact cache is on.
 func (cc ClassifierCacheConfig) ExactEnabled() bool { return cc.Exact.Enabled }
 
+// SingleflightEnabled defaults true when exact is enabled.
 func (cc ClassifierCacheConfig) SingleflightEnabled() bool {
 	if cc.Singleflight == nil {
-		return cc.Exact.Enabled // default on when exact enabled
+		return cc.Exact.Enabled
 	}
 	return *cc.Singleflight
+}
+
+// ExactCacheBounds returns normalized bounds for classifier.ExactCacheConfig construction.
+// ttl is 0 when disabled. Import cycle: callers map into classifier.ExactCacheConfig.
+func (cc ClassifierCacheConfig) ExactCacheBounds() (enabled bool, maxEntries, maxBytes int, ttl time.Duration, singleflight bool, err error) {
+	if !cc.Exact.Enabled {
+		return false, 0, 0, 0, false, nil
+	}
+	maxEntries = cc.Exact.MaxEntries
+	if maxEntries <= 0 {
+		maxEntries = 1024
+	}
+	maxBytes = cc.Exact.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = 16 << 20
+	}
+	ttlStr := strings.TrimSpace(cc.Exact.TTL)
+	if ttlStr == "" {
+		ttl = 10 * time.Minute
+	} else {
+		ttl, err = time.ParseDuration(ttlStr)
+		if err != nil {
+			return false, 0, 0, 0, false, fmt.Errorf("classifier_cache.exact.ttl: %w", err)
+		}
+	}
+	return true, maxEntries, maxBytes, ttl, cc.SingleflightEnabled(), nil
 }
 
 func validateClassifierProvider(cp ClassifierProviderConfig) error {

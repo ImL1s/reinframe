@@ -13,9 +13,13 @@ Does **not** cache `ResolvedDecision`. Stage 2 (thresholds, exceptions, challeng
 
 Version: `reinframe.exact_assessment_cache_key.v1`
 
-Includes provider kind/model/profile/egress, parser schema, prompt/stable/input hashes, ruleset, policy class, task, contract/evidence revisions, window meta, event ID+content hashes, proposed-action semantic fingerprint, challenge justification hashes.
+Includes provider kind/model/profile/egress, parser schema, **stable-prefix hash** (not full prompt/input hashes — those embed SessionID/retry_budget), ruleset, policy class, task ID/objective/acceptance, contract/evidence revisions, window meta, event ID+content hashes, proposed-action semantic fingerprint (tool/command/path/args/payload hash), model-visible exception flags, challenge justification identity **except** retry budget.
 
-**Non-cacheable:** `SECURITY` policy class, legacy fixture mode, missing ruleset hash when ID set, missing plan hashes.
+On hit, host rebinds `Assessment.PromptHash` / ruleset fields to the current request so `ValidateProviderResultForRequest` stays consistent across session/retry-budget changes.
+
+**Non-cacheable:** `SECURITY` policy class, legacy fixture mode, missing ruleset hash when ID set, missing stable-prefix hash.
+
+**Wiring:** `NewClassifierProviderFromConfigWithExactCache` or `WrapWithExactCache`.
 
 ## Admission
 

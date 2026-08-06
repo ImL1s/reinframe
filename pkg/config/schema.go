@@ -50,11 +50,30 @@ type Config struct {
 	// Empty/disabled means shadow/tests use FakeClassifierProvider only (no network).
 	ClassifierProvider ClassifierProviderConfig `json:"classifier_provider,omitempty" yaml:"classifier_provider,omitempty"`
 
+	// ClassifierCache configures process-local exact RawAssessment cache (#138).
+	// Default disabled. Does not cache Stage-2 ResolvedDecision.
+	ClassifierCache ClassifierCacheConfig `json:"classifier_cache,omitempty" yaml:"classifier_cache,omitempty"`
+
 	// Secrets maps logical names to env placeholders only — never raw values.
 	Secrets SecretsConfig `json:"secrets" yaml:"secrets"`
 
 	// Workspace configures managed worktree isolation (ADR 004).
 	Workspace WorkspaceConfig `json:"workspace" yaml:"workspace"`
+}
+
+// ClassifierCacheConfig is the process-local exact assessment cache (#138).
+type ClassifierCacheConfig struct {
+	Exact ExactCacheYAML `json:"exact,omitempty" yaml:"exact,omitempty"`
+	// Singleflight coalesces concurrent identical keys (default true when exact.enabled).
+	Singleflight *bool `json:"singleflight,omitempty" yaml:"singleflight,omitempty"`
+}
+
+// ExactCacheYAML is the YAML surface for exact cache bounds.
+type ExactCacheYAML struct {
+	Enabled    bool   `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	MaxEntries int    `json:"max_entries,omitempty" yaml:"max_entries,omitempty"`
+	MaxBytes   int    `json:"max_bytes,omitempty" yaml:"max_bytes,omitempty"`
+	TTL        string `json:"ttl,omitempty" yaml:"ttl,omitempty"` // Go duration, e.g. "10m"
 }
 
 // ClassifierProviderConfig selects the optional real classifier provider (#132).
@@ -292,12 +311,51 @@ func (c Config) Validate() error {
 	if err := validateClassifierProvider(c.ClassifierProvider); err != nil {
 		return err
 	}
+	if err := validateClassifierCache(c.ClassifierCache); err != nil {
+		return err
+	}
 	for name, ref := range c.Secrets.Refs {
 		if err := validateEnvPlaceholder(fmt.Sprintf("secrets.refs[%s]", name), ref); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func validateClassifierCache(cc ClassifierCacheConfig) error {
+	ex := cc.Exact
+	if !ex.Enabled {
+		if ex.MaxEntries != 0 || ex.MaxBytes != 0 || strings.TrimSpace(ex.TTL) != "" {
+			return fmt.Errorf("classifier_cache.exact: disabled requires empty bounds")
+		}
+		return nil
+	}
+	if ex.MaxEntries < 1 || ex.MaxEntries > 1_000_000 {
+		return fmt.Errorf("classifier_cache.exact.max_entries out of range")
+	}
+	if ex.MaxBytes < 1024 || ex.MaxBytes > 256<<20 {
+		return fmt.Errorf("classifier_cache.exact.max_bytes out of range")
+	}
+	ttl := strings.TrimSpace(ex.TTL)
+	if ttl == "" {
+		return fmt.Errorf("classifier_cache.exact.ttl is required when enabled")
+	}
+	d, err := time.ParseDuration(ttl)
+	if err != nil || d < time.Second || d > 24*time.Hour {
+		return fmt.Errorf("classifier_cache.exact.ttl out of range")
+	}
+	return nil
+}
+
+// ExactCacheToClassifier maps YAML config into classifier.ExactCacheConfig.
+// Kept as plain fields here to avoid import cycles; callers convert durations.
+func (cc ClassifierCacheConfig) ExactEnabled() bool { return cc.Exact.Enabled }
+
+func (cc ClassifierCacheConfig) SingleflightEnabled() bool {
+	if cc.Singleflight == nil {
+		return cc.Exact.Enabled // default on when exact enabled
+	}
+	return *cc.Singleflight
 }
 
 func validateClassifierProvider(cp ClassifierProviderConfig) error {

@@ -34,11 +34,28 @@ func fakeACPServer(t *testing.T, clientWrites io.Reader, clientReads io.Writer) 
 		case "session/new":
 			writeRPC(clientReads, idInt, map[string]any{"sessionId": "sess-1"})
 		case "session/prompt":
+			// Assert official prompt ContentBlock[] shape.
+			params, _ := req["params"].(map[string]any)
+			if params != nil {
+				pr, ok := params["prompt"].([]any)
+				if !ok || len(pr) == 0 {
+					writeRPCErr(clientReads, idInt, "prompt must be ContentBlock[]")
+					continue
+				}
+				block, _ := pr[0].(map[string]any)
+				if block["type"] != "text" {
+					writeRPCErr(clientReads, idInt, "prompt block type must be text")
+					continue
+				}
+			}
 			writeRPC(clientReads, idInt, map[string]any{"ok": true})
-			// notification (no id)
+			// Official nested session/update notification
 			writeNotif(clientReads, "session/update", map[string]any{
-				"sessionUpdate": "agent_message_chunk",
-				"status":        "ok",
+				"sessionId": "sess-1",
+				"update": map[string]any{
+					"sessionUpdate": "agent_message_chunk",
+					"status":        "ok",
+				},
 			})
 		default:
 			writeRPCErr(clientReads, idInt, "unknown method")

@@ -259,10 +259,13 @@ func (c *GrokACPClient) SessionPrompt(ctx context.Context, sessionID, prompt str
 		return fmt.Errorf("grok acp: sessionId and prompt required")
 	}
 	// Bound prompt (no secrets from auth files).
+	// Official ACP: prompt is ContentBlock[] e.g. [{type:"text", text:"..."}].
 	prompt = boundRunes(prompt, MaxGrokContextRunes)
 	params := map[string]any{
 		"sessionId": sessionID,
-		"prompt":    prompt,
+		"prompt": []any{
+			map[string]any{"type": "text", "text": prompt},
+		},
 	}
 	if interventionID != "" {
 		params["interventionId"] = interventionID
@@ -425,7 +428,12 @@ func (c *GrokACPClient) readLoop() {
 }
 
 // MapSessionUpdateToSummary produces a bounded redacted event summary (no private CoT).
+// Accepts either flat params or official nested {"update":{"sessionUpdate":...}}.
 func MapSessionUpdateToSummary(update map[string]any) (kind string, summary string) {
+	// Normalize nested ACP shape: params.update.sessionUpdate
+	if nested, ok := update["update"].(map[string]any); ok {
+		update = nested
+	}
 	kind, _ = update["sessionUpdate"].(string)
 	if kind == "" {
 		kind, _ = update["type"].(string)
@@ -433,7 +441,10 @@ func MapSessionUpdateToSummary(update map[string]any) (kind string, summary stri
 	if kind == "" {
 		kind = "unknown"
 	}
-	// Prefer tool name / status over free text
+	// Prefer tool name / status over free text; never store thought chunks fully.
+	if kind == "agent_thought_chunk" {
+		return kind, "thought_omitted"
+	}
 	if tn, ok := update["toolName"].(string); ok {
 		summary = "tool=" + tn
 	} else if s, ok := update["status"].(string); ok {

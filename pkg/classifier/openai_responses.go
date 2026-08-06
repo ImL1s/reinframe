@@ -84,8 +84,15 @@ func NewOpenAIResponses(cfg OpenAIResponsesConfig) (*OpenAIResponsesProvider, er
 	if err != nil {
 		return nil, err
 	}
-	if pathCanon == "/v1/chat/completions" || cfg.Path == "" {
+	if cfg.Path == "" {
 		pathCanon = DefaultOpenAIResponsesPath
+	}
+	if pathCanon == "/v1/chat/completions" {
+		return nil, newProviderError("config", "openai_responses path must not be chat completions", false, 0)
+	}
+	if pathCanon != DefaultOpenAIResponsesPath {
+		// Allow only the pinned Responses path for this kind.
+		return nil, newProviderError("config", "openai_responses path must be /v1/responses", false, 0)
 	}
 	if cfg.APIKeyRef != "" && !isEnvPlaceholder(cfg.APIKeyRef) {
 		return nil, newProviderError("config", "api_key_ref must be ${ENV} placeholder", false, 0)
@@ -321,14 +328,39 @@ func (p *OpenAIResponsesProvider) Assess(ctx context.Context, req ProviderReques
 }
 
 func (p *OpenAIResponsesProvider) buildRequestJSON(req ProviderRequest, maxIn int) ([]byte, string, error) {
-	// Stable prefix messages first, then dynamic — order is cache identity.
-	msgs := make([]oaiRespInputItem, 0, len(req.Prompt.Messages()))
-	for _, b := range req.Prompt.Messages() {
+	// Stable prefix first, then dynamic — order is cache identity (#134).
+	// Explicit profile: structured content parts + breakpoint after last stable block;
+	// dynamic messages never carry breakpoints (explicit-only mode).
+	explicit := p.caps.CacheMode == CacheModeExplicitBreakpoint && p.caps.CacheKey
+	nStable := len(req.Prompt.StablePrefix)
+	msgs := make([]oaiRespInputItem, 0, len(req.Prompt.StablePrefix)+len(req.Prompt.DynamicSuffix))
+	for i, b := range req.Prompt.StablePrefix {
+		role := b.Role
+		if role == "" {
+			role = PromptRoleSystem
+		}
+		if explicit {
+			parts := []oaiRespContentPart{{Type: "input_text", Text: b.Text}}
+			if i == nStable-1 {
+				// Documented explicit breakpoint at end of stable prefix.
+				parts = append(parts, oaiRespContentPart{Type: "prompt_cache_breakpoint"})
+			}
+			msgs = append(msgs, oaiRespInputItem{Role: role, Content: parts})
+		} else {
+			msgs = append(msgs, oaiRespInputItem{Role: role, Content: b.Text})
+		}
+	}
+	for _, b := range req.Prompt.DynamicSuffix {
 		role := b.Role
 		if role == "" {
 			role = PromptRoleUser
 		}
-		msgs = append(msgs, oaiRespInputItem{Role: role, Content: b.Text})
+		// Dynamic suffix: plain text content, never a cache breakpoint.
+		if explicit {
+			msgs = append(msgs, oaiRespInputItem{Role: role, Content: []oaiRespContentPart{{Type: "input_text", Text: b.Text}}})
+		} else {
+			msgs = append(msgs, oaiRespInputItem{Role: role, Content: b.Text})
+		}
 	}
 	body := oaiResponsesRequest{
 		Model:       p.cfg.Model,
@@ -345,12 +377,13 @@ func (p *OpenAIResponsesProvider) buildRequestJSON(req ProviderRequest, maxIn in
 		},
 	}
 	var cacheKeyHash string
-	if p.caps.CacheMode == CacheModeExplicitBreakpoint && p.caps.CacheKey {
+	if explicit {
 		// Secret-free bounded key: provider+profile+stable+egress (not full prompt).
 		cacheKeyHash = p.promptCacheKeyHash(req)
 		body.PromptCacheKey = cacheKeyHash
+		// Explicit-only: do not create an implicit changing-suffix breakpoint.
+		body.PromptCacheOptions = &oaiPromptCacheOptions{Mode: "explicit"}
 	}
-	// Explicit-only: do not set additional breakpoints on dynamic content.
 	_ = maxIn
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -451,16 +484,27 @@ func (p *OpenAIResponsesProvider) doOnce(ctx context.Context, payload []byte, ma
 }
 
 type oaiResponsesRequest struct {
-	Model          string             `json:"model"`
-	Input          []oaiRespInputItem `json:"input"`
-	Temperature    float64            `json:"temperature"`
-	Text           *oaiResponsesText  `json:"text,omitempty"`
-	PromptCacheKey string             `json:"prompt_cache_key,omitempty"`
+	Model              string                 `json:"model"`
+	Input              []oaiRespInputItem     `json:"input"`
+	Temperature        float64                `json:"temperature"`
+	Text               *oaiResponsesText      `json:"text,omitempty"`
+	PromptCacheKey     string                 `json:"prompt_cache_key,omitempty"`
+	PromptCacheOptions *oaiPromptCacheOptions `json:"prompt_cache_options,omitempty"`
 }
 
+// oaiRespInputItem Content is string (off/implicit) or []oaiRespContentPart (explicit).
 type oaiRespInputItem struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+type oaiRespContentPart struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+type oaiPromptCacheOptions struct {
+	Mode string `json:"mode"`
 }
 
 type oaiResponsesText struct {
@@ -506,7 +550,8 @@ func parseResponsesEnvelope(body []byte) (content string, usage ProviderUsage, r
 			InputTokens        int64 `json:"input_tokens"`
 			OutputTokens       int64 `json:"output_tokens"`
 			InputTokensDetails *struct {
-				CachedTokens int64 `json:"cached_tokens"`
+				CachedTokens     int64 `json:"cached_tokens"`
+				CacheWriteTokens int64 `json:"cache_write_tokens"`
 			} `json:"input_tokens_details"`
 			OutputTokensDetails *struct {
 				ReasoningTokens int64 `json:"reasoning_tokens"`
@@ -553,6 +598,10 @@ func parseResponsesEnvelope(body []byte) (content string, usage ProviderUsage, r
 			if usage.InputTokens >= usage.CacheReadTokens {
 				usage.UncachedInputTokens = usage.InputTokens - usage.CacheReadTokens
 			}
+			if env.Usage.InputTokensDetails.CacheWriteTokens < 0 {
+				return "", ProviderUsage{}, "", fmt.Errorf("invalid negative cache write tokens")
+			}
+			usage.CacheWriteTokens = env.Usage.InputTokensDetails.CacheWriteTokens
 		}
 		if env.Usage.OutputTokensDetails != nil {
 			if env.Usage.OutputTokensDetails.ReasoningTokens < 0 {

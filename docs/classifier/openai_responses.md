@@ -11,11 +11,13 @@
 
 ## Capability profiles
 
-| Profile | CacheMode | prompt_cache_key | structured output |
-|---------|-----------|------------------|-------------------|
-| `openai-off-v1` | none | omitted | yes |
-| `openai-implicit-v1` | implicit_prefix | omitted | yes |
-| `openai-explicit-prefix-v1` | explicit_breakpoint | stable hash of model+profile+StablePrefixHash+ruleset+egress | yes |
+| Profile | CacheMode | Wire cache controls | structured output |
+|---------|-----------|---------------------|-------------------|
+| `openai-off-v1` | none | none | yes |
+| `openai-implicit-v1` | implicit_prefix | none (provider may still cache) | yes |
+| `openai-explicit-prefix-v1` | explicit_breakpoint | `prompt_cache_key` + `prompt_cache_options.mode=explicit` + `prompt_cache_breakpoint` on last **stable** input part; dynamic parts never get breakpoints | yes |
+
+Optional `egress_profile` (secret-free) is mixed into the `prompt_cache_key` material for multi-egress isolation.
 
 Unknown profiles fail closed.
 

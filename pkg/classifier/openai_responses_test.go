@@ -81,13 +81,43 @@ func TestOpenAIResponses_StructuredOutputAndCacheKey(t *testing.T) {
 	if res.Meta.ProviderRequestID != "resp_1" {
 		t.Fatal(res.Meta.ProviderRequestID)
 	}
-	// Wire request must include closed schema + prompt_cache_key for explicit profile.
+	// Wire request must include closed schema + explicit cache controls.
 	var wire map[string]any
 	if err := json.Unmarshal(gotBody, &wire); err != nil {
 		t.Fatal(err)
 	}
 	if wire["prompt_cache_key"] == nil || wire["prompt_cache_key"] == "" {
 		t.Fatal("explicit profile must send prompt_cache_key")
+	}
+	opts, _ := wire["prompt_cache_options"].(map[string]any)
+	if opts["mode"] != "explicit" {
+		t.Fatalf("prompt_cache_options=%v", opts)
+	}
+	// Last stable input part must include prompt_cache_breakpoint; dynamic must not.
+	input, _ := wire["input"].([]any)
+	if len(input) < 2 {
+		t.Fatalf("input len=%d", len(input))
+	}
+	foundBP := false
+	for i, raw := range input {
+		msg, _ := raw.(map[string]any)
+		content := msg["content"]
+		arr, ok := content.([]any)
+		if !ok {
+			continue
+		}
+		for _, p := range arr {
+			part, _ := p.(map[string]any)
+			if part["type"] == "prompt_cache_breakpoint" {
+				if i >= len(req.Prompt.StablePrefix) {
+					t.Fatal("breakpoint must not appear on dynamic messages")
+				}
+				foundBP = true
+			}
+		}
+	}
+	if !foundBP {
+		t.Fatal("explicit profile must place prompt_cache_breakpoint after stable prefix")
 	}
 	text, _ := wire["text"].(map[string]any)
 	format, _ := text["format"].(map[string]any)

@@ -72,6 +72,7 @@ func NewClassifierProviderFromConfig(cfg config.ClassifierProviderConfig, opts P
 			MaxInputBytes:       cfg.MaxInputBytes,
 			MaxOutputBytes:      cfg.MaxOutputBytes,
 			CapabilitiesProfile: cfg.CapabilitiesProfile,
+			EgressProfile:       cfg.EgressProfile,
 			HTTPClient:          opts.HTTPClient,
 			LookupEnv:           opts.LookupEnv,
 			Sleep:               opts.Sleep,

@@ -194,11 +194,12 @@ type ProviderRequestOptions struct {
 	Production bool
 }
 
-// NewProviderRequest builds a ProviderRequest with default prompt plan and bounds.
+// NewProviderRequest builds a production ProviderRequest with default prompt plan and bounds.
 // Merges upstream WindowMeta provenance with local N/B bounding (never clears
 // upstream Truncated merely because the already-reduced slice fits).
+// Production=true enforces closed PolicyClass and model-safe ProposedAction.
 func NewProviderRequest(in ClassifierInput) (ProviderRequest, error) {
-	return NewProviderRequestWithOptions(in, ProviderRequestOptions{})
+	return NewProviderRequestWithOptions(in, ProviderRequestOptions{Production: true})
 }
 
 // NewFixtureProviderRequest builds a request for #105 Fake/fixture compatibility.
@@ -213,6 +214,10 @@ func NewProviderRequestWithOptions(in ClassifierInput, opts ProviderRequestOptio
 		in.SchemaVersion = SchemaClassifierInput
 	}
 	in.AllowLegacyFixtureIDs = opts.AllowLegacyFixtureIDs
+	// Production defaults empty policy to PRODUCTIVITY (closed allowlist only).
+	if opts.Production && in.PolicyClass == "" {
+		in.PolicyClass = PolicyClassProductivity
+	}
 
 	// Production model path: reject legacy ID-only trajectory.
 	if !opts.AllowLegacyFixtureIDs {

@@ -24,8 +24,9 @@ type ShadowInput struct {
 	Stage0Block  bool
 	Stage0Reason string
 	// RecentEventIDs bounded list for evidence validation (legacy #105 fixtures).
+	// Only used when AllowLegacyFixtureIDs is explicitly true.
 	RecentEventIDs []string
-	// RelatedEventIDs legacy related evidence ids.
+	// RelatedEventIDs legacy related evidence ids (explicit fixture mode only).
 	RelatedEventIDs []string
 	// Task / trajectory packet (wire §5 recent-N). When digests are set they
 	// bind prompt identity and evidence allowlist; IDs are synced by NewProviderRequest.
@@ -44,6 +45,9 @@ type ShadowInput struct {
 	FlakyInvestigation  bool
 	// FixtureName for fake provider routing in tests.
 	FixtureName string
+	// AllowLegacyFixtureIDs must be set explicitly for #105 ID-only packets.
+	// Never inferred from missing digests.
+	AllowLegacyFixtureIDs bool
 }
 
 // ResolvedDecision is the closed Stage 2 outcome.
@@ -159,12 +163,13 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 			cin.FixtureName = in.RulesetID[8:]
 			cin.RulesetID = "test"
 		}
-		// FixtureName / legacy-ID shadow cases use explicit fixture request builder.
+		// Fixture mode is explicit only (AllowLegacyFixtureIDs) — never inferred from empty digests.
 		var preq ProviderRequest
 		var perr error
-		if cin.FixtureName != "" || needsFixtureRequest(cin) {
+		if in.AllowLegacyFixtureIDs {
 			preq, perr = NewFixtureProviderRequest(cin)
 		} else {
+			// Production path: default PolicyClass if empty (shadow still has a class after defaulting).
 			preq, perr = NewProviderRequest(cin)
 		}
 		var err error
@@ -353,12 +358,6 @@ func (r ShadowResult) AuditJSON() ([]byte, error) {
 		rec["provider_call"] = *r.ProviderCall
 	}
 	return json.Marshal(rec)
-}
-
-// needsFixtureRequest is true when only legacy ID lists are present (no digests).
-func needsFixtureRequest(in ClassifierInput) bool {
-	return (len(in.RecentEventIDs) > 0 || len(in.RelatedEventIDs) > 0) &&
-		len(in.RecentEvents) == 0 && len(in.RelatedEvents) == 0
 }
 
 // String for debug logs.

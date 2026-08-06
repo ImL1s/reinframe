@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
 	"github.com/ImL1s/reinframe/pkg/challenge"
@@ -62,6 +63,7 @@ func TestValidateProviderResultForRequest_UngroundedEvidence(t *testing.T) {
 	t.Parallel()
 	req, err := classifier.NewProviderRequest(classifier.ClassifierInput{
 		SchemaVersion: classifier.SchemaClassifierInput,
+		TaskAnchor:    classifier.TaskAnchor{TaskID: "t", Objective: "o"},
 		RecentEvents: []classifier.EventDigest{
 			{EventID: "e1", Sequence: 1, EventType: "tool_call", Summary: "x"},
 		},
@@ -104,6 +106,7 @@ func TestWindowMeta_UpstreamTruncationPreserved(t *testing.T) {
 	}
 	req, err := classifier.NewProviderRequest(classifier.ClassifierInput{
 		SchemaVersion: classifier.SchemaClassifierInput,
+		TaskAnchor:    classifier.TaskAnchor{TaskID: "t", Objective: "o"},
 		RecentEvents:  events,
 		Window: classifier.WindowMeta{
 			EventCount: 40, ByteCount: 1, Truncated: true, OverflowMarker: classifier.OverflowEvents,
@@ -157,19 +160,36 @@ func TestNewProviderRequest_RejectsLegacyIDsWithoutDigests(t *testing.T) {
 
 func TestOpenAICompatible_RejectsLegacyIDsBeforeHTTP(t *testing.T) {
 	t.Parallel()
-	// Manual request with legacy IDs only must fail ValidateProviderRequest / Assess.
-	req := classifier.ProviderRequest{
+	// Real OpenAI path hard-rejects fixture flag and legacy IDs before HTTP.
+	p, err := classifier.NewOpenAICompatible(classifier.OpenAICompatibleConfig{
+		Model: "m", BaseURL: "http://127.0.0.1:9", Path: "/v1/chat/completions", AllowRemote: true,
+		MaxRetries: 0, Timeout: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fixture flag must not open legacy path on real provider.
+	req, _ := classifier.NewFixtureProviderRequest(classifier.ClassifierInput{
+		SchemaVersion:  classifier.SchemaClassifierInput,
+		RecentEventIDs: []string{"e1"},
+	})
+	_, e := p.Assess(context.Background(), req)
+	if e == nil {
+		t.Fatal("openai_compatible must reject AllowLegacyFixtureIDs before HTTP")
+	}
+	// Manual opaque IDs without digests (flag false).
+	req2 := classifier.ProviderRequest{
 		SchemaVersion: classifier.SchemaProviderRequest,
 		Input: classifier.ClassifierInput{
 			SchemaVersion:  classifier.SchemaClassifierInput,
+			PolicyClass:    classifier.PolicyClassProductivity,
 			RecentEventIDs: []string{"e1"},
 		},
 		Prompt: classifier.PromptPlan{SchemaVersion: classifier.SchemaPromptPlan},
 	}
-	// Build minimal valid prompt binding would fail; ensure legacy check fires.
-	if err := classifier.ValidateProviderRequest(req); err == nil {
-		// May also fail prompt bind — either way non-nil.
-		t.Fatal("legacy-only must be rejected")
+	_, e2 := p.Assess(context.Background(), req2)
+	if e2 == nil {
+		t.Fatal("openai_compatible must reject legacy IDs without digests before HTTP")
 	}
 }
 
@@ -178,6 +198,7 @@ func TestFake_EvidenceSelectionDeterministic(t *testing.T) {
 	f := classifier.FakeClassifierProvider{}
 	req, err := classifier.NewProviderRequest(classifier.ClassifierInput{
 		SchemaVersion: classifier.SchemaClassifierInput,
+		TaskAnchor:    classifier.TaskAnchor{TaskID: "t", Objective: "o"},
 		FixtureName:   "clear_block",
 		RecentEvents: []classifier.EventDigest{
 			{EventID: "z9", Sequence: 2, EventType: "tool_call", Summary: "z"},

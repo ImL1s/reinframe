@@ -49,6 +49,8 @@ type ReEvalContext struct {
 	PolicyClass string
 	// Observer receives best-effort provider-call audits (nil-safe).
 	Observer classifier.ProviderCallObserver
+	// AllowLegacyFixtureIDs is an explicit #105 Fake-only option. Never inferred.
+	AllowLegacyFixtureIDs bool
 }
 
 // ReEvalResult is the re-evaluation outcome for a retry.
@@ -162,9 +164,9 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			ch.ScopeLimit = just.ScopeLimit
 			ch.VerificationPlan = just.VerificationPlan
 			ch.RollbackPlan = just.RollbackPlan
+			// Justification evidence IDs stay on ChallengeContext only (not RelatedEventIDs).
+			// Do not inject legacy ID-only trajectory — that silently forced fixture mode.
 			ch.EvidenceEventIDs = append([]string(nil), just.SupportingEvidenceEventIDs...)
-			// Include justification evidence ids as related evidence (not auto-allow).
-			cin.RelatedEventIDs = append([]string(nil), just.SupportingEvidenceEventIDs...)
 		}
 		cin.Challenge = ch
 		if in.ContractRevision > 0 {
@@ -172,9 +174,8 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 		}
 		var preq classifier.ProviderRequest
 		var perr error
-		// Explicit fixture mode for Fake/#105 (FixtureName or legacy IDs without digests).
-		if cin.FixtureName != "" || ((len(cin.RecentEventIDs) > 0 || len(cin.RelatedEventIDs) > 0) &&
-			len(cin.RecentEvents) == 0 && len(cin.RelatedEvents) == 0) {
+		// Fixture mode only when explicitly requested — never inferred from empty digests.
+		if in.AllowLegacyFixtureIDs {
 			preq, perr = classifier.NewFixtureProviderRequest(cin)
 		} else {
 			preq, perr = classifier.NewProviderRequest(cin)

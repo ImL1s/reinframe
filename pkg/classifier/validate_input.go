@@ -52,10 +52,10 @@ func ValidateClassifierInputOpts(in ClassifierInput, opts ProviderRequestOptions
 			return fmt.Errorf("classifier: production task_anchor required with trajectory")
 		}
 	}
-	if err := ValidateEventDigests(in.RecentEvents, MaxRecentEvents); err != nil {
+	if err := ValidateEventDigestsOpts(in.RecentEvents, MaxRecentEvents, opts.Production); err != nil {
 		return err
 	}
-	if err := ValidateEventDigests(in.RelatedEvents, MaxRelatedEvents); err != nil {
+	if err := ValidateEventDigestsOpts(in.RelatedEvents, MaxRelatedEvents, opts.Production); err != nil {
 		return err
 	}
 	// Cross-list uniqueness.
@@ -72,7 +72,9 @@ func ValidateClassifierInputOpts(in ClassifierInput, opts ProviderRequestOptions
 		}
 	}
 	if in.ProposedAction != nil {
-		if opts.Production {
+		// Production tightens only when a schema is present; empty synthetic
+		// ProposedAction shells used by shadow still use model-safe rules.
+		if opts.Production && in.ProposedAction.SchemaVersion != "" {
 			if err := ValidateProposedActionProduction(*in.ProposedAction); err != nil {
 				return err
 			}

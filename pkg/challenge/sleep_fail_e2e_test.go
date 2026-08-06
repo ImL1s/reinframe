@@ -139,6 +139,48 @@ func TestAttemptRetry_ProviderFailOpenNeverAllowedOnce(t *testing.T) {
 	}
 }
 
+func TestReplay_RestoresProviderCallAuditID(t *testing.T) {
+	t.Parallel()
+	svc := challenge.NewService(challenge.ServiceConfig{})
+	pa := samplePA("echo hi")
+	rec, err := svc.Open(context.Background(), challenge.OpenRequest{
+		SessionID: pa.SessionID, Proposed: pa, BlockClass: challenge.BlockClassOverSOP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
+		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
+		CorrelationID: "audit-replay",
+		ReEval: &challenge.ReEvalContext{
+			Provider:    classifier.FakeClassifierProvider{},
+			FixtureName: "clear_allow",
+			PolicyClass: classifier.PolicyClassProductivity,
+			Threshold:   50,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.ProviderCallAuditID == "" {
+		t.Fatal("expected ProviderCallAuditID on retry")
+	}
+	if retry.Record.ProviderCallAuditID != retry.ProviderCallAuditID {
+		t.Fatalf("record audit id=%q result=%q", retry.Record.ProviderCallAuditID, retry.ProviderCallAuditID)
+	}
+	// Service.Replay rebuilds from append-only events (must project audit ID).
+	replayed, err := svc.Replay(rec.ChallengeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ProviderCallAuditID != retry.ProviderCallAuditID {
+		t.Fatalf("replay audit id=%q want %q", replayed.ProviderCallAuditID, retry.ProviderCallAuditID)
+	}
+}
+
 func TestAttemptRetry_GenuineBelowThresholdStillAllowedOnce(t *testing.T) {
 	t.Parallel()
 	// Control: successful Fake clear_allow assessment may still ALLOWED_ONCE.

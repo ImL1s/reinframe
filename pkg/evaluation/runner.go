@@ -210,6 +210,8 @@ func (r *Runner) runCase(ctx context.Context, c Case) CaseResult {
 			Command:       c.ProposedCommand,
 			ToolClass:     adapter.ClassifyToolName(c.ProposedToolName),
 			Source:        "benchmark",
+			ParseStatus:   "ok",
+			Truncated:     false,
 		}
 		if pa.ToolName == "" {
 			pa.ToolName = "Bash"

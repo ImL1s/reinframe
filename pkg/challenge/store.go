@@ -533,6 +533,9 @@ func (s *Store) appendTransitionAudit(rec ChallengeRecord, from ChallengeState, 
 	rec.State = to
 	rec.UpdatedSequence = seq
 	rec.UpdatedAt = at
+	if providerCallAuditID != "" {
+		rec.ProviderCallAuditID = providerCallAuditID
+	}
 	ev := ChallengeEvent{
 		SchemaVersion:       SchemaChallengeEvent,
 		Sequence:            seq,

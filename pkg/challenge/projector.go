@@ -75,5 +75,9 @@ func ApplyEvent(rec ChallengeRecord, ev ChallengeEvent) (ChallengeRecord, error)
 	} else {
 		rec.UpdatedAt = time.Time{}
 	}
+	// Durable provider-call audit link (append-only event → projected record).
+	if ev.ProviderCallAuditID != "" {
+		rec.ProviderCallAuditID = ev.ProviderCallAuditID
+	}
 	return rec, nil
 }

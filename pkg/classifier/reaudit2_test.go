@@ -351,6 +351,7 @@ func TestNewProviderRequest_BoundsTrajectoryAndSyncsIDs(t *testing.T) {
 	}
 	req, err := classifier.NewProviderRequest(classifier.ClassifierInput{
 		SchemaVersion: classifier.SchemaClassifierInput,
+		TaskAnchor:    classifier.TaskAnchor{TaskID: "t", Objective: "o"},
 		RecentEvents:  events,
 	})
 	if err != nil {

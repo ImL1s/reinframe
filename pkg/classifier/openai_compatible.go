@@ -296,12 +296,22 @@ func ErrFromExhaustedBudgetForTest(parent, op context.Context, opErr error) erro
 }
 
 // Assess implements ClassifierProvider.
+// Real OpenAI-compatible path hard-rejects legacy ID-only evidence and fixture flags
+// before any HTTP (P2-C), independent of AllowLegacyFixtureIDs on the request.
 func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderRequest) (ProviderResult, error) {
 	if ctx == nil {
 		return ProviderResult{}, newProviderError("config", "nil context", false, 0)
 	}
 	if err := ctx.Err(); err != nil {
 		return ProviderResult{}, err
+	}
+	// Real provider never accepts fixture-only legacy ID packets (even if caller sets the flag).
+	if req.Input.AllowLegacyFixtureIDs {
+		return ProviderResult{}, newProviderError("config", "legacy fixture mode not allowed on openai_compatible", false, 0)
+	}
+	if (len(req.Input.RecentEventIDs) > 0 || len(req.Input.RelatedEventIDs) > 0) &&
+		len(req.Input.RecentEvents) == 0 && len(req.Input.RelatedEvents) == 0 {
+		return ProviderResult{}, newProviderError("config", "legacy event IDs without digests rejected before HTTP", false, 0)
 	}
 	if err := ValidateProviderRequest(req); err != nil {
 		return ProviderResult{}, newProviderError("config", err.Error(), false, 0)

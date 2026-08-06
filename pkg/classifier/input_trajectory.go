@@ -87,6 +87,12 @@ func ValidateTaskAnchor(t TaskAnchor) error {
 
 // ValidateEventDigests enforces bounds, closed types, deterministic order, uniqueness.
 func ValidateEventDigests(events []EventDigest, maxN int) error {
+	return ValidateEventDigestsOpts(events, maxN, false)
+}
+
+// ValidateEventDigestsOpts adds production rules: non-empty closed EventType and
+// at least one of Summary or ContentHash.
+func ValidateEventDigestsOpts(events []EventDigest, maxN int, production bool) error {
 	if maxN <= 0 {
 		maxN = MaxRecentEvents
 	}
@@ -106,7 +112,17 @@ func ValidateEventDigests(events []EventDigest, maxN int) error {
 		if len(e.EventType) > MaxEventTypeBytes {
 			return fmt.Errorf("classifier: event_type too long")
 		}
-		if e.EventType != "" {
+		if production {
+			if e.EventType == "" {
+				return fmt.Errorf("classifier: event_type required")
+			}
+			if _, ok := ValidEventTypes[e.EventType]; !ok {
+				return fmt.Errorf("classifier: unknown event_type")
+			}
+			if e.Summary == "" && e.ContentHash == "" {
+				return fmt.Errorf("classifier: event summary or content_hash required")
+			}
+		} else if e.EventType != "" {
 			if _, ok := ValidEventTypes[e.EventType]; !ok {
 				return fmt.Errorf("classifier: unknown event_type")
 			}

@@ -137,6 +137,10 @@ type ChallengeRecord struct {
 	CreatedSequence   int64  `json:"created_sequence"`
 	UpdatedSequence   int64  `json:"updated_sequence"`
 
+	// ProviderCallAuditID is the latest durable Stage-1 provider-call audit link
+	// projected from ChallengeEvent (survives replay/restart).
+	ProviderCallAuditID string `json:"provider_call_audit_id,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

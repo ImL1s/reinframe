@@ -11,25 +11,20 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 ## Project Status
 
 > **Phase: M1 + M2 library + experimental host bridges + shadow classifier + host-neutral challenge core + native classifier providers + exact cache + offline evaluation**  
-> **Implemented:** [#131](https://github.com/ImL1s/reinframe/issues/131)/[#148](https://github.com/ImL1s/reinframe/pull/148) challenge core; [#132](https://github.com/ImL1s/reinframe/issues/132)/[#150](https://github.com/ImL1s/reinframe/pull/150) provider runtime; [#134](https://github.com/ImL1s/reinframe/issues/134)/[#153](https://github.com/ImL1s/reinframe/pull/153) OpenAI Responses; [#135](https://github.com/ImL1s/reinframe/issues/135)/[#154](https://github.com/ImL1s/reinframe/pull/154) Anthropic Messages; [#136](https://github.com/ImL1s/reinframe/issues/136)/[#155](https://github.com/ImL1s/reinframe/pull/155) Gemini generateContent; [#137](https://github.com/ImL1s/reinframe/issues/137)/[#156](https://github.com/ImL1s/reinframe/pull/156) xAI Responses; [#138](https://github.com/ImL1s/reinframe/issues/138)/[#157](https://github.com/ImL1s/reinframe/pull/157) process-local exact assessment cache + singleflight.  
-> **Ready:** [#140](https://github.com/ImL1s/reinframe/issues/140) Lane A (deterministic challenge evaluation); [#141](https://github.com/ImL1s/reinframe/issues/141) provider/exact-cache economics (evidence only — **MORE-DATA**, no fabricated savings).  
-> **Environment-blocked:** [#120](https://github.com/ImL1s/reinframe/issues/120) live Claude smoke → [#108](https://github.com/ImL1s/reinframe/issues/108), Claude lane of [#139](https://github.com/ImL1s/reinframe/issues/139).  
-> **Dependency-blocked:** Epic [#80](https://github.com/ImL1s/reinframe/issues/80) residual.  
+> **Implemented:** [#131](https://github.com/ImL1s/reinframe/issues/131)/[#148](https://github.com/ImL1s/reinframe/pull/148)–[#138](https://github.com/ImL1s/reinframe/issues/138)/[#157](https://github.com/ImL1s/reinframe/pull/157) challenge + provider foundation + native adapters + exact cache; [#140](https://github.com/ImL1s/reinframe/issues/140) Lane A ([#159](https://github.com/ImL1s/reinframe/pull/159)) + Lane B offline fake ([#160](https://github.com/ImL1s/reinframe/pull/160)); [#141](https://github.com/ImL1s/reinframe/issues/141)/[#161](https://github.com/ImL1s/reinframe/pull/161) provider/exact-cache fake-CI evaluation (**MORE-DATA**).  
+> **Environment-blocked residual:** [#120](https://github.com/ImL1s/reinframe/issues/120) live Claude smoke → [#108](https://github.com/ImL1s/reinframe/issues/108), [#139](https://github.com/ImL1s/reinframe/issues/139), and #140 Claude host lane. Epic [#80](https://github.com/ImL1s/reinframe/issues/80) remains open.  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
 
 ### Current dependency shape
 
 ```text
-Shipped native provider + cache stack:
-  #134 OpenAI Responses · #135 Anthropic Messages · #136 Gemini · #137 xAI Responses
-  #138 exact RawAssessment cache + singleflight (default disabled)
+Shipped:
+  #134–#137 native adapters · #138 exact cache (default off)
+  #140 Lane A deterministic · #140 Lane B offline fake
+  #141 fake-CI cache evaluation (MORE-DATA; no default enable)
 
-Ready evaluation:
-  #140 Lane A deterministic challenge evaluation
-  #141 cache-layer mechanics / economics (fake + optional live; no silent enable)
-
-Interactive environment:
-  #120 live Claude smoke → #108 · #139 Claude challenge delivery
+Interactive environment residual:
+  #120 live Claude smoke → #108 · #139 · #140 Claude host lane
 ```
 
 | Component | Status |
@@ -71,8 +66,8 @@ Interactive environment:
 | Live Claude ALLOW/BLOCK/context smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
 | Real advice consumer / ACK (#108) | 🔲 Open — blocked by #120 |
 | Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; blocked by #120 |
-| Challenge evaluation (#140) | 🔲 Open — Lane A ready; model/Claude lanes later |
-| Provider/cache evaluation (#141) | 🔲 Open — stack landed; economics unmeasured (MORE-DATA) |
+| Challenge evaluation (#140) Lane A/B | ✅ Offline deterministic + fake-native lanes (PR #159/#160); **Claude host lane open** (needs #139) |
+| Provider/cache evaluation (#141 / PR #161) | ✅ Fake-CI suite; disposition **MORE-DATA**; no default cache enablement |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Core invariants
@@ -284,8 +279,8 @@ Intervention escalation after detection is a **separate axis**. See `docs/resear
 
 Contributions are welcome. Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Ready evaluation work is currently #140 Lane A and #141 (evidence only).
-2. Follow the dependency graph. Do not start #139 before #120 live evidence, or claim measured provider-cache savings without #141 MORE-DATA disposition.
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Executable library/eval work for #134–#138/#141 and #140 Lane A/B is on main; residual is environment-bound (#120/#108/#139/#140 Claude).
+2. Do not start #139 before #120 live evidence. Do not claim measured savings or enable exact cache by default without a separate authorization issue.
 3. Preserve honesty boundaries: no false provider/cache/live-host/hard-gate claims.
 4. Run `go test -race ./...` before submitting PRs.
 5. Project-standard PRs require multi-platform CI and independent AI review before merge.

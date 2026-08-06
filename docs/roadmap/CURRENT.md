@@ -43,7 +43,7 @@
 |-------|-----|------------|-------|
 | **#108** | P0 | **#120** | Real advice consumer / SafeBoundary / honest ACK |
 | **#139** | P1 | **#120** | #131 core is satisfied; Claude challenge delivery still needs live evidence |
-| **#140 later lanes** | P2 | model: any of **#134–#137**; Claude: **#139** | Lane A independent |
+| **#140 later lanes** | P2 | model: uses shipped **#134–#137**; Claude: **#139** | Lane A independent; Claude still env-blocked |
 | **#80** | epic | — | Residual tracker; keep open |
 
 ## Execution order
@@ -84,6 +84,7 @@ No cache                         → normal provider path
 ## Explicit non-claims
 
 - No calibrated classifier/detector hard-gate; #100 remains **MORE-DATA**
+- No live Claude ALLOW/BLOCK/context proof until #120 evidence
 - No live Claude challenge-response product; #139 remains open
 - No measured provider-prefix or exact-cache **savings** claim without #141 evidence
 - No persistent/distributed assessment cache claim

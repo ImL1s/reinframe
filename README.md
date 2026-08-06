@@ -165,7 +165,7 @@ reinframe/
 - **`pkg/detector`**: deterministic repeated-failure, verification-churn, tool-budget and hypothesis-loop signals.
 - **`pkg/policy`**: fast deterministic gates and slow advisory path.
 - **`pkg/supervisor`**: composition root for detect → policy → queue → deliver → ACK.
-- **`pkg/classifier`**: closed shadow classifier, FakeClassifierProvider, and #132 provider-neutral runtime (PromptPlan, strict parser, generic OpenAI-compatible adapter, cache-neutral).
+- **`pkg/classifier`**: shadow classifier; #132 runtime; native #134–#137 adapters (OpenAI/Anthropic/Gemini/xAI); #138 process-local exact cache (default off).
 - **`pkg/challenge`**: versioned appealable `BLOCK` records, closed justification schema, one-shot retry, semantic fingerprinting, replay, and audit/cache identity.
 - **`pkg/evaluation`**: offline fixture scoring and reports; #100 disposition remains MORE-DATA.
 - **`pkg/workspace`**: clean-only checkpoint/rollback inside a verified Reinframe-owned worktree.
@@ -182,6 +182,8 @@ Available:
   ProposedAction, shadow classifier (Enforced=false), offline benchmark runner
   host-neutral appealable BLOCK challenge core with one-shot semantic retry
   managed-worktree checkpoint/rollback (clean-only)
+  native classifier adapters (#134–#137 library paths; not default production supervision)
+  process-local exact RawAssessment cache (#138; default disabled)
 
 Not claimed:
   global ~/.claude silent install
@@ -191,7 +193,7 @@ Not claimed:
   live Claude smoke (#120)
   advice agent receipt (#108)
   live Claude challenge delivery / structured appeal (#139)
-  real native classifier providers or measured cache savings (#132/#134–#141)
+  measured provider-prefix / exact-cache savings (#141 MORE-DATA)
 ```
 
 Vertical-slice and street-wire tests prove the **library and channel** paths. Host consumers and live evidence remain capability-specific.

@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-06) — provider/cache complete; host-control lanes **#163/#165/#166** Ready  
+**Status:** current (2026-08-06) — host-control foundations **#163/#165/#166** + offline **#168** framework on main  
 **Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open.
 
 ## Implemented — narrow DoD, do not reopen for the same scope
@@ -9,30 +9,16 @@
 |-------|------------|------------------|
 | Appealable `BLOCK` core | **#131 / PR #148** | Host-neutral; no live Claude delivery |
 | Classifier provider foundation | **#132 / PR #150** | Generic OpenAI-compatible cache-neutral |
-| Native OpenAI Responses | **#134 / PR #153** | `/v1/responses`; explicit profiles |
-| Native Anthropic Messages | **#135 / PR #154** | `claude_api` only; explicit recommended |
-| Native Gemini generateContent | **#136 / PR #155** | Implicit; explicit objects deferred |
-| Native xAI Responses | **#137 / PR #156** | Classifier only — **not** Grok Build host control |
-| Exact assessment cache | **#138 / PR #157** + **#169** + **#172** | Process-local; default disabled; session partition; cancel-safe + panic-safe singleflight |
-| Challenge eval Lane A | **#140 / PR #159** | Deterministic fixtures/metrics; MORE-DATA |
-| Challenge eval Lane B offline | **#140 / PR #160** | Fake native transports only |
-| Provider/cache eval | **#141 / PR #161** + **#169** | Fake CI; disposition **MORE-DATA** |
-| Offline detector/classifier foundation | **#100 / PR #129** | MORE-DATA; no hard-gate |
-| Codex EventSource | **#95/#107/#118** | JSONL offline/tail **observe-only** (L0); hooks not shipped |
-| Claude PreTool bridge | **#96/#106/#117** | Experimental API + project-local install; **not** live smoke |
-
-## Implemented host foundations
-
-| Track | Issues/PRs | Honesty boundary |
-|-------|------------|------------------|
-| Codex project-local hooks | **#163** | Foundation only; live proof **#164**; not Level 2 / not explicit ACK |
-
-## Implemented host foundations (continued)
-
-| Track | Notes |
-|-------|-------|
-| Grok Build native hooks | **#165** foundation (host fail-open; live **#167**) |
-| Grok Build ACP stdio | **#166** foundation (transport/session_visible ACK; live **#167**) |
+| Native OpenAI/Anthropic/Gemini/xAI | **#134–#137** | Classifier adapters only; xAI ≠ Grok host |
+| Exact assessment cache | **#138** + fixes | Process-local; default off; panic-safe singleflight |
+| Challenge/cache offline eval | **#140** A/B, **#141** | MORE-DATA |
+| Codex EventSource | **#95/#107/#118** | JSONL observe-only L0 |
+| Claude PreTool bridge | **#96/#106/#117** | Experimental; not live smoke |
+| Host roadmap sync | **#170** | Public status for Codex/Grok lanes |
+| Codex project-local hooks | **#163** | Foundation; live **#164** |
+| Grok Build native hooks | **#165** | Foundation; host fail-open; live **#167** |
+| Grok Build ACP stdio | **#166** | Foundation; transport/session_visible ACK; live **#167** |
+| Cross-host eval framework | **#168** offline | Fake hosts only; disposition **MORE-DATA**; issue stays open for live match |
 
 ## Residual open work
 
@@ -40,23 +26,23 @@
 
 | Issue | Blocker | Notes |
 |-------|---------|-------|
-| **#164** | #163 + interactive Codex CLI | Live Codex hooks ALLOW/BLOCK/context proof |
-| **#167** | #165 + #166 + authenticated Grok CLI | Live Grok hooks + ACP proof |
-| **#120** | Interactive Claude session | Live Claude ALLOW/BLOCK/context smoke |
-| **#139** | #120 | Live Claude challenge delivery |
-| **#140 Claude host lane** | #139 | Manual evidence only |
+| **#164** | Interactive Codex + project trust | Live hooks smoke |
+| **#167** | Authenticated Grok CLI + trust | Live hooks + ACP |
+| **#120** | Interactive Claude | Live Claude smoke |
+| **#139** | #120 | Claude challenge delivery |
+| **#140 Claude host lane** | #139 | Manual evidence |
 
-### Product (after at least one proven live host lane)
+### Product
 
 | Issue | Blocker | Notes |
 |-------|---------|-------|
-| **#108** | First of #164 \| #167 \| #120 | Real multi-host advice consumer + honest ACK layers |
+| **#108** | First of #164 \| #167 \| #120 | Real multi-host advice + honest ACK |
 
 ### Evaluation
 
 | Issue | Blocker | Notes |
 |-------|---------|-------|
-| **#168** | Matched live host lanes | Cross-host tunneling/intervention quality |
+| **#168** live match | #164/#167/#120 matched data | Framework exists; disposition MORE-DATA |
 
 ### Epic
 
@@ -66,20 +52,18 @@
 
 ## Explicit non-claims
 
-- No Codex **control** until #163; no live Codex proof until #164
-- No Grok Build host adapter until #165/#166; no live Grok proof until #167
-- xAI Responses classifier ≠ Grok Build host integration
-- No fail-closed Grok hook claim (timeout/crash/malformed is host fail-open)
-- Hook gating is CapToolGate — not native CapPause / Level 2
-- Context/transport/JSON-RPC success is **not** explicit agent ACK
-- No live Claude smoke (#120), challenge delivery (#139), or dual-host production supervision
-- No calibrated hard-gate; #100/#140/#141 remain **MORE-DATA** where stated
-- No default exact-cache enablement; no universal provider savings %
-- No claim that GPT/Codex tunnels more without #168 matched evidence
+- No live Codex/Grok/Claude host proof until #164/#167/#120
+- No fail-closed Grok hook security (host fail-open)
+- CapToolGate ≠ CapPause / Level 2
+- JSON-RPC / file append / hook exit ≠ explicit agent ACK
+- xAI classifier ≠ Grok Build host
+- No dual-host production supervision; no hard-gate; no default cache enablement
+- No cross-host tunneling ranking without matched live evidence
 
 ## Evaluation artifacts
 
 - `docs/evaluation/challenge_lane_a.md`
 - `docs/evaluation/challenge_lane_b_model.md`
 - `docs/evaluation/provider_cache_141.md`
+- `docs/evaluation/cross_host_168.md`
 - Adapter pins: `docs/classifier/*`, `docs/adapter/*`

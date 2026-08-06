@@ -6,16 +6,15 @@
 
 Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go.
 
-**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, **Codex JSONL offline/near-live observation (observe-only)**, a FileActuator advice channel, a non-enforcing Action Alignment classifier, a host-neutral appealable `BLOCK` challenge core, offline benchmark tooling, and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** Codex/Grok Build hook control (until #163/#165), **not** a calibrated hard-gate, **not** live host proof, and **not** a measured multi-provider cache product.
+**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, **Codex JSONL observe-only + project-local hooks foundation (#163)**, **Grok Build native hooks (#165) and ACP stdio foundation (#166)**, a FileActuator advice channel, a non-enforcing Action Alignment classifier, a host-neutral appealable `BLOCK` challenge core, offline benchmarks (#140/#141/#168 frameworks), and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** live host proof (#164/#167/#120), **not** a calibrated hard-gate, and **not** a measured multi-provider cache product.
 
 ## Project Status
 
-> **Phase: M1 + M2 library + experimental host bridges + shadow classifier + host-neutral challenge core + native classifier providers + exact cache + offline evaluation**  
-> **Implemented:** [#131](https://github.com/ImL1s/reinframe/issues/131)/[#148](https://github.com/ImL1s/reinframe/pull/148)–[#138](https://github.com/ImL1s/reinframe/issues/138)/[#157](https://github.com/ImL1s/reinframe/pull/157) challenge + provider foundation + native adapters + exact cache ([#169](https://github.com/ImL1s/reinframe/pull/169)/[#172](https://github.com/ImL1s/reinframe/pull/172)); [#140](https://github.com/ImL1s/reinframe/issues/140) Lane A/B offline; [#141](https://github.com/ImL1s/reinframe/issues/141) cache eval (**MORE-DATA**); Codex JSONL EventSource observe-only.  
-> **Ready host foundations:** [#163](https://github.com/ImL1s/reinframe/issues/163) Codex hooks · [#165](https://github.com/ImL1s/reinframe/issues/165) Grok Build native hooks · [#166](https://github.com/ImL1s/reinframe/issues/166) Grok Build ACP.  
-> **Live/environment:** [#163](https://github.com/ImL1s/reinframe/issues/163)→[#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#165](https://github.com/ImL1s/reinframe/issues/165)+[#166](https://github.com/ImL1s/reinframe/issues/166)→[#167](https://github.com/ImL1s/reinframe/issues/167) Grok · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
-> **Product:** first proven live host lane → [#108](https://github.com/ImL1s/reinframe/issues/108); [#120](https://github.com/ImL1s/reinframe/issues/120)→[#139](https://github.com/ImL1s/reinframe/issues/139)→#140 Claude host. **Eval:** matched lanes → [#168](https://github.com/ImL1s/reinframe/issues/168). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) open.  
-> **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
+> **Phase: M1 + M2 library + host-control foundations + shadow classifier + native classifier providers + exact cache + offline evaluation**  
+> **Implemented:** provider/cache campaign (#131–#141); host foundations [#163](https://github.com/ImL1s/reinframe/issues/163)/[#165](https://github.com/ImL1s/reinframe/issues/165)/[#166](https://github.com/ImL1s/reinframe/issues/166); offline [#168](https://github.com/ImL1s/reinframe/issues/168) framework (**MORE-DATA**).  
+> **Live/environment (blocked):** [#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#167](https://github.com/ImL1s/reinframe/issues/167) Grok · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
+> **Product:** first proven live host lane → [#108](https://github.com/ImL1s/reinframe/issues/108). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) open.  
+> **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md).
 
 ### Current dependency shape
 
@@ -24,25 +23,20 @@ Shipped:
   #134–#137 native classifier adapters · #138 exact cache (default off)
   #140 Lane A/B offline · #141 fake-CI cache eval (MORE-DATA)
   Codex JSONL offline/tail observation (observe-only L0)
+  #163 Codex project-local hooks foundation
+  #165 Grok Build native hooks foundation (host fail-open)
+  #166 Grok Build ACP stdio foundation (transport/session_visible ACK)
+  #168 offline cross-host eval framework (MORE-DATA)
 
-Shipped host foundations:
-  #163 Codex project-local hooks control (foundation; live #164)
-
-Ready (repository-executable foundations):
-  #165 Grok Build native hooks
-  #166 Grok Build ACP stdio bridge
-
-Live / environment:
-  #163 → #164 Codex live proof
-  #165 + #166 → #167 Grok live proof
-  #120 Claude live proof
+Live / environment (blocked):
+  #164 Codex live proof · #167 Grok live proof · #120 Claude live proof
 
 Product:
   first proven live host lane (#164 | #167 | #120) → #108
   #120 → #139 → #140 Claude host lane
 
 Evaluation:
-  matched live host lanes → #168
+  #168 framework shipped; live matched data still open
 ```
 
 | Component | Status |
@@ -65,8 +59,8 @@ Evaluation:
 | Codex project-local hooks control (#163) | ✅ Foundation — project-local hooks.json install/doctor + PreTool/Permission mapping; **live proof #164** |
 | Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; **live #167** |
 | Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; **live #167** |
-| Live Codex hooks proof (#164) | 🔲 Open — blocked until #163 + interactive Codex |
-| Live Grok Build hooks+ACP proof (#167) | 🔲 Open — blocked until #165+#166 + authenticated Grok |
+| Live Codex hooks proof (#164) | 🔲 Open — blocked on interactive Codex + project trust |
+| Live Grok Build hooks+ACP proof (#167) | 🔲 Open — blocked on authenticated Grok CLI + trust |
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |
 | Claude project-local install/doctor (#106/#117) | ✅ Installer/unit + exact ownership; **not** live smoke |
 | Typed ProposedAction (#115) | ✅ ToolName ≠ Command |
@@ -197,21 +191,25 @@ reinframe/
 Available:
   Detectors → Policy → Orchestrator → HookGate / queue / FileActuator|Fake
   Codex JSONL offline + tail EventSource (observe-only L0)
+  Codex project-local hooks foundation (#163; live #164)
+  Grok Build native hooks foundation (#165; host fail-open; live #167)
+  Grok Build ACP stdio foundation (#166; transport/session_visible ACK; live #167)
   Claude PreTool fixture/CLI bridge + project-local installer/unit validation
   ProposedAction, shadow classifier (Enforced=false), offline benchmark runner
   host-neutral appealable BLOCK challenge core with one-shot semantic retry
   managed-worktree checkpoint/rollback (clean-only)
   native classifier adapters (#134–#137 library paths; not host control)
   process-local exact RawAssessment cache (#138; default disabled)
+  cross-host offline eval framework (#168 MORE-DATA)
 
-Not claimed / not implemented yet:
-  Codex project-local hook control (#163 foundation Ready; live #164)
-  Grok Build native hooks (#165) or ACP (#166); live #167
+Not claimed / not proven live:
+  live Codex hooks (#164) · live Grok hooks/ACP (#167) · live Claude (#120)
   global ~/.claude silent install · process-attach daemon
   live dual-host supervision · calibrated hard-gates · native CapPause from hooks
-  live Claude smoke (#120) · advice agent receipt (#108) · Claude challenge delivery (#139)
+  advice agent receipt (#108) · Claude challenge delivery (#139)
   measured provider-prefix / exact-cache savings (#141 MORE-DATA)
   explicit ACK from file append / hook exit / JSON-RPC success alone
+  cross-host tunneling ranking without matched live evidence
 ```
 
 Vertical-slice and street-wire tests prove the **library and channel** paths. Host consumers and live evidence remain capability-specific.
@@ -302,8 +300,8 @@ Intervention escalation after detection is a **separate axis**. See `docs/resear
 
 Contributions are welcome. Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Provider/cache library work (#134–#138/#141) and #140 Lane A/B offline are on main. Next executable host foundations: **#163**, **#165**, **#166**. Live: #164/#167/#120.
-2. Do not start #139 before #120. Do not claim Codex/Grok host control before #163/#165/#166. Do not claim measured savings or default exact-cache enablement without separate authorization.
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Host foundations #163/#165/#166 and offline #168 are on main. Residual is live environment: **#164**, **#167**, **#120** → **#108**.
+2. Do not start #139 before #120. Do not claim live host control without #164/#167/#120 evidence. Do not claim measured savings or default exact-cache enablement without separate authorization.
 3. Preserve honesty boundaries: no false provider/cache/live-host/hard-gate/ACK claims. Classifier providers ≠ coding-host adapters.
 4. Run `go test -race ./...` before submitting PRs.
 5. Project-standard PRs require multi-platform CI and independent AI review before merge.

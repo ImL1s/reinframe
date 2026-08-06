@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-06) — host-control foundations **#163/#165/#166** + offline **#168** framework on main  
+**Status:** current (2026-08-06) — host-control foundations **#163/#165/#166** (incl. residual **#180**) + offline **#168** framework on main  
 **Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open.
 
 ## Implemented — narrow DoD, do not reopen for the same scope
@@ -17,7 +17,7 @@
 | Host roadmap sync | **#170** | Public status for Codex/Grok lanes |
 | Codex project-local hooks | **#163** | Foundation; live **#164** |
 | Grok Build native hooks | **#165** | Foundation; host fail-open; live **#167** |
-| Grok Build ACP stdio | **#166** | Foundation; transport/session_visible ACK; live **#167** |
+| Grok Build ACP stdio | **#166** + residual **#180** | Negotiated auth/load/cancel; process-group cleanup; headless observe-only; transport/session_visible ACK; live **#167** |
 | Cross-host eval framework | **#168** offline | Fake hosts only; disposition **MORE-DATA**; issue stays open for live match |
 
 ## Residual open work

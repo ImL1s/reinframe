@@ -23,12 +23,16 @@ const (
 type CacheEvalMode string
 
 const (
+	ModeStage0Only          CacheEvalMode = "stage0_only"
 	ModeUncachedProvider    CacheEvalMode = "uncached_provider"
-	ModeProviderCacheWarm   CacheEvalMode = "provider_cache_warm_read" // transport reports cached tokens
+	ModeProviderCacheCold   CacheEvalMode = "provider_cache_cold_write" // usage present, zero cache-read (write/create path)
+	ModeProviderCacheWarm   CacheEvalMode = "provider_cache_warm_read"  // positive cache-read tokens
+	ModeDynamicOnlyProvider CacheEvalMode = "dynamic_only_provider_cache" // stable prefix identical; dynamic changes
 	ModeReinframeExactHit   CacheEvalMode = "reinframe_exact_hit"
 	ModeSingleflightN       CacheEvalMode = "singleflight_N_callers"
 	ModeRequiredMissModel   CacheEvalMode = "required_miss_after_model_change"
 	ModeRequiredMissEvents  CacheEvalMode = "required_miss_after_event_change"
+	ModeInvalidAdmission    CacheEvalMode = "invalid_admission_rejected"
 	ModeGenericCacheNeutral CacheEvalMode = "generic_openai_compatible_cache_neutral"
 )
 
@@ -107,10 +111,20 @@ func RunCacheEvalFakeCI(ctx context.Context, commit string) (CacheEvalReport, er
 			SchemaVersion: classifier.SchemaClassifierInput,
 			PolicyClass:   classifier.PolicyClassProductivity,
 			RulesetID:     "rs", RulesetHash: "rh",
-			TaskAnchor: classifier.TaskAnchor{TaskID: "t", Objective: "obj"},
+			SessionID:     "sess-eval",
+			TaskAnchor:    classifier.TaskAnchor{TaskID: "t", Objective: "obj"},
 			RecentEvents: []classifier.EventDigest{
 				{EventID: "e1", Sequence: 1, EventType: "tool_call", Summary: "edit", ContentHash: "h1"},
 			},
+		})
+	}
+
+	// --- stage0_only: no provider call (deterministic skip layer) ---
+	{
+		// Stage-0 means the evaluation harness does not invoke a provider at all.
+		rep.Rows = append(rep.Rows, CacheEvalRow{
+			Mode: ModeStage0Only, ProviderKind: "none", ProviderCalls: 0,
+			CacheHit: false, OK: true, Note: "no provider invocation; Stage-0 deterministic skip",
 		})
 	}
 
@@ -145,6 +159,43 @@ func RunCacheEvalFakeCI(ctx context.Context, commit string) (CacheEvalReport, er
 		rep.Rows = append(rep.Rows, row)
 	}
 
+	// --- OpenAI provider cold write: usage present, zero cache-read (create/miss path) ---
+	{
+		var n atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n.Add(1)
+			_, _ = io.ReadAll(r.Body)
+			// cache_write_tokens > 0, cached_tokens = 0 → cold write / no hit
+			_, _ = w.Write([]byte(`{
+				"id":"r_cold",
+				"output":[{"type":"message","content":[{"type":"output_text","text":"{\"schema_version\":\"reinframe.raw_assessment.v1\",\"severity\":12,\"reason_code\":\"NORMAL_PROGRESS\",\"evidence_event_ids\":[]}"}]}],
+				"usage":{"input_tokens":100,"output_tokens":5,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":80}}
+			}`))
+		}))
+		p, err := classifier.NewOpenAIResponses(classifier.OpenAIResponsesConfig{
+			Model: "m", BaseURL: srv.URL, Path: "/v1/responses", AllowRemote: true,
+			HTTPClient: srv.Client(), CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIImplicitV1,
+			APIKeyRef: "${K}", LookupEnv: func(string) (string, bool) { return "k", true },
+			MaxRetries: 0, Timeout: time.Second,
+		})
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
+		req, err := baseReq()
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
+		res, err := p.Assess(ctx, req)
+		srv.Close()
+		row := CacheEvalRow{Mode: ModeProviderCacheCold, ProviderKind: classifier.KindOpenAIResponses,
+			ProviderCalls: int(n.Load()), CacheHit: res.Usage.CacheHit, CacheReadTokens: res.Usage.CacheReadTokens,
+			OK: err == nil && !res.Usage.CacheHit && res.Usage.UsagePresent && res.Usage.CacheWriteTokens == 80,
+			Note: "cold write / zero read is not a hit"}
+		rep.Rows = append(rep.Rows, row)
+	}
+
 	// --- OpenAI provider warm read (positive cached tokens) ---
 	{
 		var n atomic.Int32
@@ -163,13 +214,160 @@ func RunCacheEvalFakeCI(ctx context.Context, commit string) (CacheEvalReport, er
 			srv.Close()
 			return rep, err
 		}
-		req, _ := baseReq()
+		req, err := baseReq()
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
 		res, err := p.Assess(ctx, req)
 		srv.Close()
 		row := CacheEvalRow{Mode: ModeProviderCacheWarm, ProviderKind: classifier.KindOpenAIResponses,
 			ProviderCalls: int(n.Load()), CacheHit: res.Usage.CacheHit, CacheReadTokens: res.Usage.CacheReadTokens,
 			OK: err == nil && res.Usage.CacheHit && res.Usage.CacheReadTokens == 40}
 		rep.Rows = append(rep.Rows, row)
+	}
+
+	// --- Dynamic-only: same stable prefix, dynamic events change → provider called each time (exact miss) ---
+	{
+		var n atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n.Add(1)
+			_, _ = w.Write([]byte(okBody(12, 0)))
+		}))
+		inner, err := classifier.NewOpenAIResponses(classifier.OpenAIResponsesConfig{
+			Model: "m", BaseURL: srv.URL, Path: "/v1/responses", AllowRemote: true,
+			HTTPClient: srv.Client(), CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1,
+			APIKeyRef: "${K}", LookupEnv: func(string) (string, bool) { return "k", true },
+			MaxRetries: 0, Timeout: time.Second,
+		})
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
+		ec, err := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+			Enabled: true, MaxEntries: 32, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: false,
+		}, nil)
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
+		p := classifier.WrapWithExactCache(inner, ec, classifier.ExactCacheIdentity{
+			ProviderKind: classifier.KindOpenAIResponses, ModelID: "m",
+			CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1, ParserSchema: classifier.SchemaRawAssessment,
+		})
+		mk := func(hash string) classifier.ProviderRequest {
+			in := classifier.ClassifierInput{
+				SchemaVersion: classifier.SchemaClassifierInput, PolicyClass: classifier.PolicyClassProductivity,
+				RulesetID: "rs", RulesetHash: "rh", SessionID: "sess-dyn",
+				TaskAnchor:   classifier.TaskAnchor{TaskID: "t", Objective: "o"},
+				RecentEvents: []classifier.EventDigest{{EventID: "e1", Sequence: 1, EventType: "tool_call", Summary: "x", ContentHash: hash}},
+			}
+			r, _ := classifier.NewProviderRequest(in)
+			return r
+		}
+		_, _ = p.Assess(ctx, mk("dyn-a"))
+		_, _ = p.Assess(ctx, mk("dyn-b"))
+		// Stable prefix identical across both; only dynamic suffix/events differ → 2 provider calls.
+		stableSame := mk("dyn-a").Prompt.StablePrefixHash == mk("dyn-b").Prompt.StablePrefixHash
+		srv.Close()
+		rep.Rows = append(rep.Rows, CacheEvalRow{
+			Mode: ModeDynamicOnlyProvider, ProviderKind: classifier.KindOpenAIResponses,
+			ProviderCalls: int(n.Load()),
+			OK:            n.Load() == 2 && stableSame,
+			Note:          "dynamic-only change must miss exact cache while stable prefix identity holds",
+		})
+	}
+
+	// --- Invalid admission: transport error and parse-invalid never admitted ---
+	{
+		invalidAdmissions := 0
+		// 1) transport 500 — must not enter exact cache
+		var n atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		inner, err := classifier.NewOpenAIResponses(classifier.OpenAIResponsesConfig{
+			Model: "m", BaseURL: srv.URL, Path: "/v1/responses", AllowRemote: true,
+			HTTPClient: srv.Client(), CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1,
+			APIKeyRef: "${K}", LookupEnv: func(string) (string, bool) { return "k", true },
+			MaxRetries: 0, Timeout: time.Second,
+		})
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
+		ec, err := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+			Enabled: true, MaxEntries: 32, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: false,
+		}, nil)
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
+		p := classifier.WrapWithExactCache(inner, ec, classifier.ExactCacheIdentity{
+			ProviderKind: classifier.KindOpenAIResponses, ModelID: "m",
+			CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1, ParserSchema: classifier.SchemaRawAssessment,
+		})
+		req, err := baseReq()
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
+		_, e1 := p.Assess(ctx, req)
+		_, e2 := p.Assess(ctx, req)
+		// Both must fail and never admit. Call count may exceed 2 when transport
+		// retries (MaxRetries 0 → default MaxRetryCount); admissions is the gate.
+		if e1 == nil || e2 == nil || n.Load() < 2 {
+			invalidAdmissions++
+		}
+		if ec.Stats().Admissions != 0 {
+			invalidAdmissions++
+		}
+		srv.Close()
+
+		// 2) parse-invalid body — not admitted
+		var n2 atomic.Int32
+		srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n2.Add(1)
+			_, _ = w.Write([]byte(`{"id":"x","output":[{"type":"message","content":[{"type":"output_text","text":"not-json"}]}]}`))
+		}))
+		inner2, err := classifier.NewOpenAIResponses(classifier.OpenAIResponsesConfig{
+			Model: "m", BaseURL: srv2.URL, Path: "/v1/responses", AllowRemote: true,
+			HTTPClient: srv2.Client(), CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1,
+			APIKeyRef: "${K}", LookupEnv: func(string) (string, bool) { return "k", true },
+			MaxRetries: 0, Timeout: time.Second,
+		})
+		if err != nil {
+			srv2.Close()
+			return rep, err
+		}
+		ec2, err := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+			Enabled: true, MaxEntries: 32, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: false,
+		}, nil)
+		if err != nil {
+			srv2.Close()
+			return rep, err
+		}
+		p2 := classifier.WrapWithExactCache(inner2, ec2, classifier.ExactCacheIdentity{
+			ProviderKind: classifier.KindOpenAIResponses, ModelID: "m",
+			CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1, ParserSchema: classifier.SchemaRawAssessment,
+		})
+		req2, _ := baseReq()
+		_, pe1 := p2.Assess(ctx, req2)
+		_, pe2 := p2.Assess(ctx, req2)
+		if pe1 == nil || pe2 == nil || n2.Load() < 2 || ec2.Stats().Admissions != 0 {
+			invalidAdmissions++
+		}
+		srv2.Close()
+
+		// Count of *bad admissions* (must be 0). Row.OK tracks proof success.
+		rep.InvalidAdmissionCount = invalidAdmissions
+		rep.Rows = append(rep.Rows, CacheEvalRow{
+			Mode: ModeInvalidAdmission, ProviderKind: classifier.KindOpenAIResponses,
+			ProviderCalls: int(n.Load() + n2.Load()),
+			OK:            invalidAdmissions == 0,
+			Note:          "transport/parse failures must never admit to exact cache (admissions=0)",
+		})
 	}
 
 	// --- Reinframe exact hit (OpenAI) ---
@@ -485,8 +683,16 @@ func RunCacheEvalFakeCI(ctx context.Context, commit string) (CacheEvalReport, er
 			rep.StaleHitRate = float64(stale) / float64(missModes)
 		}
 	}
-	// Invalid admission not exercised in this fake harness (errors are not cached by design).
-	rep.InvalidAdmissionCount = -1 // not_measured sentinel for consumers
+	// InvalidAdmissionCount is set by ModeInvalidAdmission row (0 when failures are not admitted).
+	// If that mode is absent, leave as -1 not_measured; if present and OK, force 0.
+	for _, row := range rep.Rows {
+		if row.Mode == ModeInvalidAdmission {
+			if row.OK {
+				rep.InvalidAdmissionCount = 0
+			}
+			break
+		}
+	}
 	if !allOK {
 		rep.Disposition = "MORE-DATA"
 		rep.DispositionNote += " One or more fake-CI rows failed; investigate before LIMITED-GO."

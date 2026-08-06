@@ -122,6 +122,8 @@ type exactInflight struct {
 	done chan struct{}
 	res  ProviderResult
 	err  error
+	// wait is the number of active waiters still interested in the shared result.
+	// The shared provider call is detached from any single waiter context.
 	wait int
 }
 
@@ -422,7 +424,9 @@ func BuildExactCacheKeyHash(id ExactCacheIdentity, req ProviderRequest) (string,
 		"user_exception": req.Input.UserException,
 		"repo_exception": req.Input.RepoPolicyException,
 		"flaky_invest":   req.Input.FlakyInvestigation,
-		// SessionID intentionally omitted: content-addressed; use EgressProfile for partitions.
+		// Session/tenant partition: empty SessionID is a shared default partition only.
+		// EgressProfile additionally isolates multi-egress deployments.
+		"session_id": req.Input.SessionID,
 		// RetryBudget intentionally omitted (Stage-2 budget authority, not Stage-1 identity).
 	}
 	raw, err := json.Marshal(payload)
@@ -512,35 +516,55 @@ func (p *CachingClassifierProvider) assessCoalesced(ctx context.Context, req Pro
 		inf.wait++
 		c.stats.Coalesced++
 		c.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return ProviderResult{}, ctx.Err()
-		case <-inf.done:
-			if inf.err != nil {
-				return ProviderResult{}, inf.err
-			}
-			// Waiters did not own the provider call — zero usage + exact layer (no token double-count).
-			return p.coalescedWaiterResult(inf.res, keyHash, req), nil
-		}
+		return p.waitInflight(ctx, inf, false, keyHash, req)
 	}
-	inf := &exactInflight{done: make(chan struct{})}
+	// First caller becomes the shared-flight owner but does not bind the provider
+	// call to its personal ctx: one waiter cancel must not cancel remaining waiters.
+	inf := &exactInflight{done: make(chan struct{}), wait: 1}
 	c.inflight[keyHash] = inf
 	c.mu.Unlock()
 
-	defer func() {
+	// Detach shared Assess from any single waiter cancellation.
+	sharedCtx := context.WithoutCancel(ctx)
+	go func() {
+		res, err := p.Inner.Assess(sharedCtx, req)
+		if err == nil {
+			p.tryAdmit(keyHash, res)
+		}
+		inf.res, inf.err = copyProviderResult(res), err
 		c.mu.Lock()
 		delete(c.inflight, keyHash)
 		close(inf.done)
 		c.mu.Unlock()
 	}()
 
-	res, err := p.Inner.Assess(ctx, req)
-	if err == nil {
-		p.tryAdmit(keyHash, res)
+	return p.waitInflight(ctx, inf, true, keyHash, req)
+}
+
+// waitInflight waits for a shared flight. Caller cancel only abandons this waiter;
+// it does not cancel the shared provider call or other waiters.
+// asLeader receives the real provider usage; additional waiters get zero-usage coalesced results.
+func (p *CachingClassifierProvider) waitInflight(ctx context.Context, inf *exactInflight, asLeader bool, keyHash string, req ProviderRequest) (ProviderResult, error) {
+	select {
+	case <-ctx.Done():
+		c := p.Cache
+		c.mu.Lock()
+		if cur, ok := c.inflight[keyHash]; ok && cur == inf {
+			cur.wait--
+		}
+		c.mu.Unlock()
+		return ProviderResult{}, ctx.Err()
+	case <-inf.done:
+		if inf.err != nil {
+			return ProviderResult{}, inf.err
+		}
+		if asLeader {
+			// Leader owns the shared provider call for usage accounting.
+			return copyProviderResult(inf.res), nil
+		}
+		// Waiters did not own the provider call — zero usage + exact layer.
+		return p.coalescedWaiterResult(inf.res, keyHash, req), nil
 	}
-	// Store a deep copy for waiters.
-	inf.res, inf.err = copyProviderResult(res), err
-	return res, err
 }
 
 func (p *CachingClassifierProvider) hitResult(hit CachedAssessment, keyHash string, req ProviderRequest) ProviderResult {

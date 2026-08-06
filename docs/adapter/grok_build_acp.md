@@ -84,3 +84,7 @@ grok --no-auto-update -p <PROMPT> --output-format streaming-json
 - Explicit executable resolution; no shell interpolation
 - Bounded message size / queue / startup timeout / auth method count
 - Graceful interrupt then force tree kill; pending RPC terminal on reader death
+
+## CI gate note
+
+Four-job CI (Lint + ubuntu/macos/windows) is required for merge of #191; local Superpowers exact-head APPROVE is mirrored on the PR.

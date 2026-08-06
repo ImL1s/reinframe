@@ -236,14 +236,13 @@ func RecordHostHookOutcome(intendedDeny bool, exitCode int, stdoutValidDeny bool
 	if stdoutValidDeny {
 		return HostOutcomeEnforcedDeny
 	}
+	// Exit 2 is documented as explicit deny for PreToolUse (stderr as feedback).
+	if exitCode == 2 {
+		return HostOutcomeEnforcedDeny
+	}
 	if intendedDeny {
-		// Intended deny but host did not get valid deny JSON → fail-open (not enforced).
-		if exitCode != 0 && exitCode != 2 {
-			return HostOutcomeFailOpen
-		}
-		if !stdoutValidDeny {
-			return HostOutcomeFailOpen
-		}
+		// Intended deny but host did not surface deny JSON or exit 2 -> fail-open.
+		return HostOutcomeFailOpen
 	}
 	if exitCode == 0 {
 		return HostOutcomeAllowed

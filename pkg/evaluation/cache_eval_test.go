@@ -33,24 +33,35 @@ func TestCacheEvalFakeCI(t *testing.T) {
 		}
 		t.Fatal("all modes not ok")
 	}
-	// Exact hit must show 1 call.
-	foundExact := false
-	foundSF := false
+	foundExact, foundSF, foundMissM, foundMissE := false, false, false, false
 	for _, r := range rep.Rows {
-		if r.Mode == evaluation.ModeReinframeExactHit {
+		switch r.Mode {
+		case evaluation.ModeReinframeExactHit:
 			foundExact = true
 			if r.ProviderCalls != 1 {
 				t.Fatalf("exact hit calls=%d", r.ProviderCalls)
 			}
-		}
-		if r.Mode == evaluation.ModeSingleflightN {
+		case evaluation.ModeSingleflightN:
 			foundSF = true
 			if r.ProviderCalls != 1 {
 				t.Fatalf("singleflight calls=%d", r.ProviderCalls)
 			}
+		case evaluation.ModeRequiredMissModel:
+			foundMissM = true
+			if r.ProviderCalls != 2 {
+				t.Fatalf("model miss calls=%d", r.ProviderCalls)
+			}
+		case evaluation.ModeRequiredMissEvents:
+			foundMissE = true
+			if r.ProviderCalls != 2 {
+				t.Fatalf("event miss calls=%d", r.ProviderCalls)
+			}
 		}
 	}
-	if !foundExact || !foundSF {
-		t.Fatal("missing exact/singleflight rows")
+	if !foundExact || !foundSF || !foundMissM || !foundMissE {
+		t.Fatal("missing required mode rows")
+	}
+	if rep.StaleHitRate != 0 {
+		t.Fatalf("stale_hit_rate=%v", rep.StaleHitRate)
 	}
 }

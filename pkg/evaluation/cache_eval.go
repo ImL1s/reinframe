@@ -202,11 +202,14 @@ func RunCacheEvalFakeCI(ctx context.Context, commit string) (CacheEvalReport, er
 		r1, e1 := p.Assess(ctx, req)
 		r2, e2 := p.Assess(ctx, req)
 		srv.Close()
+		eq := e1 == nil && e2 == nil &&
+			r1.Assessment.SchemaVersion == r2.Assessment.SchemaVersion &&
+			r1.Assessment.Severity == r2.Assessment.Severity &&
+			r1.Assessment.ReasonCode == r2.Assessment.ReasonCode
 		row := CacheEvalRow{Mode: ModeReinframeExactHit, ProviderKind: classifier.KindOpenAIResponses,
 			ProviderCalls: int(n.Load()), CacheHit: r2.Usage.CacheHit, CacheBackend: r2.Usage.CacheBackend,
 			Severity: r1.Assessment.Severity,
-			OK: e1 == nil && e2 == nil && n.Load() == 1 && r2.Usage.CacheBackend == classifier.ExactCacheLayerReinframeExact &&
-				r1.Assessment.Severity == r2.Assessment.Severity}
+			OK:       eq && n.Load() == 1 && r2.Usage.CacheBackend == classifier.ExactCacheLayerReinframeExact}
 		rep.Rows = append(rep.Rows, row)
 	}
 
@@ -267,46 +270,40 @@ func RunCacheEvalFakeCI(ctx context.Context, commit string) (CacheEvalReport, er
 		})
 	}
 
-	// --- Required miss: model change ---
+	// --- Required miss: model change (shared exact cache; different ModelID identity) ---
 	{
 		var n atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			n.Add(1)
 			_, _ = w.Write([]byte(okBody(10, 0)))
 		}))
-		mk := func(model string) classifier.ClassifierProvider {
-			inner, _ := classifier.NewOpenAIResponses(classifier.OpenAIResponsesConfig{
-				Model: model, BaseURL: srv.URL, Path: "/v1/responses", AllowRemote: true,
-				HTTPClient: srv.Client(), CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1,
-				APIKeyRef: "${K}", LookupEnv: func(string) (string, bool) { return "k", true },
-				MaxRetries: 0, Timeout: time.Second,
-			})
-			ec, _ := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
-				Enabled: true, MaxEntries: 32, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: false,
-			}, nil)
-			return classifier.WrapWithExactCache(inner, ec, classifier.ExactCacheIdentity{
-				ProviderKind: classifier.KindOpenAIResponses, ModelID: model,
-				CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1,
-				ParserSchema:        classifier.SchemaRawAssessment,
-			})
-		}
-		// Note: two separate caches so identity change is the only miss driver — actually
-		// shared cache with different ModelID in identity:
-		ec, _ := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+		ec, err := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
 			Enabled: true, MaxEntries: 32, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: false,
 		}, nil)
-		innerA, _ := classifier.NewOpenAIResponses(classifier.OpenAIResponsesConfig{
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
+		innerA, err := classifier.NewOpenAIResponses(classifier.OpenAIResponsesConfig{
 			Model: "model-a", BaseURL: srv.URL, Path: "/v1/responses", AllowRemote: true,
 			HTTPClient: srv.Client(), CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1,
 			APIKeyRef: "${K}", LookupEnv: func(string) (string, bool) { return "k", true },
 			MaxRetries: 0, Timeout: time.Second,
 		})
-		innerB, _ := classifier.NewOpenAIResponses(classifier.OpenAIResponsesConfig{
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
+		innerB, err := classifier.NewOpenAIResponses(classifier.OpenAIResponsesConfig{
 			Model: "model-b", BaseURL: srv.URL, Path: "/v1/responses", AllowRemote: true,
 			HTTPClient: srv.Client(), CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1,
 			APIKeyRef: "${K}", LookupEnv: func(string) (string, bool) { return "k", true },
 			MaxRetries: 0, Timeout: time.Second,
 		})
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
 		pA := classifier.WrapWithExactCache(innerA, ec, classifier.ExactCacheIdentity{
 			ProviderKind: classifier.KindOpenAIResponses, ModelID: "model-a",
 			CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1, ParserSchema: classifier.SchemaRawAssessment,
@@ -315,14 +312,21 @@ func RunCacheEvalFakeCI(ctx context.Context, commit string) (CacheEvalReport, er
 			ProviderKind: classifier.KindOpenAIResponses, ModelID: "model-b",
 			CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1, ParserSchema: classifier.SchemaRawAssessment,
 		})
-		req, _ := baseReq()
+		req, err := baseReq()
+		if err != nil {
+			srv.Close()
+			return rep, err
+		}
 		_, _ = pA.Assess(ctx, req)
 		_, _ = pB.Assess(ctx, req)
 		srv.Close()
-		_ = mk
+		ok := n.Load() == 2
+		if !ok {
+			rep.StaleHitRate = 1
+		}
 		rep.Rows = append(rep.Rows, CacheEvalRow{
 			Mode: ModeRequiredMissModel, ProviderKind: classifier.KindOpenAIResponses,
-			ProviderCalls: int(n.Load()), OK: n.Load() == 2, Note: "model identity change must miss",
+			ProviderCalls: int(n.Load()), OK: ok, Note: "model identity change must miss",
 		})
 	}
 
@@ -459,14 +463,30 @@ func RunCacheEvalFakeCI(ctx context.Context, commit string) (CacheEvalReport, er
 
 	// Aggregate
 	allOK := true
+	stale := 0
 	for _, row := range rep.Rows {
 		if !row.OK {
 			allOK = false
+			if (row.Mode == ModeRequiredMissModel || row.Mode == ModeRequiredMissEvents) && row.ProviderCalls < 2 {
+				stale++
+			}
 		}
 	}
 	rep.AllModesOK = allOK
-	rep.StaleHitRate = 0
-	rep.InvalidAdmissionCount = 0
+	if len(rep.Rows) > 0 {
+		// Fraction of required-miss modes that failed as stale reuse; 0 when all OK.
+		missModes := 0
+		for _, row := range rep.Rows {
+			if row.Mode == ModeRequiredMissModel || row.Mode == ModeRequiredMissEvents {
+				missModes++
+			}
+		}
+		if missModes > 0 {
+			rep.StaleHitRate = float64(stale) / float64(missModes)
+		}
+	}
+	// Invalid admission not exercised in this fake harness (errors are not cached by design).
+	rep.InvalidAdmissionCount = -1 // not_measured sentinel for consumers
 	if !allOK {
 		rep.Disposition = "MORE-DATA"
 		rep.DispositionNote += " One or more fake-CI rows failed; investigate before LIMITED-GO."

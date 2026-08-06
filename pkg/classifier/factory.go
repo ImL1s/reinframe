@@ -25,7 +25,8 @@ type ProviderFactoryOptions struct {
 //	kind empty/none         → FakeClassifierProvider (no network)
 //	kind openai_compatible  → OpenAICompatibleProvider (loopback-only by default)
 //	kind openai_responses   → OpenAIResponsesProvider (native Responses; #134)
-//	kind anthropic_messages → AnthropicMessagesProvider (native Messages; #135)
+//	kind anthropic_messages      → AnthropicMessagesProvider (native Messages; #135)
+//	kind gemini_generate_content → GeminiGenerateContentProvider (native generateContent; #136)
 //
 // Loading a YAML file does not automatically wire a provider unless the process
 // calls this factory (or equivalent).
@@ -105,6 +106,25 @@ func NewClassifierProviderFromConfig(cfg config.ClassifierProviderConfig, opts P
 			AllowRemote:         opts.AllowRemote,
 		}
 		return NewAnthropicMessages(anth)
+	case KindGeminiGenerateContent:
+		gem := GeminiGenerateContentConfig{
+			Kind:                KindGeminiGenerateContent,
+			Model:               cfg.Model,
+			BaseURL:             cfg.BaseURL,
+			Path:                cfg.Path,
+			APIKeyRef:           cfg.APIKeyRef,
+			Timeout:             time.Duration(cfg.TimeoutMS) * time.Millisecond,
+			MaxInputBytes:       cfg.MaxInputBytes,
+			MaxOutputBytes:      cfg.MaxOutputBytes,
+			CapabilitiesProfile: cfg.CapabilitiesProfile,
+			EgressProfile:       cfg.EgressProfile,
+			HTTPClient:          opts.HTTPClient,
+			LookupEnv:           opts.LookupEnv,
+			Sleep:               opts.Sleep,
+			Now:                 opts.Now,
+			AllowRemote:         opts.AllowRemote,
+		}
+		return NewGeminiGenerateContent(gem)
 	default:
 		return nil, fmt.Errorf("classifier factory: unknown kind")
 	}

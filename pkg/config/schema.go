@@ -60,7 +60,7 @@ type Config struct {
 // ClassifierProviderConfig selects the optional real classifier provider (#132).
 // kind empty or "none" disables network providers (default).
 type ClassifierProviderConfig struct {
-	// Kind: ""|"none"|"openai_compatible"|"openai_responses"|"anthropic_messages".
+	// Kind: ""|"none"|"openai_compatible"|"openai_responses"|"anthropic_messages"|"gemini_generate_content".
 	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
 	// Model identifier (required when kind is a network provider).
 	Model string `json:"model,omitempty" yaml:"model,omitempty"`
@@ -96,6 +96,8 @@ func (cp ClassifierProviderConfig) NormalizeKind() string {
 		return "openai_responses"
 	case "anthropic_messages":
 		return "anthropic_messages"
+	case "gemini_generate_content":
+		return "gemini_generate_content"
 	default:
 		return k
 	}
@@ -316,7 +318,7 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 			return fmt.Errorf("classifier_provider: disabled kind requires empty fields")
 		}
 		return nil
-	case "openai_compatible", "openai_responses", "anthropic_messages":
+	case "openai_compatible", "openai_responses", "anthropic_messages", "gemini_generate_content":
 		// ok
 	default:
 		return fmt.Errorf("classifier_provider.kind is not supported")
@@ -404,6 +406,15 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 		default:
 			return fmt.Errorf("classifier_provider.platform is not supported")
 		}
+	case "gemini_generate_content":
+		switch prof {
+		case "", "gemini-off-v1", "gemini-implicit-v1", "gemini-implicit-min1024-v1":
+		default:
+			return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
+		}
+		if strings.TrimSpace(cp.Platform) != "" {
+			return fmt.Errorf("classifier_provider.platform is only valid for anthropic_messages")
+		}
 	default:
 		switch prof {
 		case "", "generic-none-v1":
@@ -412,6 +423,8 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 		case "anthropic-off-v1", "anthropic-automatic-5m-v1", "anthropic-automatic-1h-v1",
 			"anthropic-explicit-prefix-5m-v1", "anthropic-explicit-prefix-1h-v1":
 			return fmt.Errorf("classifier_provider: anthropic cache profiles require kind anthropic_messages")
+		case "gemini-off-v1", "gemini-implicit-v1", "gemini-implicit-min1024-v1":
+			return fmt.Errorf("classifier_provider: gemini cache profiles require kind gemini_generate_content")
 		default:
 			return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
 		}

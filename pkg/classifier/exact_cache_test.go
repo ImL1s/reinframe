@@ -3,6 +3,7 @@ package classifier_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -325,6 +326,77 @@ func TestExactCache_SingleflightUsageAccounting(t *testing.T) {
 	if sumIn != 100 {
 		t.Fatalf("token sum must equal one provider response, got %d", sumIn)
 	}
+}
+
+// Provider panic during singleflight must not crash the process: inflight slot is
+// cleaned up, waiters observe an error, and a later call can retry successfully.
+func TestExactCache_SingleflightProviderPanicSafe(t *testing.T) {
+	t.Parallel()
+	cache, err := classifier.NewExactAssessmentCache(classifier.ExactCacheConfig{
+		Enabled: true, MaxEntries: 16, MaxBytes: 1 << 20, TTL: time.Minute, Singleflight: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &panicOnceProvider{counting: &countingProvider{sev: 44}}
+	p := &classifier.CachingClassifierProvider{Inner: inner, Cache: cache, Identity: testIdentity()}
+	req, err := classifier.NewProviderRequest(baseInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Force the first shared flight to panic.
+	inner.panicNext.Store(true)
+	const n = 4
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			_, errs[i] = p.Assess(context.Background(), req)
+		}()
+	}
+	wg.Wait()
+	for i, e := range errs {
+		if e == nil {
+			t.Fatalf("caller %d: expected panic-propagated error", i)
+		}
+		if !strings.Contains(e.Error(), "singleflight panic") {
+			t.Fatalf("caller %d: unexpected err %v", i, e)
+		}
+	}
+	// Inflight slot must be gone (no hang) and nothing admitted.
+	if cache.Stats().Admissions != 0 {
+		t.Fatalf("panic must not admit: %+v", cache.Stats())
+	}
+	// Retry after panic succeeds with a fresh provider call.
+	inner.panicNext.Store(false)
+	res, err := p.Assess(context.Background(), req)
+	if err != nil {
+		t.Fatalf("retry after panic: %v", err)
+	}
+	if res.Assessment.Severity != 44 {
+		t.Fatalf("severity=%d", res.Assessment.Severity)
+	}
+	// At least one successful call after the panicked attempt.
+	if inner.counting.n.Load() < 1 {
+		t.Fatal("expected successful provider call on retry")
+	}
+}
+
+// panicOnceProvider panics when panicNext is true, else delegates to counting.
+type panicOnceProvider struct {
+	counting  *countingProvider
+	panicNext atomic.Bool
+}
+
+func (p *panicOnceProvider) Assess(ctx context.Context, req classifier.ProviderRequest) (classifier.ProviderResult, error) {
+	if p.panicNext.Load() {
+		panic("sf_provider_boom")
+	}
+	return p.counting.Assess(ctx, req)
 }
 
 type blockingProvider struct {

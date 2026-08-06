@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-06) — post provider/cache campaign (#134–#138, #140 Lane A/B, #141 MORE-DATA)  
+**Status:** current (2026-08-06) — provider/cache campaign complete on main (through PR **#169** skeptic fix)  
 **Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open for residual environment-bound work.
 
 ## Implemented — narrow DoD, do not reopen for the same scope
@@ -13,10 +13,10 @@
 | Native Anthropic Messages | **#135 / PR #154** | `claude_api` only; explicit recommended |
 | Native Gemini generateContent | **#136 / PR #155** | Implicit; explicit objects deferred |
 | Native xAI Responses | **#137 / PR #156** | `prompt_cache_key`; no `x-grok-conv-id` |
-| Exact assessment cache | **#138 / PR #157** | Process-local; default disabled |
+| Exact assessment cache | **#138 / PR #157** + **#169** | Process-local; default disabled; session partition; cancel-safe singleflight |
 | Challenge eval Lane A | **#140 / PR #159** | Deterministic fixtures/metrics; MORE-DATA |
 | Challenge eval Lane B offline | **#140 / PR #160** | Fake native transports only |
-| Provider/cache eval | **#141 / PR #161** | Fake CI; disposition **MORE-DATA** |
+| Provider/cache eval | **#141 / PR #161** + **#169** | Fake CI modes incl. stage0/cold/dynamic/invalid-admission; disposition **MORE-DATA** |
 | Offline detector/classifier foundation | **#100 / PR #129** | MORE-DATA; no hard-gate |
 
 ## Residual open work

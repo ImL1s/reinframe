@@ -11,7 +11,7 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 ## Project Status
 
 > **Phase: M1 + M2 library + experimental host bridges + shadow classifier + host-neutral challenge core + native classifier providers + exact cache + offline evaluation**  
-> **Implemented:** [#131](https://github.com/ImL1s/reinframe/issues/131)/[#148](https://github.com/ImL1s/reinframe/pull/148)–[#138](https://github.com/ImL1s/reinframe/issues/138)/[#157](https://github.com/ImL1s/reinframe/pull/157) challenge + provider foundation + native adapters + exact cache; [#140](https://github.com/ImL1s/reinframe/issues/140) Lane A ([#159](https://github.com/ImL1s/reinframe/pull/159)) + Lane B offline fake ([#160](https://github.com/ImL1s/reinframe/pull/160)); [#141](https://github.com/ImL1s/reinframe/issues/141)/[#161](https://github.com/ImL1s/reinframe/pull/161) provider/exact-cache fake-CI evaluation (**MORE-DATA**).  
+> **Implemented:** [#131](https://github.com/ImL1s/reinframe/issues/131)/[#148](https://github.com/ImL1s/reinframe/pull/148)–[#138](https://github.com/ImL1s/reinframe/issues/138)/[#157](https://github.com/ImL1s/reinframe/pull/157) challenge + provider foundation + native adapters + exact cache ([#169](https://github.com/ImL1s/reinframe/pull/169) session partition + cancel-safe singleflight); [#140](https://github.com/ImL1s/reinframe/issues/140) Lane A ([#159](https://github.com/ImL1s/reinframe/pull/159)) + Lane B offline fake ([#160](https://github.com/ImL1s/reinframe/pull/160)); [#141](https://github.com/ImL1s/reinframe/issues/141)/[#161](https://github.com/ImL1s/reinframe/pull/161)+[#169](https://github.com/ImL1s/reinframe/pull/169) provider/exact-cache fake-CI evaluation (**MORE-DATA**).  
 > **Environment-blocked residual:** [#120](https://github.com/ImL1s/reinframe/issues/120) live Claude smoke → [#108](https://github.com/ImL1s/reinframe/issues/108), [#139](https://github.com/ImL1s/reinframe/issues/139), and #140 Claude host lane. Epic [#80](https://github.com/ImL1s/reinframe/issues/80) remains open.  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
 
@@ -19,7 +19,7 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 
 ```text
 Shipped:
-  #134–#137 native adapters · #138 exact cache (default off)
+  #134–#137 native adapters · #138 exact cache (default off; session partition; cancel-safe singleflight)
   #140 Lane A deterministic · #140 Lane B offline fake
   #141 fake-CI cache evaluation (MORE-DATA; no default enable)
 
@@ -62,12 +62,12 @@ Interactive environment residual:
 | Native Anthropic Messages adapter (#135 / PR #154) | ✅ Direct Claude API only; explicit recommended |
 | Native Gemini generateContent adapter (#136 / PR #155) | ✅ Implicit profiles; explicit objects deferred |
 | Native xAI Responses adapter (#137 / PR #156) | ✅ `prompt_cache_key` sticky routing; no `x-grok-conv-id` |
-| Exact `RawAssessment` cache + singleflight (#138 / PR #157) | ✅ Process-local; default disabled; Stage-2 never cached |
+| Exact `RawAssessment` cache + singleflight (#138 / PR #157, fix #169) | ✅ Process-local; default disabled; session partition; Stage-2 never cached |
 | Live Claude ALLOW/BLOCK/context smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
 | Real advice consumer / ACK (#108) | 🔲 Open — blocked by #120 |
 | Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; blocked by #120 |
 | Challenge evaluation (#140) Lane A/B | ✅ Offline deterministic + fake-native lanes (PR #159/#160); **Claude host lane open** (needs #139) |
-| Provider/cache evaluation (#141 / PR #161) | ✅ Fake-CI suite; disposition **MORE-DATA**; no default cache enablement |
+| Provider/cache evaluation (#141 / PR #161, modes fix #169) | ✅ Fake-CI suite (stage0/cold/dynamic/invalid-admission); disposition **MORE-DATA**; no default cache enablement |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Core invariants

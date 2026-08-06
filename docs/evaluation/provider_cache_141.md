@@ -20,6 +20,18 @@
 | `invalid_admission_rejected` | Transport/parse failures never enter exact cache (count=0) |
 | `generic_openai_compatible_cache_neutral` | Generic adapter rejects native cache profiles |
 
+## Correctness aggregates (fake CI)
+
+| Metric | Requirement on green run |
+|--------|--------------------------|
+| `stale_hit_rate` | `0` |
+| `invalid_admission_count` | `0` (transport/parse failures never admitted) |
+| `hard_gate_enabled` | `false` |
+| `default_cache_on` | `false` |
+| `disposition` | **MORE-DATA** |
+
+Post-campaign fix PR **#169** expanded modes and proved `invalid_admission_count=0` on the exercised paths.
+
 ## Disposition
 
 **MORE-DATA**

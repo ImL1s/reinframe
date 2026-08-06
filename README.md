@@ -91,7 +91,7 @@ Evaluation:
 | Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; blocked by #120 |
 | Challenge evaluation (#140) Lane A/B | ✅ Offline deterministic + fake-native lanes (PR #159/#160); **Claude host lane open** (needs #139) |
 | Provider/cache evaluation (#141 / PR #161, modes fix #169) | ✅ Fake-CI suite; disposition **MORE-DATA**; no default cache enablement |
-| Cross-host tunneling evaluation (#168) | 🔲 Open — blocked until matched live host lanes |
+| Cross-host tunneling evaluation (#168) | ✅ Offline fake framework (MORE-DATA); **live match open** until #164/#167/#120 |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Core invariants

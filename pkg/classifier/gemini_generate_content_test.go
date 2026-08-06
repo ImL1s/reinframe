@@ -36,9 +36,10 @@ func TestGeminiGenerateContent_StructuredAndCacheHit(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	// Use min1024 profile so legitimate event bulk can reach eligible without padding.
 	p, err := classifier.NewGeminiGenerateContent(classifier.GeminiGenerateContentConfig{
 		Model: "gemini-test", BaseURL: srv.URL, AllowRemote: true, HTTPClient: srv.Client(),
-		CapabilitiesProfile: classifier.CapabilitiesProfileGeminiImplicitV1,
+		CapabilitiesProfile: classifier.CapabilitiesProfileGeminiImplicitMin1024V1,
 		APIKeyRef:           "${TEST_GEMINI_KEY}",
 		LookupEnv: func(k string) (string, bool) {
 			if k == "TEST_GEMINI_KEY" {
@@ -85,6 +86,17 @@ func TestGeminiGenerateContent_StructuredAndCacheHit(t *testing.T) {
 	}
 	if res.Usage.ReasoningTokens != 2 {
 		t.Fatalf("thoughts=%d", res.Usage.ReasoningTokens)
+	}
+	// Eligible path audit (min1024 profile with large dynamic content).
+	if res.Usage.CacheBackend != classifier.KindGeminiGenerateContent {
+		t.Fatalf("eligible CacheBackend=%s", res.Usage.CacheBackend)
+	}
+	if res.Usage.CacheKeyHash == "" {
+		t.Fatal("eligible path must set CacheKeyHash")
+	}
+	mode, key, _, _ := p.CacheAuditForTest(req)
+	if mode != "eligible" || key == "" {
+		t.Fatalf("audit mode=%s key=%q", mode, key)
 	}
 	if res.Meta.ProviderRequestID != "resp_g1" {
 		t.Fatal(res.Meta.ProviderRequestID)
@@ -337,6 +349,16 @@ func TestGeminiGenerateContent_RejectExplicitPathAndProfiles(t *testing.T) {
 	if err == nil {
 		t.Fatal("openai path must fail")
 	}
+	// Model/path mismatch rejected.
+	_, err = classifier.NewGeminiGenerateContent(classifier.GeminiGenerateContentConfig{
+		Model: "gemini-A", BaseURL: "https://generativelanguage.googleapis.com",
+		Path:                "/v1beta/models/gemini-B:generateContent",
+		CapabilitiesProfile: classifier.CapabilitiesProfileGeminiOffV1,
+		LookupEnv:           func(string) (string, bool) { return "k", true }, APIKeyRef: "${K}",
+	})
+	if err == nil {
+		t.Fatal("model/path mismatch must fail")
+	}
 	// Config: openai explicit profile on gemini kind fails validation.
 	c := config.Default()
 	c.ClassifierProvider = config.ClassifierProviderConfig{
@@ -345,6 +367,30 @@ func TestGeminiGenerateContent_RejectExplicitPathAndProfiles(t *testing.T) {
 	}
 	if err := c.Validate(); err == nil {
 		t.Fatal("openai profile on gemini must fail")
+	}
+}
+
+func TestGeminiGenerateContent_OfficialHostAllowlist(t *testing.T) {
+	t.Parallel()
+	// Official host allowed without AllowRemote.
+	_, err := classifier.NewGeminiGenerateContent(classifier.GeminiGenerateContentConfig{
+		Model: "m", BaseURL: "https://generativelanguage.googleapis.com",
+		CapabilitiesProfile: classifier.CapabilitiesProfileGeminiOffV1,
+		LookupEnv:           func(string) (string, bool) { return "k", true }, APIKeyRef: "${K}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Arbitrary googleapis.com must NOT auto-allow (requires AllowRemote).
+	_, err = classifier.NewGeminiGenerateContent(classifier.GeminiGenerateContentConfig{
+		Model: "m", BaseURL: "https://storage.googleapis.com",
+		Path:                "/v1beta/models/m:generateContent",
+		CapabilitiesProfile: classifier.CapabilitiesProfileGeminiOffV1,
+		LookupEnv:           func(string) (string, bool) { return "k", true }, APIKeyRef: "${K}",
+		AllowRemote: false,
+	})
+	if err == nil {
+		t.Fatal("storage.googleapis.com must not be treated as official Gemini host")
 	}
 }
 

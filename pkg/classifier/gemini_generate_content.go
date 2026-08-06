@@ -102,6 +102,11 @@ func NewGeminiGenerateContent(cfg GeminiGenerateContentConfig) (*GeminiGenerateC
 	if !strings.HasSuffix(pathCanon, ":generateContent") {
 		return nil, newProviderError("config", "gemini path must end with :generateContent", false, 0)
 	}
+	// Path model segment must match config.Model (audit/ModelID vs endpoint identity).
+	wantSuffix := "/models/" + model + ":generateContent"
+	if !strings.HasSuffix(pathCanon, wantSuffix) {
+		return nil, newProviderError("config", "gemini path model must match configured model", false, 0)
+	}
 	if strings.Contains(pathCanon, "chat/completions") || strings.Contains(pathCanon, "/openai") {
 		return nil, newProviderError("config", "gemini must not use openai-compatible path", false, 0)
 	}
@@ -366,7 +371,7 @@ type geminiCacheAudit struct {
 	Mode     string
 	KeyHash  string
 	MinTok   int
-	EstInput int // approximate input size for eligibility (UTF-8 runes of stable+dynamic / 4)
+	EstInput int // approximate input size for eligibility (UTF-8 bytes of stable+dynamic / 4)
 }
 
 func (p *GeminiGenerateContentProvider) buildRequestJSON(req ProviderRequest, maxIn int) ([]byte, geminiCacheAudit, error) {
@@ -689,5 +694,7 @@ func isGeminiOfficialHost(base string) bool {
 		return false
 	}
 	h = strings.ToLower(h)
-	return h == "generativelanguage.googleapis.com" || strings.HasSuffix(h, ".googleapis.com")
+	// Narrow pin only — not all *.googleapis.com (siblings pin exact product hosts).
+	return h == "generativelanguage.googleapis.com" ||
+		strings.HasSuffix(h, ".generativelanguage.googleapis.com")
 }

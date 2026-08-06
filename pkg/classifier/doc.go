@@ -19,7 +19,15 @@
 //   - provider-native prompt_cache_key / explicit stable-prefix breakpoint wiring;
 //   - CacheHit only from positive provider-reported cache-read tokens.
 //
-// Non-claims for this package revision: Anthropic/Gemini/xAI native adapters,
-// exact-assessment memoization/singleflight (#138), voting/failover, measured
-// cache savings (#141), or calibrated hard-gate enforcement.
+// #135 adds:
+//   - native Anthropic Messages adapter (anthropic_messages) for direct Claude API;
+//   - versioned off / automatic / explicit_stable_prefix profiles with 5m|1h TTL;
+//   - explicit: cache_control on last stable system block only (recommended);
+//   - automatic-*: no wire cache enablement (Anthropic automatic would cache
+//     through the dynamic last message — wrong for stable-prefix classify);
+//   - hosted platforms fail closed; CacheHit only from positive cache_read tokens.
+//
+// Non-claims for this package revision: Gemini/xAI native adapters, hosted
+// Anthropic equivalence (Bedrock/Vertex/Azure), exact-assessment memoization
+// (#138), voting/failover, measured cache savings (#141), or hard-gate enforcement.
 package classifier

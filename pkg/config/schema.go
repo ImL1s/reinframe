@@ -60,7 +60,7 @@ type Config struct {
 // ClassifierProviderConfig selects the optional real classifier provider (#132).
 // kind empty or "none" disables network providers (default).
 type ClassifierProviderConfig struct {
-	// Kind: ""|"none"|"openai_compatible"|"openai_responses".
+	// Kind: ""|"none"|"openai_compatible"|"openai_responses"|"anthropic_messages".
 	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
 	// Model identifier (required when kind is a network provider).
 	Model string `json:"model,omitempty" yaml:"model,omitempty"`
@@ -70,6 +70,9 @@ type ClassifierProviderConfig struct {
 	Path string `json:"path,omitempty" yaml:"path,omitempty"`
 	// APIKeyRef must be ${ENV} placeholder — never a raw secret.
 	APIKeyRef string `json:"api_key_ref,omitempty" yaml:"api_key_ref,omitempty"`
+	// Platform pins Anthropic direct Claude API vs hosted variants (#135).
+	// Empty defaults to claude_api for anthropic_messages; unsupported platforms fail closed.
+	Platform string `json:"platform,omitempty" yaml:"platform,omitempty"`
 	// TimeoutMS per-call timeout (default 1500).
 	TimeoutMS int `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
 	// MaxInputBytes / MaxOutputBytes bounds.
@@ -77,7 +80,7 @@ type ClassifierProviderConfig struct {
 	MaxOutputBytes int `json:"max_output_bytes,omitempty" yaml:"max_output_bytes,omitempty"`
 	// CapabilitiesProfile defaults to generic-none-v1.
 	CapabilitiesProfile string `json:"capabilities_profile,omitempty" yaml:"capabilities_profile,omitempty"`
-	// EgressProfile is an optional secret-free partition for native cache keys (#134).
+	// EgressProfile is an optional secret-free partition for native cache keys (#134/#135).
 	EgressProfile string `json:"egress_profile,omitempty" yaml:"egress_profile,omitempty"`
 }
 
@@ -91,6 +94,8 @@ func (cp ClassifierProviderConfig) NormalizeKind() string {
 		return "openai_compatible"
 	case "openai_responses":
 		return "openai_responses"
+	case "anthropic_messages":
+		return "anthropic_messages"
 	default:
 		return k
 	}
@@ -305,12 +310,13 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 		// Disabled: every other field must be empty/zero.
 		if strings.TrimSpace(cp.Model) != "" || strings.TrimSpace(cp.BaseURL) != "" ||
 			strings.TrimSpace(cp.Path) != "" || strings.TrimSpace(cp.APIKeyRef) != "" ||
+			strings.TrimSpace(cp.Platform) != "" ||
 			cp.TimeoutMS != 0 || cp.MaxInputBytes != 0 || cp.MaxOutputBytes != 0 ||
 			strings.TrimSpace(cp.CapabilitiesProfile) != "" || strings.TrimSpace(cp.EgressProfile) != "" {
 			return fmt.Errorf("classifier_provider: disabled kind requires empty fields")
 		}
 		return nil
-	case "openai_compatible", "openai_responses":
+	case "openai_compatible", "openai_responses", "anthropic_messages":
 		// ok
 	default:
 		return fmt.Errorf("classifier_provider.kind is not supported")
@@ -381,13 +387,36 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 		default:
 			return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
 		}
+		if strings.TrimSpace(cp.Platform) != "" {
+			return fmt.Errorf("classifier_provider.platform is only valid for anthropic_messages")
+		}
+	case "anthropic_messages":
+		switch prof {
+		case "", "anthropic-off-v1",
+			"anthropic-automatic-5m-v1", "anthropic-automatic-1h-v1",
+			"anthropic-explicit-prefix-5m-v1", "anthropic-explicit-prefix-1h-v1":
+		default:
+			return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
+		}
+		plat := strings.TrimSpace(strings.ToLower(cp.Platform))
+		switch plat {
+		case "", "claude_api":
+		default:
+			return fmt.Errorf("classifier_provider.platform is not supported")
+		}
 	default:
 		switch prof {
 		case "", "generic-none-v1":
 		case "openai-implicit-v1", "openai-explicit-prefix-v1", "openai-off-v1":
 			return fmt.Errorf("classifier_provider: openai cache profiles require kind openai_responses")
+		case "anthropic-off-v1", "anthropic-automatic-5m-v1", "anthropic-automatic-1h-v1",
+			"anthropic-explicit-prefix-5m-v1", "anthropic-explicit-prefix-1h-v1":
+			return fmt.Errorf("classifier_provider: anthropic cache profiles require kind anthropic_messages")
 		default:
 			return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
+		}
+		if strings.TrimSpace(cp.Platform) != "" {
+			return fmt.Errorf("classifier_provider.platform is only valid for anthropic_messages")
 		}
 	}
 	if len(cp.EgressProfile) > 256 {

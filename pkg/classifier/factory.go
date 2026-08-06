@@ -22,9 +22,10 @@ type ProviderFactoryOptions struct {
 
 // NewClassifierProviderFromConfig maps config.ClassifierProviderConfig to a ClassifierProvider.
 //
-//	kind empty/none        → FakeClassifierProvider (no network)
-//	kind openai_compatible → OpenAICompatibleProvider (loopback-only by default)
-//	kind openai_responses  → OpenAIResponsesProvider (native Responses; #134)
+//	kind empty/none         → FakeClassifierProvider (no network)
+//	kind openai_compatible  → OpenAICompatibleProvider (loopback-only by default)
+//	kind openai_responses   → OpenAIResponsesProvider (native Responses; #134)
+//	kind anthropic_messages → AnthropicMessagesProvider (native Messages; #135)
 //
 // Loading a YAML file does not automatically wire a provider unless the process
 // calls this factory (or equivalent).
@@ -80,6 +81,30 @@ func NewClassifierProviderFromConfig(cfg config.ClassifierProviderConfig, opts P
 			AllowRemote:         opts.AllowRemote,
 		}
 		return NewOpenAIResponses(resp)
+	case KindAnthropicMessages:
+		path := cfg.Path
+		if strings.TrimSpace(path) == "" {
+			path = DefaultAnthropicMessagesPath
+		}
+		anth := AnthropicMessagesConfig{
+			Kind:                KindAnthropicMessages,
+			Model:               cfg.Model,
+			BaseURL:             cfg.BaseURL,
+			Path:                path,
+			APIKeyRef:           cfg.APIKeyRef,
+			Platform:            cfg.Platform,
+			Timeout:             time.Duration(cfg.TimeoutMS) * time.Millisecond,
+			MaxInputBytes:       cfg.MaxInputBytes,
+			MaxOutputBytes:      cfg.MaxOutputBytes,
+			CapabilitiesProfile: cfg.CapabilitiesProfile,
+			EgressProfile:       cfg.EgressProfile,
+			HTTPClient:          opts.HTTPClient,
+			LookupEnv:           opts.LookupEnv,
+			Sleep:               opts.Sleep,
+			Now:                 opts.Now,
+			AllowRemote:         opts.AllowRemote,
+		}
+		return NewAnthropicMessages(anth)
 	default:
 		return nil, fmt.Errorf("classifier factory: unknown kind")
 	}

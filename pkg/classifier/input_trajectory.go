@@ -230,3 +230,112 @@ func EvidenceAllowlistFromDigests(recent, related []EventDigest) map[string]stru
 	}
 	return m
 }
+
+// DigestByteCount returns the canonical byte size used by BoundTrajectory.
+func DigestByteCount(events []EventDigest) int {
+	n := 0
+	for _, e := range events {
+		n += len(e.EventID) + len(e.EventType) + len(e.Summary) + len(e.ContentHash) + len(e.RelatedTo) + 16
+	}
+	return n
+}
+
+// MergeWindowMeta merges upstream provenance with local N/B bounding results.
+// Never clears upstream Truncated merely because the already-reduced slice fits.
+func MergeWindowMeta(upstream, local WindowMeta, recent, related []EventDigest) WindowMeta {
+	out := WindowMeta{
+		EventCount: len(recent) + len(related),
+		ByteCount:  DigestByteCount(recent) + DigestByteCount(related),
+	}
+	// Prefer exact shown counts from local when local computed them; else recompute.
+	if local.EventCount > 0 || local.ByteCount > 0 || local.Truncated {
+		out.EventCount = local.EventCount
+		out.ByteCount = local.ByteCount
+	}
+	out.Truncated = upstream.Truncated || local.Truncated
+	out.OverflowMarker = mergeOverflowMarkers(upstream.OverflowMarker, local.OverflowMarker)
+	if out.Truncated && out.OverflowMarker == OverflowNone {
+		// Prefer local marker, then upstream, then events as safe default.
+		if local.OverflowMarker != OverflowNone {
+			out.OverflowMarker = local.OverflowMarker
+		} else if upstream.OverflowMarker != OverflowNone {
+			out.OverflowMarker = upstream.OverflowMarker
+		} else {
+			out.OverflowMarker = OverflowEvents
+		}
+	}
+	if !out.Truncated {
+		out.OverflowMarker = OverflowNone
+	}
+	return out
+}
+
+func mergeOverflowMarkers(a, b string) string {
+	if a == OverflowNone {
+		return b
+	}
+	if b == OverflowNone {
+		return a
+	}
+	if a == b {
+		return a
+	}
+	// events + bytes → events_and_bytes
+	hasE := a == OverflowEvents || a == OverflowEventsAndBytes || b == OverflowEvents || b == OverflowEventsAndBytes
+	hasB := a == OverflowBytes || a == OverflowEventsAndBytes || b == OverflowBytes || b == OverflowEventsAndBytes
+	if hasE && hasB {
+		return OverflowEventsAndBytes
+	}
+	if hasE {
+		return OverflowEvents
+	}
+	if hasB {
+		return OverflowBytes
+	}
+	return a
+}
+
+// ValidateLegacyFixtureIDs enforces closed bounds for fixture-only ID lists.
+func ValidateLegacyFixtureIDs(recent, related []string) error {
+	const maxID = MaxEventIDBytes
+	const maxN = MaxRecentEvents
+	if len(recent) > maxN || len(related) > maxN {
+		return fmt.Errorf("classifier: too many legacy event ids")
+	}
+	seen := map[string]struct{}{}
+	check := func(ids []string) error {
+		for _, id := range ids {
+			if id == "" || len(id) > maxID {
+				return fmt.Errorf("classifier: invalid legacy event id")
+			}
+			if _, dup := seen[id]; dup {
+				return fmt.Errorf("classifier: duplicate legacy event id")
+			}
+			seen[id] = struct{}{}
+		}
+		return nil
+	}
+	if err := check(recent); err != nil {
+		return err
+	}
+	if err := check(related); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateWindowMetaExact cross-checks Window against shown digests.
+func ValidateWindowMetaExact(w WindowMeta, recent, related []EventDigest) error {
+	if err := ValidateWindowMeta(w); err != nil {
+		return err
+	}
+	wantN := len(recent) + len(related)
+	wantB := DigestByteCount(recent) + DigestByteCount(related)
+	if w.EventCount != wantN {
+		return fmt.Errorf("classifier: window event_count mismatch")
+	}
+	if w.ByteCount != wantB {
+		return fmt.Errorf("classifier: window byte_count mismatch")
+	}
+	return nil
+}

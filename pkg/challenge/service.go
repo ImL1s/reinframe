@@ -638,6 +638,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 
 	now2 := s.now()
 	from2 := rec.State
+	auditID := providerCallAuditID(re.ProviderCall)
 	// Provider fail-open (unavailable/parse/timeout/transport) may yield Stage2 ALLOW for
 	// shadow product policy, but must never mint one-shot ALLOWED_ONCE authorization.
 	// Only genuine successful assessment (or explicit Stage2 exception flags) may allow-once.
@@ -647,7 +648,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		rec.Stage2Decision = DecisionBlock
 		rec.Intervention = InterventionHumanReview
 		rec.ConsumedRetryKey = attemptKey
-		rec = s.store.appendTransition(rec, from2, StateHumanReview, "human_review", req.CorrelationID, req.Proposed.ActionID, attemptKey, re.Reason, now2, nil)
+		rec = s.store.appendTransitionAudit(rec, from2, StateHumanReview, "human_review", req.CorrelationID, req.Proposed.ActionID, attemptKey, re.Reason, auditID, now2, nil)
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 		s.store.byID[rec.ChallengeID].Intervention = InterventionHumanReview
 		s.store.byID[rec.ChallengeID].ConsumedRetryKey = attemptKey
@@ -655,7 +656,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		rec.Stage2Decision = DecisionAllow
 		rec.Intervention = InterventionNone
 		rec.ConsumedRetryKey = attemptKey
-		rec = s.store.appendTransition(rec, from2, StateAllowedOnce, "allowed_once", req.CorrelationID, req.Proposed.ActionID, attemptKey, re.Reason, now2, nil)
+		rec = s.store.appendTransitionAudit(rec, from2, StateAllowedOnce, "allowed_once", req.CorrelationID, req.Proposed.ActionID, attemptKey, re.Reason, auditID, now2, nil)
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionAllow
 		s.store.byID[rec.ChallengeID].Intervention = InterventionNone
 		s.store.byID[rec.ChallengeID].ConsumedRetryKey = attemptKey
@@ -666,7 +667,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		if re.Stage2Decision == DecisionAllow && isProviderFailOpenReason(re.Reason) {
 			note = re.Reason + "_no_allowed_once"
 		}
-		rec = s.store.appendTransition(rec, from2, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, attemptKey, note, now2, nil)
+		rec = s.store.appendTransitionAudit(rec, from2, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, attemptKey, note, auditID, now2, nil)
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 		s.store.byID[rec.ChallengeID].ConsumedRetryKey = attemptKey
 	}
@@ -674,6 +675,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	s.signalTerminal(out.ChallengeID)
 	return RetryResult{
 		Record: out, Stage2Decision: out.Stage2Decision, Intervention: out.Intervention, Relationship: rel,
+		ProviderCall: re.ProviderCall, ProviderCallAuditID: auditID,
 	}, nil
 }
 
@@ -687,6 +689,19 @@ func isProviderFailOpenReason(reason string) bool {
 	default:
 		return false
 	}
+}
+
+// providerCallAuditID returns a durable hash identity for a closed ProviderCallAudit.
+func providerCallAuditID(a *classifier.ProviderCallAudit) string {
+	if a == nil {
+		return ""
+	}
+	b, err := a.AuditJSON()
+	if err != nil || len(b) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:16])
 }
 
 // Abandon marks an OPEN or JUSTIFIED challenge abandoned.

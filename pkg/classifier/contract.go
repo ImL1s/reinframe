@@ -108,6 +108,13 @@ func ValidateProviderRequest(req ProviderRequest) error {
 	if err := ValidateClassifierInput(req.Input); err != nil {
 		return err
 	}
+	// Real production paths reject legacy ID-only evidence packets.
+	if !req.Input.AllowLegacyFixtureIDs {
+		if (len(req.Input.RecentEventIDs) > 0 || len(req.Input.RelatedEventIDs) > 0) &&
+			len(req.Input.RecentEvents) == 0 && len(req.Input.RelatedEvents) == 0 {
+			return fmt.Errorf("classifier: legacy event IDs without digests rejected")
+		}
+	}
 	if err := ValidatePromptPlan(req.Prompt, req.Input); err != nil {
 		return err
 	}

@@ -170,7 +170,15 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 		if in.ContractRevision > 0 {
 			cin.ContractRevision = in.ContractRevision
 		}
-		preq, perr := classifier.NewProviderRequest(cin)
+		var preq classifier.ProviderRequest
+		var perr error
+		// Explicit fixture mode for Fake/#105 (FixtureName or legacy IDs without digests).
+		if cin.FixtureName != "" || ((len(cin.RecentEventIDs) > 0 || len(cin.RelatedEventIDs) > 0) &&
+			len(cin.RecentEvents) == 0 && len(cin.RelatedEvents) == 0) {
+			preq, perr = classifier.NewFixtureProviderRequest(cin)
+		} else {
+			preq, perr = classifier.NewProviderRequest(cin)
+		}
 		if perr != nil {
 			if in.PolicyClass == PolicyClassSecurity {
 				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_fail_closed"}, nil
@@ -178,6 +186,15 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "provider_fail_open", RawSeverity: 0}, nil
 		}
 		pres, err := in.Provider.Assess(ctx, preq)
+		// Request-bound validation before any threshold scoring.
+		if err == nil {
+			if verr := classifier.ValidateProviderResultForRequest(preq, pres); verr != nil {
+				err = verr
+				pres.Meta.ParseStatus = classifier.ParseStatusError
+				pres.Meta.ErrorClass = "parse"
+				pres.Meta.FallbackReason = "contract"
+			}
+		}
 		raw := pres.Assessment
 		// Always retain closed provider-call audit (Usage/Meta); observer is best-effort.
 		a := classifier.BuildProviderCallAudit(preq, pres, rec.SessionID, rec.ChallengeID, time.Now().UTC())
@@ -197,7 +214,8 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 		}
 		auditPtr := &a
 		if in.Observer != nil {
-			_ = in.Observer.RecordProviderCall(ctx, a) // best-effort; never alters policy
+			obsCtx := context.WithoutCancel(ctx)
+			_ = in.Observer.RecordProviderCall(obsCtx, a) // best-effort; never alters policy
 		}
 		if err != nil {
 			// Parent cancel/deadline: raw identity (never fail-open / persist ALLOWED_ONCE).
@@ -205,13 +223,21 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_context_canceled", ProviderCall: auditPtr}, err
 			}
+			// Contract/parse validation failures are parse-class, not transport.
+			var pe *classifier.ProviderError
+			if errors.As(err, &pe) && pe != nil && pe.Class == "parse" {
+				if in.PolicyClass == PolicyClassSecurity {
+					return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "parse_fail_closed", ProviderCall: auditPtr}, nil
+				}
+				return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "parse_fail_open", ProviderCall: auditPtr}, nil
+			}
 			if in.PolicyClass == PolicyClassSecurity {
 				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_fail_closed", ProviderCall: auditPtr}, nil
 			}
 			// Productivity fail-open on provider error (incl. adapter timeout) — not justification auto-allow.
 			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "provider_fail_open", RawSeverity: 0, ProviderCall: auditPtr}, nil
 		}
-		// Stage 2 threshold
+		// Stage 2 threshold — only validated ParseStatus=ok reaches scoring.
 		if raw.ParseStatus != "ok" && raw.ParseStatus != classifier.ParseStatusOK {
 			if in.PolicyClass == PolicyClassSecurity {
 				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "parse_fail_closed", ProviderCall: auditPtr}, nil

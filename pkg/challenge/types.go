@@ -169,9 +169,12 @@ type ChallengeEvent struct {
 	CorrelationID string `json:"correlation_id,omitempty"`
 	CausationID   string `json:"causation_id,omitempty"`
 	// PayloadHash is a hash of event-specific bounded fields (no secrets).
-	PayloadHash string    `json:"payload_hash,omitempty"`
-	Note        string    `json:"note,omitempty"`
-	At          time.Time `json:"at"`
+	PayloadHash string `json:"payload_hash,omitempty"`
+	// ProviderCallAuditID is a durable link to the Stage-1 provider-call audit
+	// (hash of closed audit JSON). Empty when no provider was invoked.
+	ProviderCallAuditID string    `json:"provider_call_audit_id,omitempty"`
+	Note                string    `json:"note,omitempty"`
+	At                  time.Time `json:"at"`
 }
 
 // OpenRequest opens a challenge after a productivity BLOCK.
@@ -213,6 +216,10 @@ type RetryResult struct {
 	Relationship     string
 	IdempotentReplay bool // true when duplicate concurrent/idempotent retry
 	RejectedReason   string
+	// ProviderCall is the closed Stage-1 provider-call audit when a provider ran.
+	ProviderCall *classifier.ProviderCallAudit
+	// ProviderCallAuditID is a durable hash identity of ProviderCall for replay.
+	ProviderCallAuditID string
 }
 
 // AuditRecord is a closed audit blob without secrets or unrestricted prompts.

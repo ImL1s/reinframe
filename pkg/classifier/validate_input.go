@@ -17,15 +17,29 @@ var validAppealability = map[string]struct{}{
 	"": {}, "APPEALABLE": {}, "NON_APPEALABLE": {}, "HUMAN_REVIEW": {},
 }
 
-// ValidateClassifierInput enforces closed schema and trajectory/challenge bounds.
+// ValidateClassifierInput enforces closed schema and trajectory/challenge bounds
+// under default (non-strict fixture-compatible) options.
 func ValidateClassifierInput(in ClassifierInput) error {
+	return ValidateClassifierInputOpts(in, ProviderRequestOptions{AllowLegacyFixtureIDs: in.AllowLegacyFixtureIDs})
+}
+
+// ValidateClassifierInputOpts enforces closed schema; Production tightens enums/anchors.
+func ValidateClassifierInputOpts(in ClassifierInput, opts ProviderRequestOptions) error {
 	if in.SchemaVersion != SchemaClassifierInput {
 		return fmt.Errorf("classifier: classifier_input schema required")
 	}
-	switch in.PolicyClass {
-	case "", PolicyClassProductivity, PolicyClassSecurity:
-	default:
-		return fmt.Errorf("classifier: unknown policy_class")
+	if opts.Production {
+		switch in.PolicyClass {
+		case PolicyClassProductivity, PolicyClassSecurity:
+		default:
+			return fmt.Errorf("classifier: production policy_class required")
+		}
+	} else {
+		switch in.PolicyClass {
+		case "", PolicyClassProductivity, PolicyClassSecurity:
+		default:
+			return fmt.Errorf("classifier: unknown policy_class")
+		}
 	}
 	if in.ContractRevision < 0 || in.EvidenceRevision < 0 {
 		return fmt.Errorf("classifier: negative revision")
@@ -33,17 +47,36 @@ func ValidateClassifierInput(in ClassifierInput) error {
 	if err := ValidateTaskAnchor(in.TaskAnchor); err != nil {
 		return err
 	}
+	if opts.Production && (len(in.RecentEvents) > 0 || len(in.RelatedEvents) > 0) {
+		if in.TaskAnchor.TaskID == "" || in.TaskAnchor.Objective == "" {
+			return fmt.Errorf("classifier: production task_anchor required with trajectory")
+		}
+	}
 	if err := ValidateEventDigests(in.RecentEvents, MaxRecentEvents); err != nil {
 		return err
 	}
 	if err := ValidateEventDigests(in.RelatedEvents, MaxRelatedEvents); err != nil {
 		return err
 	}
-	if err := ValidateWindowMeta(in.Window); err != nil {
+	// Cross-list uniqueness.
+	if err := noDupAcross(in.RecentEvents, in.RelatedEvents); err != nil {
 		return err
 	}
+	if len(in.RecentEvents) > 0 || len(in.RelatedEvents) > 0 {
+		if err := ValidateWindowMetaExact(in.Window, in.RecentEvents, in.RelatedEvents); err != nil {
+			return err
+		}
+	} else {
+		if err := ValidateWindowMeta(in.Window); err != nil {
+			return err
+		}
+	}
 	if in.ProposedAction != nil {
-		if err := ValidateProposedActionForModel(*in.ProposedAction); err != nil {
+		if opts.Production {
+			if err := ValidateProposedActionProduction(*in.ProposedAction); err != nil {
+				return err
+			}
+		} else if err := ValidateProposedActionForModel(*in.ProposedAction); err != nil {
 			return err
 		}
 	}
@@ -55,19 +88,40 @@ func ValidateClassifierInput(in ClassifierInput) error {
 	return nil
 }
 
-// ValidateProposedActionForModel rejects truncated/lossy/unknown projections for model calls.
-func ValidateProposedActionForModel(pa adapter.ProposedAction) error {
-	if pa.SchemaVersion != "" && pa.SchemaVersion != "reinframe.proposed_action.v1" {
-		// Allow empty for synthetic fixtures that only set command/tool.
-		if pa.SchemaVersion != "" {
-			return fmt.Errorf("classifier: unsupported proposed_action schema")
+func noDupAcross(a, b []EventDigest) error {
+	seen := map[string]struct{}{}
+	for _, e := range a {
+		if e.EventID == "" {
+			continue
 		}
+		if _, ok := seen[e.EventID]; ok {
+			return fmt.Errorf("classifier: duplicate event_id across lists")
+		}
+		seen[e.EventID] = struct{}{}
+	}
+	for _, e := range b {
+		if e.EventID == "" {
+			continue
+		}
+		if _, ok := seen[e.EventID]; ok {
+			return fmt.Errorf("classifier: duplicate event_id across lists")
+		}
+		seen[e.EventID] = struct{}{}
+	}
+	return nil
+}
+
+// ValidateProposedActionForModel rejects truncated/lossy/unknown projections for model calls.
+// Fixture-compatible: empty schema and partial parse_status allowed.
+func ValidateProposedActionForModel(pa adapter.ProposedAction) error {
+	if pa.SchemaVersion != "" && pa.SchemaVersion != "reinframe.proposed_action.v1" &&
+		pa.SchemaVersion != adapter.ProposedActionSchemaVersion {
+		return fmt.Errorf("classifier: unsupported proposed_action schema")
 	}
 	if pa.Truncated {
 		return fmt.Errorf("classifier: truncated proposed_action rejected for model call")
 	}
 	if pa.ParseStatus != "" && pa.ParseStatus != "ok" && pa.ParseStatus != "partial" {
-		// fail_closed / unknown_shape rejected for model-backed assessment
 		if pa.ParseStatus == "fail_closed" || pa.ParseStatus == "unknown_shape" {
 			return fmt.Errorf("classifier: proposed_action parse_status not model-safe")
 		}
@@ -84,6 +138,20 @@ func ValidateProposedActionForModel(pa adapter.ProposedAction) error {
 		return fmt.Errorf("classifier: too many target_scope entries")
 	}
 	return nil
+}
+
+// ValidateProposedActionProduction requires exact schema and parse_status=ok.
+func ValidateProposedActionProduction(pa adapter.ProposedAction) error {
+	if pa.SchemaVersion != "reinframe.proposed_action.v1" && pa.SchemaVersion != adapter.ProposedActionSchemaVersion {
+		return fmt.Errorf("classifier: proposed_action schema required")
+	}
+	if pa.Truncated {
+		return fmt.Errorf("classifier: truncated proposed_action rejected")
+	}
+	if pa.ParseStatus != "ok" {
+		return fmt.Errorf("classifier: proposed_action parse_status must be ok")
+	}
+	return ValidateProposedActionForModel(pa)
 }
 
 // ValidateChallengeContext enforces closed enums and bounds.

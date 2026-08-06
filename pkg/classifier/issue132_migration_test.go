@@ -69,7 +69,7 @@ func TestShadow_SecurityFailClosedOnProviderError(t *testing.T) {
 
 func TestProviderCallAudit_NoSecretsOrPrompts(t *testing.T) {
 	t.Parallel()
-	req, err := classifier.NewProviderRequest(classifier.ClassifierInput{
+	req, err := classifier.NewFixtureProviderRequest(classifier.ClassifierInput{
 		SessionID: "sess", RulesetHash: "rh", RecentEventIDs: []string{"e1"},
 	})
 	if err != nil {

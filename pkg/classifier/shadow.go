@@ -159,7 +159,14 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 			cin.FixtureName = in.RulesetID[8:]
 			cin.RulesetID = "test"
 		}
-		preq, perr := NewProviderRequest(cin)
+		// FixtureName / legacy-ID shadow cases use explicit fixture request builder.
+		var preq ProviderRequest
+		var perr error
+		if cin.FixtureName != "" || needsFixtureRequest(cin) {
+			preq, perr = NewFixtureProviderRequest(cin)
+		} else {
+			preq, perr = NewProviderRequest(cin)
+		}
 		var err error
 		var pres ProviderResult
 		if perr != nil {
@@ -167,10 +174,23 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 			raw = RawAssessment{SchemaVersion: SchemaRawAssessment, ParseStatus: ParseStatusError}
 		} else {
 			pres, err = s.Provider.Assess(ctx, preq)
+			// Nil-error results must pass request-bound validation before Stage 2.
+			if err == nil {
+				if verr := ValidateProviderResultForRequest(preq, pres); verr != nil {
+					err = verr
+					pres.Meta.ParseStatus = ParseStatusError
+					pres.Meta.ErrorClass = "parse"
+					pres.Meta.FallbackReason = "contract"
+				}
+			}
 			raw = pres.Assessment
+			if err != nil && raw.ParseStatus == "" {
+				raw.SchemaVersion = SchemaRawAssessment
+				raw.ParseStatus = ParseStatusError
+			}
 			presCopy := pres
 			lastPres = &presCopy
-			// Retain Usage/Meta via closed audit even when only Assessment is used for Stage2.
+			// Capture audit before optional Observer (durable public surface).
 			a := BuildProviderCallAudit(preq, pres, in.SessionID, "", now)
 			if err != nil {
 				if isAdapterTimeout(err) {
@@ -195,7 +215,9 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 			}
 			providerAudit = &a
 			if s.Observer != nil {
-				_ = s.Observer.RecordProviderCall(ctx, a) // best-effort; never alters policy
+				// Detached best-effort; parent cancel must not erase retained audit.
+				obsCtx := context.WithoutCancel(ctx)
+				_ = s.Observer.RecordProviderCall(obsCtx, a)
 			}
 		}
 		if err != nil {
@@ -315,7 +337,7 @@ func Stage0FullSuiteBlock(pa adapter.ProposedAction, criteriaMet bool, simpleLow
 	return false, ""
 }
 
-// AuditJSON returns a closed audit record blob.
+// AuditJSON returns a closed audit record blob including provider-call telemetry.
 func (r ShadowResult) AuditJSON() ([]byte, error) {
 	rec := map[string]any{
 		"schema_version":  SchemaClassifierAudit,
@@ -327,7 +349,16 @@ func (r ShadowResult) AuditJSON() ([]byte, error) {
 		"created_at":      r.CreatedAt.Format(time.RFC3339Nano),
 		"enforced":        false,
 	}
+	if r.ProviderCall != nil {
+		rec["provider_call"] = *r.ProviderCall
+	}
 	return json.Marshal(rec)
+}
+
+// needsFixtureRequest is true when only legacy ID lists are present (no digests).
+func needsFixtureRequest(in ClassifierInput) bool {
+	return (len(in.RecentEventIDs) > 0 || len(in.RelatedEventIDs) > 0) &&
+		len(in.RecentEvents) == 0 && len(in.RelatedEvents) == 0
 }
 
 // String for debug logs.

@@ -37,10 +37,14 @@ type ClassifierInput struct {
 	RelatedEvents    []EventDigest
 	Window           WindowMeta
 
-	// Legacy ID lists retained for #105 fixtures; when digests present, allowlist
-	// for evidence validation is derived from digests (IDs actually shown).
+	// Legacy ID lists: production rejects ID-only evidence without digests.
+	// Only AllowLegacyFixtureIDs (explicit fixture builder) may use them alone.
 	RecentEventIDs  []string
 	RelatedEventIDs []string
+
+	// AllowLegacyFixtureIDs enables #105 ID-only fixture compatibility.
+	// Never set on real OpenAI-compatible Assess paths.
+	AllowLegacyFixtureIDs bool
 
 	ProposedAction *adapter.ProposedAction
 	// Challenge is optional closed challenge/justification context (#131/#132).
@@ -136,15 +140,11 @@ func (f FakeClassifierProvider) Assess(ctx context.Context, req ProviderRequest)
 	case "clear_block":
 		out.Severity = 90
 		out.ReasonCode = "OVER_SOP"
-		// Evidence must be from digests shown, else legacy IDs when digests empty.
+		// Deterministic: first sorted allowed evidence ID (never map iteration).
 		allow := evidenceAllowlist(in)
-		if len(allow) > 0 {
-			for id := range allow {
-				out.EvidenceEventIDs = append(out.EvidenceEventIDs, id)
-				if len(out.EvidenceEventIDs) >= 1 {
-					break
-				}
-			}
+		ids := SortedEvidenceIDs(allow)
+		if len(ids) > 0 {
+			out.EvidenceEventIDs = []string{ids[0]}
 		}
 	case "malformed_output":
 		out.ParseStatus = ParseStatusInvalid
@@ -186,23 +186,58 @@ func (f FakeClassifierProvider) Assess(ctx context.Context, req ProviderRequest)
 	}, nil
 }
 
+// ProviderRequestOptions control production vs fixture construction.
+type ProviderRequestOptions struct {
+	// AllowLegacyFixtureIDs enables ID-only trajectory for #105 Fake fixtures only.
+	AllowLegacyFixtureIDs bool
+	// Production requires strict non-empty PolicyClass and meaningful TaskAnchor when digests set.
+	Production bool
+}
+
 // NewProviderRequest builds a ProviderRequest with default prompt plan and bounds.
-// Applies trajectory bounding and fills Window when digests are present.
+// Merges upstream WindowMeta provenance with local N/B bounding (never clears
+// upstream Truncated merely because the already-reduced slice fits).
 func NewProviderRequest(in ClassifierInput) (ProviderRequest, error) {
+	return NewProviderRequestWithOptions(in, ProviderRequestOptions{})
+}
+
+// NewFixtureProviderRequest builds a request for #105 Fake/fixture compatibility.
+// Explicitly allows legacy ID-only evidence under closed bounds.
+func NewFixtureProviderRequest(in ClassifierInput) (ProviderRequest, error) {
+	return NewProviderRequestWithOptions(in, ProviderRequestOptions{AllowLegacyFixtureIDs: true})
+}
+
+// NewProviderRequestWithOptions builds a ProviderRequest under the given options.
+func NewProviderRequestWithOptions(in ClassifierInput, opts ProviderRequestOptions) (ProviderRequest, error) {
 	if in.SchemaVersion == "" {
 		in.SchemaVersion = SchemaClassifierInput
 	}
-	// Bound trajectory before prompt construction / large allocation.
+	in.AllowLegacyFixtureIDs = opts.AllowLegacyFixtureIDs
+
+	// Production model path: reject legacy ID-only trajectory.
+	if !opts.AllowLegacyFixtureIDs {
+		if (len(in.RecentEventIDs) > 0 || len(in.RelatedEventIDs) > 0) &&
+			len(in.RecentEvents) == 0 && len(in.RelatedEvents) == 0 {
+			return ProviderRequest{}, newProviderError("config", "legacy event IDs without digests rejected for production", false, 0)
+		}
+	}
+
+	// Bound trajectory; merge upstream Window provenance.
 	if len(in.RecentEvents) > 0 || len(in.RelatedEvents) > 0 {
-		r, rel, win := BoundTrajectory(in.RecentEvents, in.RelatedEvents, MaxRecentEvents, MaxTrajectoryBytes)
+		upstream := in.Window
+		r, rel, local := BoundTrajectory(in.RecentEvents, in.RelatedEvents, MaxRecentEvents, MaxTrajectoryBytes)
 		in.RecentEvents = r
 		in.RelatedEvents = rel
-		in.Window = win
-		// Sync legacy ID lists to digests shown.
+		in.Window = MergeWindowMeta(upstream, local, r, rel)
 		in.RecentEventIDs = digestIDs(r)
 		in.RelatedEventIDs = digestIDs(rel)
+	} else if opts.AllowLegacyFixtureIDs {
+		if err := ValidateLegacyFixtureIDs(in.RecentEventIDs, in.RelatedEventIDs); err != nil {
+			return ProviderRequest{}, err
+		}
 	}
-	if err := ValidateClassifierInput(in); err != nil {
+
+	if err := ValidateClassifierInputOpts(in, opts); err != nil {
 		return ProviderRequest{}, err
 	}
 	plan, err := BuildPromptPlan(DefaultPromptPlanMaterial(), in)

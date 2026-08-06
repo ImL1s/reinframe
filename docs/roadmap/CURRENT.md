@@ -27,15 +27,12 @@
 |-------|------------|------------------|
 | Codex project-local hooks | **#163** | Foundation only; live proof **#164**; not Level 2 / not explicit ACK |
 
-## Ready (repository-executable host foundations)
-
-| Issue | Notes |
-|-------|-------|
-| **#166** | Grok Build ACP stdio bridge |
+## Implemented host foundations (continued)
 
 | Track | Notes |
 |-------|-------|
 | Grok Build native hooks | **#165** foundation (host fail-open; live **#167**) |
+| Grok Build ACP stdio | **#166** foundation (transport/session_visible ACK; live **#167**) |
 
 ## Residual open work
 

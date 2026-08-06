@@ -23,8 +23,17 @@ type ShadowInput struct {
 	// Stage0Block when true, skip provider and resolve BLOCK with stage0_block.
 	Stage0Block  bool
 	Stage0Reason string
-	// RecentEventIDs bounded list for evidence validation.
+	// RecentEventIDs bounded list for evidence validation (legacy #105 fixtures).
 	RecentEventIDs []string
+	// RelatedEventIDs legacy related evidence ids.
+	RelatedEventIDs []string
+	// Task / trajectory packet (wire §5 recent-N). When digests are set they
+	// bind prompt identity and evidence allowlist; IDs are synced by NewProviderRequest.
+	TaskAnchor       TaskAnchor
+	ContractRevision int
+	EvidenceRevision int
+	RecentEvents     []EventDigest
+	RelatedEvents    []EventDigest
 	// Threshold provisional (default 50) — not calibrated.
 	Threshold int
 	// ProfileID for audit.
@@ -135,7 +144,13 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 			RulesetHash:         in.RulesetHash,
 			FixtureName:         in.FixtureName,
 			ProposedAction:      &pa,
+			TaskAnchor:          in.TaskAnchor,
+			ContractRevision:    in.ContractRevision,
+			EvidenceRevision:    in.EvidenceRevision,
+			RecentEvents:        append([]EventDigest(nil), in.RecentEvents...),
+			RelatedEvents:       append([]EventDigest(nil), in.RelatedEvents...),
 			RecentEventIDs:      append([]string(nil), in.RecentEventIDs...),
+			RelatedEventIDs:     append([]string(nil), in.RelatedEventIDs...),
 			UserException:       in.UserException,
 			RepoPolicyException: in.RepoPolicyException,
 			FlakyInvestigation:  in.FlakyInvestigation,

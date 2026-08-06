@@ -178,8 +178,8 @@ func TestPromptPlan_TrajectoryDigestBindsIdentity(t *testing.T) {
 
 func TestNewProviderRequest_BoundsTrajectoryAndSyncsIDs(t *testing.T) {
 	t.Parallel()
-	events := make([]classifier.EventDigest, 0, 40)
-	for i := 0; i < 40; i++ {
+	events := make([]classifier.EventDigest, 0, 50)
+	for i := 0; i < 50; i++ {
 		events = append(events, classifier.EventDigest{
 			EventID: fmt.Sprintf("ev-%d", i), Sequence: uint64(i), EventType: "observation",
 			Summary: strings.Repeat("x", 20),
@@ -455,4 +455,116 @@ func TestValidateProposedAction_RejectsTruncated(t *testing.T) {
 	if err == nil {
 		t.Fatal("truncated must reject")
 	}
+}
+
+func TestBoundTrajectory_ByteOverflowMarker(t *testing.T) {
+	t.Parallel()
+	// Large maxN, tiny maxB → pure byte overflow must mark "bytes", not "events".
+	events := []classifier.EventDigest{
+		{EventID: "a", Sequence: 1, EventType: "observation", Summary: strings.Repeat("Z", 200)},
+		{EventID: "b", Sequence: 2, EventType: "observation", Summary: strings.Repeat("Y", 200)},
+		{EventID: "c", Sequence: 3, EventType: "observation", Summary: strings.Repeat("X", 200)},
+	}
+	recent, related, win := classifier.BoundTrajectory(events, nil, 40, 250)
+	if len(related) != 0 {
+		t.Fatalf("related=%d", len(related))
+	}
+	if !win.Truncated {
+		t.Fatal("expected truncated")
+	}
+	if win.OverflowMarker != classifier.OverflowBytes && win.OverflowMarker != classifier.OverflowEventsAndBytes {
+		// Pure byte budget trip should be bytes (or events_and_bytes if count also hits).
+		if win.OverflowMarker == classifier.OverflowEvents {
+			t.Fatalf("byte overflow mislabeled as events: recent=%d win=%+v", len(recent), win)
+		}
+	}
+	if win.OverflowMarker != classifier.OverflowBytes {
+		// Prefer exact bytes when only size budget fires.
+		if len(recent) < 3 && win.ByteCount <= 250 && win.OverflowMarker == classifier.OverflowEvents {
+			t.Fatalf("want OverflowBytes, got %q win=%+v", win.OverflowMarker, win)
+		}
+	}
+	if win.OverflowMarker != classifier.OverflowBytes {
+		t.Fatalf("want OverflowBytes, got %q (recent=%d byte=%d)", win.OverflowMarker, len(recent), win.ByteCount)
+	}
+}
+
+func TestShadow_TrajectoryPlumbedToProvider(t *testing.T) {
+	t.Parallel()
+	var saw classifier.ProviderRequest
+	prov := &captureProvider{fn: func(req classifier.ProviderRequest) {
+		saw = req
+	}}
+	s := &classifier.ShadowClassifier{Provider: prov}
+	_, err := s.EvaluateShadow(context.Background(), classifier.ShadowInput{
+		SessionID:        "s1",
+		TaskAnchor:       classifier.TaskAnchor{TaskID: "t1", Objective: "ship feature"},
+		ContractRevision: 3,
+		EvidenceRevision: 4,
+		RecentEvents: []classifier.EventDigest{
+			{EventID: "e1", Sequence: 1, EventType: "tool_call", Summary: "edit file"},
+		},
+		FixtureName: "clear_allow",
+		Threshold:   50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saw.Input.TaskAnchor.Objective != "ship feature" {
+		t.Fatalf("task anchor not plumbed: %+v", saw.Input.TaskAnchor)
+	}
+	if saw.Input.ContractRevision != 3 || saw.Input.EvidenceRevision != 4 {
+		t.Fatalf("revisions not plumbed: %d %d", saw.Input.ContractRevision, saw.Input.EvidenceRevision)
+	}
+	if len(saw.Input.RecentEvents) != 1 || saw.Input.RecentEvents[0].EventID != "e1" {
+		t.Fatalf("digests not plumbed: %+v", saw.Input.RecentEvents)
+	}
+	planText := ""
+	for _, b := range saw.Prompt.DynamicSuffix {
+		planText += b.Text
+	}
+	if !strings.Contains(planText, "edit file") {
+		t.Fatalf("prompt missing digest summary: %s", planText)
+	}
+	if !strings.Contains(planText, "ship feature") {
+		t.Fatalf("prompt missing task objective: %s", planText)
+	}
+}
+
+func TestReEval_TrajectoryPlumbed(t *testing.T) {
+	t.Parallel()
+	var sawObj string
+	var digests int
+	var auditSeen bool
+	prov := &captureProvider{fn: func(req classifier.ProviderRequest) {
+		sawObj = req.Input.TaskAnchor.Objective
+		digests = len(req.Input.RecentEvents)
+	}}
+	re := challenge.DefaultReEvaluator{}
+	rec := challenge.ChallengeRecord{
+		ChallengeID: "c", SessionID: "s", State: challenge.StateJustified,
+		BlockClass: challenge.BlockClassOverSOP, Appealability: challenge.AppealAppealable,
+		SideEffectClass: challenge.SideEffectShellGeneric,
+	}
+	out, err := re.ReEvaluate(context.Background(), rec, adapter.ProposedAction{
+		ToolName: "Bash", Command: "echo", ToolClass: adapter.ToolClassShell,
+	}, &challenge.Justification{ConcreteValue: "x", VerificationPlan: "t",
+		PreventedFailureOrThreat: "b", EstimatedCost: "l", AlternativesConsidered: "n",
+		ScopeLimit: "s", RollbackPlan: "r"}, &challenge.ReEvalContext{
+		Provider: prov, PolicyClass: classifier.PolicyClassProductivity,
+		TaskAnchor: classifier.TaskAnchor{TaskID: "t", Objective: "fix bug"},
+		RecentEvents: []classifier.EventDigest{
+			{EventID: "e9", Sequence: 9, EventType: "error", Summary: "panic"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sawObj != "fix bug" || digests != 1 {
+		t.Fatalf("trajectory not plumbed: obj=%q digests=%d", sawObj, digests)
+	}
+	if out.ProviderCall == nil {
+		t.Fatal("ReEvalResult must retain ProviderCall audit")
+	}
+	_ = auditSeen
 }

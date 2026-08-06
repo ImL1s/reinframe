@@ -5,10 +5,11 @@ import (
 	"sort"
 )
 
-// Trajectory bounds for recent-N event packets (#132 / wire contract).
+// Trajectory bounds for recent-N event packets (#132 / wire contract §5).
+// Defaults: N=40 events, B=48KiB (docs/specs/action_alignment_wire_contract.md).
 const (
-	MaxRecentEvents        = 32
-	MaxRelatedEvents       = 32
+	MaxRecentEvents        = 40 // total recent+related window cap (wire default N)
+	MaxRelatedEvents       = 32 // related may not alone exceed this within N
 	MaxEventSummaryBytes   = 512
 	MaxEventTypeBytes      = 64
 	MaxEventIDBytes        = 128
@@ -198,19 +199,22 @@ func BoundTrajectory(recent, related []EventDigest, maxN, maxB int) (outRecent, 
 
 	win.EventCount = len(outRecent) + len(outRelated)
 	win.ByteCount = byteCount
-	win.Truncated = eventsOverflow || bytesOverflow || len(recent) > len(outRecent) || len(related) > len(outRelated)
-	if eventsOverflow && bytesOverflow {
-		win.OverflowMarker = OverflowEventsAndBytes
-	} else if eventsOverflow || len(recent)+len(related) > win.EventCount {
-		win.OverflowMarker = OverflowEvents
-		win.Truncated = true
-	} else if bytesOverflow {
-		win.OverflowMarker = OverflowBytes
+	sourceOverflow := len(recent) > len(outRecent) || len(related) > len(outRelated)
+	// Pure count truncation (maxN) is an events overflow even if the take-loop
+	// exited on limit without setting eventsOverflow mid-iteration edge cases.
+	if sourceOverflow && !bytesOverflow {
+		eventsOverflow = true
 	}
-	if win.Truncated && win.OverflowMarker == "" {
-		if len(recent) > len(outRecent) || len(related) > len(outRelated) {
-			win.OverflowMarker = OverflowEvents
-		}
+	win.Truncated = eventsOverflow || bytesOverflow || sourceOverflow
+	switch {
+	case eventsOverflow && bytesOverflow:
+		win.OverflowMarker = OverflowEventsAndBytes
+	case eventsOverflow:
+		win.OverflowMarker = OverflowEvents
+	case bytesOverflow:
+		win.OverflowMarker = OverflowBytes
+	case sourceOverflow:
+		win.OverflowMarker = OverflowEvents
 	}
 	return outRecent, outRelated, win
 }

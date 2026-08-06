@@ -12,7 +12,7 @@ import (
 // StrictParseLimits for RawAssessment content.
 const (
 	MaxExplanationBytes   = 512
-	MaxEvidenceIDs        = 64
+	MaxEvidenceIDs        = 32 // wire contract §4
 	MaxEvidenceIDLen      = 128
 	MaxNestedJSONDepth    = 8
 	MaxJSONTokensEstimate = 4096

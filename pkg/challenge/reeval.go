@@ -35,8 +35,16 @@ type ReEvalContext struct {
 	UserException       bool
 	RepoPolicyException bool
 	FlakyInvestigation  bool
-	// RecentEventIDs for classifier evidence validation.
+	// RecentEventIDs for classifier evidence validation (legacy).
 	RecentEventIDs []string
+	// RelatedEventIDs legacy related evidence.
+	RelatedEventIDs []string
+	// Trajectory packet (wire §5) — binds TaskAnchor + digests into Stage-1 prompt.
+	TaskAnchor    classifier.TaskAnchor
+	RecentEvents  []classifier.EventDigest
+	RelatedEvents []classifier.EventDigest
+	// EvidenceRevision pairs with ContractRevision for cache identity.
+	EvidenceRevision int
 	// PolicyClass defaults to PRODUCTIVITY.
 	PolicyClass string
 	// Observer receives best-effort provider-call audits (nil-safe).
@@ -49,6 +57,8 @@ type ReEvalResult struct {
 	Intervention   string // none | HUMAN_REVIEW (APPEALABLE already established)
 	Reason         string
 	RawSeverity    int
+	// ProviderCall retains closed provider-call audit when Stage1 ran (may be nil).
+	ProviderCall *classifier.ProviderCallAudit
 }
 
 // ReEvaluator re-runs hard rules → contract/evidence → optional classifier → Stage2.
@@ -118,7 +128,13 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			PolicyClass:         in.PolicyClass,
 			RulesetHash:         firstNonEmpty(in.RulesetHash, rec.RulesetHash),
 			ProposedAction:      &pa,
+			TaskAnchor:          in.TaskAnchor,
+			ContractRevision:    in.ContractRevision,
+			EvidenceRevision:    in.EvidenceRevision,
+			RecentEvents:        append([]classifier.EventDigest(nil), in.RecentEvents...),
+			RelatedEvents:       append([]classifier.EventDigest(nil), in.RelatedEvents...),
 			RecentEventIDs:      append([]string(nil), in.RecentEventIDs...),
+			RelatedEventIDs:     append([]string(nil), in.RelatedEventIDs...),
 			UserException:       in.UserException,
 			RepoPolicyException: in.RepoPolicyException,
 			FlakyInvestigation:  in.FlakyInvestigation,
@@ -163,49 +179,50 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 		}
 		pres, err := in.Provider.Assess(ctx, preq)
 		raw := pres.Assessment
-		// Surface closed provider-call audit (retain Usage/Meta) on real re-eval path.
-		if in.Observer != nil {
-			a := classifier.BuildProviderCallAudit(preq, pres, rec.SessionID, rec.ChallengeID, time.Now().UTC())
-			if err != nil {
-				var pe *classifier.ProviderError
-				if errors.As(err, &pe) && pe != nil {
-					a.ErrorClass = pe.Class
-					a.FallbackReason = pe.Class
-				} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					a.ErrorClass = "canceled"
-					a.FallbackReason = "canceled"
-				} else {
-					a.ErrorClass = "transport"
-					a.FallbackReason = "transport"
-				}
-				a.ParseStatus = classifier.ParseStatusError
+		// Always retain closed provider-call audit (Usage/Meta); observer is best-effort.
+		a := classifier.BuildProviderCallAudit(preq, pres, rec.SessionID, rec.ChallengeID, time.Now().UTC())
+		if err != nil {
+			var pe *classifier.ProviderError
+			if errors.As(err, &pe) && pe != nil {
+				a.ErrorClass = pe.Class
+				a.FallbackReason = pe.Class
+			} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				a.ErrorClass = "canceled"
+				a.FallbackReason = "canceled"
+			} else {
+				a.ErrorClass = "transport"
+				a.FallbackReason = "transport"
 			}
-			_ = in.Observer.RecordProviderCall(ctx, a) // best-effort
+			a.ParseStatus = classifier.ParseStatusError
+		}
+		auditPtr := &a
+		if in.Observer != nil {
+			_ = in.Observer.RecordProviderCall(ctx, a) // best-effort; never alters policy
 		}
 		if err != nil {
 			// Parent cancel/deadline: raw identity (never fail-open / persist ALLOWED_ONCE).
 			// Adapter-owned timeout is typed ProviderError{Class:"timeout"} — ordinary matrix.
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_context_canceled"}, err
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_context_canceled", ProviderCall: auditPtr}, err
 			}
 			if in.PolicyClass == PolicyClassSecurity {
-				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_fail_closed"}, nil
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_fail_closed", ProviderCall: auditPtr}, nil
 			}
 			// Productivity fail-open on provider error (incl. adapter timeout) — not justification auto-allow.
-			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "provider_fail_open", RawSeverity: 0}, nil
+			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "provider_fail_open", RawSeverity: 0, ProviderCall: auditPtr}, nil
 		}
 		// Stage 2 threshold
 		if raw.ParseStatus != "ok" && raw.ParseStatus != classifier.ParseStatusOK {
 			if in.PolicyClass == PolicyClassSecurity {
-				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "parse_fail_closed"}, nil
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "parse_fail_closed", ProviderCall: auditPtr}, nil
 			}
-			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "parse_fail_open"}, nil
+			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "parse_fail_open", ProviderCall: auditPtr}, nil
 		}
 		if !classifier.ValidateSeverity(raw.Severity) {
 			if in.PolicyClass == PolicyClassSecurity {
-				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "severity_fail_closed"}, nil
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "severity_fail_closed", ProviderCall: auditPtr}, nil
 			}
-			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "severity_fail_open"}, nil
+			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "severity_fail_open", ProviderCall: auditPtr}, nil
 		}
 		dec := DecisionAllow
 		reason := "below_threshold"
@@ -231,6 +248,7 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			Intervention:   InterventionNone,
 			Reason:         reason,
 			RawSeverity:    raw.Severity,
+			ProviderCall:   auditPtr,
 		}, nil
 	}
 

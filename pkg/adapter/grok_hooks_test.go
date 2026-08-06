@@ -69,6 +69,10 @@ func TestRecordHostHookOutcome_FailOpen(t *testing.T) {
 	if adapter.RecordHostHookOutcome(true, 0, true) != adapter.HostOutcomeEnforcedDeny {
 		t.Fatal("expected enforced")
 	}
+	// Exit 2 is explicit deny for PreToolUse
+	if adapter.RecordHostHookOutcome(true, 2, false) != adapter.HostOutcomeEnforcedDeny {
+		t.Fatal("expected exit 2 enforced")
+	}
 	// Allow path
 	if adapter.RecordHostHookOutcome(false, 0, false) != adapter.HostOutcomeAllowed {
 		t.Fatal("expected allowed")

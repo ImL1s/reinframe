@@ -22,6 +22,10 @@ func TestCacheEvalFakeCI(t *testing.T) {
 	if rep.StaleHitRate != 0 {
 		t.Fatal("stale hit rate")
 	}
+	// -1 = not_measured for invalid admission in this harness
+	if rep.InvalidAdmissionCount != -1 && rep.InvalidAdmissionCount != 0 {
+		t.Fatalf("invalid admission %d", rep.InvalidAdmissionCount)
+	}
 	if len(rep.Rows) < 8 {
 		t.Fatalf("rows %d", len(rep.Rows))
 	}

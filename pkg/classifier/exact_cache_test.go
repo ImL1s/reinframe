@@ -365,11 +365,47 @@ func TestExactCache_MissOnArgsAndExceptions(t *testing.T) {
 	if inner.n.Load() != 2 {
 		t.Fatalf("args change must miss: %d", inner.n.Load())
 	}
+	// Delimiter-collision resistance: ["a,b","c"] vs ["a","b,c"] must miss.
+	inA := baseInput()
+	inA.ProposedAction = &adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, ToolName: "Bash", Command: "x",
+		Arguments: []string{"a,b", "c"},
+	}
+	inB := baseInput()
+	inB.ProposedAction = &adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, ToolName: "Bash", Command: "x",
+		Arguments: []string{"a", "b,c"},
+	}
+	rA, _ := classifier.NewProviderRequest(inA)
+	rB, _ := classifier.NewProviderRequest(inB)
+	_, _ = p.Assess(context.Background(), rA)
+	_, _ = p.Assess(context.Background(), rB)
+	if inner.n.Load() != 4 {
+		t.Fatalf("delimiter-safe args must miss: %d", inner.n.Load())
+	}
+	// Order-sensitive args.
+	inC := baseInput()
+	inC.ProposedAction = &adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, ToolName: "Bash", Command: "x",
+		Arguments: []string{"x", "y"},
+	}
+	inD := baseInput()
+	inD.ProposedAction = &adapter.ProposedAction{
+		SchemaVersion: adapter.ProposedActionSchemaVersion, ToolName: "Bash", Command: "x",
+		Arguments: []string{"y", "x"},
+	}
+	rC, _ := classifier.NewProviderRequest(inC)
+	rD, _ := classifier.NewProviderRequest(inD)
+	_, _ = p.Assess(context.Background(), rC)
+	_, _ = p.Assess(context.Background(), rD)
+	if inner.n.Load() != 6 {
+		t.Fatalf("arg order must miss: %d", inner.n.Load())
+	}
 	in3 := baseInput()
 	in3.UserException = true
 	r3, _ := classifier.NewProviderRequest(in3)
 	_, _ = p.Assess(context.Background(), r3)
-	if inner.n.Load() != 3 {
+	if inner.n.Load() != 7 {
 		t.Fatalf("exception flag must miss: %d", inner.n.Load())
 	}
 }

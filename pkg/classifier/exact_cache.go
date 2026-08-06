@@ -332,7 +332,7 @@ func BuildExactCacheKeyHash(id ExactCacheIdentity, req ProviderRequest) (string,
 			}
 			out = append(out, eventPart{
 				ID: e.EventID, Type: e.EventType, Seq: e.Sequence,
-				Sum: sum,
+				Sum: sum + "|" + e.RelatedTo,
 			})
 		}
 		sort.Slice(out, func(i, j int) bool {
@@ -346,16 +346,28 @@ func BuildExactCacheKeyHash(id ExactCacheIdentity, req ProviderRequest) (string,
 
 	var actionFP string
 	if req.Input.ProposedAction != nil {
-		// Semantic fingerprint for Stage-1-visible action fields (not session ActionID).
+		// Canonical JSON fingerprint — preserve argument order; no delimiter joining.
 		pa := req.Input.ProposedAction
-		args := append([]string(nil), pa.Arguments...)
-		sort.Strings(args)
-		scope := append([]string(nil), pa.TargetScope...)
-		sort.Strings(scope)
-		actionFP = shortHash(fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%v|%s|%s|%s",
-			pa.SchemaVersion, pa.ToolName, pa.ToolClass, pa.Command, pa.FilePath,
-			pa.WorkspaceRevision, pa.ContractRevision, pa.Truncated,
-			strings.Join(args, ","), strings.Join(scope, ","), shortHash(string(pa.RedactedPayload))))
+		actionObj := map[string]any{
+			"schema":    pa.SchemaVersion,
+			"tool":      pa.ToolName,
+			"class":     pa.ToolClass,
+			"command":   pa.Command,
+			"path":      pa.FilePath,
+			"args":      append([]string(nil), pa.Arguments...), // original order
+			"scope":     append([]string(nil), pa.TargetScope...),
+			"ws_rev":    pa.WorkspaceRevision,
+			"contract":  pa.ContractRevision,
+			"truncated": pa.Truncated,
+			"source":    pa.Source,
+			"parse":     pa.ParseStatus,
+			"payload_h": shortHash(string(pa.RedactedPayload)),
+		}
+		rawAct, err := json.Marshal(actionObj)
+		if err != nil {
+			return "", false
+		}
+		actionFP = shortHash(string(rawAct))
 	}
 	var ch any
 	if req.Input.Challenge != nil {

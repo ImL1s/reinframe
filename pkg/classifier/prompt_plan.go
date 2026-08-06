@@ -143,20 +143,36 @@ func BuildPromptPlan(mat PromptPlanMaterial, in ClassifierInput) (PromptPlan, er
 }
 
 func buildDynamicSuffix(in ClassifierInput) ([]PromptBlock, error) {
-	taskText, err := encodeCanonStrict(map[string]string{
+	taskText, err := encodeCanonStrict(map[string]any{
 		"session_id":   in.SessionID,
 		"policy_class": in.PolicyClass,
 		// Current task/repository policy identity (dynamic — not stable classifier ruleset).
-		"ruleset_id":   in.RulesetID,
-		"ruleset_hash": in.RulesetHash,
-		"fixture":      in.FixtureName,
+		"ruleset_id":        in.RulesetID,
+		"ruleset_hash":      in.RulesetHash,
+		"fixture":           in.FixtureName,
+		"contract_revision": in.ContractRevision,
+		"evidence_revision": in.EvidenceRevision,
+		"task_id":           in.TaskAnchor.TaskID,
+		"objective":         in.TaskAnchor.Objective,
+		"acceptance":        append([]string(nil), in.TaskAnchor.Acceptance...),
 	})
 	if err != nil {
 		return nil, err
 	}
+	// Prefer digest packet when present; legacy ID lists remain for #105 fixtures.
+	recentDigests := encodeEventDigests(in.RecentEvents)
+	relatedDigests := encodeEventDigests(in.RelatedEvents)
 	evText, err := encodeCanonStrict(map[string]any{
 		"recent_event_ids":  append([]string(nil), in.RecentEventIDs...),
 		"related_event_ids": append([]string(nil), in.RelatedEventIDs...),
+		"recent_events":     recentDigests,
+		"related_events":    relatedDigests,
+		"window": map[string]any{
+			"event_count":     in.Window.EventCount,
+			"byte_count":      in.Window.ByteCount,
+			"truncated":       in.Window.Truncated,
+			"overflow_marker": in.Window.OverflowMarker,
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -384,7 +400,13 @@ func encodeChallengeContext(c ChallengeContext) (string, error) {
 		"challenge_id":                c.ChallengeID,
 		"state":                       c.State,
 		"block_class":                 c.BlockClass,
+		"reason_code":                 c.ReasonCode,
 		"appealability":               c.Appealability,
+		"required_claims":             append([]string(nil), c.RequiredClaims...),
+		"retry_budget":                c.RetryBudget,
+		"expires_at_sequence":         c.ExpiresAtSequence,
+		"original_action_id":          c.OriginalActionID,
+		"action_fingerprint":          c.ActionFingerprint,
 		"concrete_value":              c.ConcreteValue,
 		"prevented_failure_or_threat": c.PreventedFailureOrThreat,
 		"estimated_cost":              c.EstimatedCost,
@@ -395,6 +417,24 @@ func encodeChallengeContext(c ChallengeContext) (string, error) {
 		"claims":                      append([]string(nil), c.Claims...),
 		"evidence_event_ids":          append([]string(nil), c.EvidenceEventIDs...),
 	})
+}
+
+func encodeEventDigests(events []EventDigest) []map[string]any {
+	if len(events) == 0 {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(events))
+	for _, e := range events {
+		out = append(out, map[string]any{
+			"event_id":     e.EventID,
+			"sequence":     e.Sequence,
+			"event_type":   e.EventType,
+			"summary":      e.Summary,
+			"content_hash": e.ContentHash,
+			"related_to":   e.RelatedTo,
+		})
+	}
+	return out
 }
 
 func hashBlocks(blocks []PromptBlock) (string, error) {

@@ -62,11 +62,18 @@ type ShadowResult struct {
 	InputHash string
 	// CreatedAt UTC
 	CreatedAt time.Time
+	// ProviderCall is the closed provider-call audit when Stage1 ran (may be nil).
+	// Usage/Meta from ProviderResult are retained here rather than discarded.
+	ProviderCall *ProviderCallAudit
+	// ProviderResult retains full envelope when Stage1 ran (tests/telemetry).
+	LastProviderResult *ProviderResult
 }
 
 // ShadowClassifier runs Stage0 → optional Stage1 → Stage2 with Enforced=false.
 type ShadowClassifier struct {
 	Provider ClassifierProvider
+	// Observer receives best-effort provider-call audits (nil-safe).
+	Observer ProviderCallObserver
 	// Now for tests.
 	Now func() time.Time
 }
@@ -89,6 +96,8 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 
 	var raw RawAssessment
 	var res ResolvedDecision
+	var providerAudit *ProviderCallAudit
+	var lastPres *ProviderResult
 	res.SchemaVersion = SchemaResolvedDecision
 	res.Threshold = in.Threshold
 	res.ProfileID = in.ProfileID
@@ -137,17 +146,47 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 		}
 		preq, perr := NewProviderRequest(cin)
 		var err error
+		var pres ProviderResult
 		if perr != nil {
 			err = perr
 			raw = RawAssessment{SchemaVersion: SchemaRawAssessment, ParseStatus: ParseStatusError}
 		} else {
-			var pres ProviderResult
 			pres, err = s.Provider.Assess(ctx, preq)
 			raw = pres.Assessment
+			presCopy := pres
+			lastPres = &presCopy
+			// Retain Usage/Meta via closed audit even when only Assessment is used for Stage2.
+			a := BuildProviderCallAudit(preq, pres, in.SessionID, "", now)
+			if err != nil {
+				if isAdapterTimeout(err) {
+					a.ErrorClass = "timeout"
+					a.FallbackReason = "timeout"
+					a.ParseStatus = ParseStatusError
+				} else if isParentContextAbort(err) {
+					a.ErrorClass = "canceled"
+					a.FallbackReason = "canceled"
+					a.ParseStatus = ParseStatusError
+				} else {
+					var pe *ProviderError
+					if errors.As(err, &pe) && pe != nil {
+						a.ErrorClass = pe.Class
+						a.FallbackReason = pe.Class
+					} else {
+						a.ErrorClass = "transport"
+						a.FallbackReason = "transport"
+					}
+					a.ParseStatus = ParseStatusError
+				}
+			}
+			providerAudit = &a
+			if s.Observer != nil {
+				_ = s.Observer.RecordProviderCall(ctx, a) // best-effort; never alters policy
+			}
 		}
 		if err != nil {
-			// Preserve cancel/deadline identity — never convert to productivity fail-open ALLOW.
-			if isContextAbort(err) {
+			// Parent cancel/deadline: preserve identity — never productivity fail-open ALLOW.
+			// Adapter-owned timeout is ordinary provider failure (policy matrix), not cancel.
+			if isParentContextAbort(err) {
 				raw.ParseStatus = ParseStatusError
 				res.Decision = DecisionBlock
 				res.ResolverReason = "provider_context_canceled"
@@ -156,9 +195,11 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 				return ShadowResult{
 					Raw: raw, Resolved: res, Disagreement: false,
 					HookGateAction: in.HookGateAction, InputHash: ih, CreatedAt: now,
+					ProviderCall: providerAudit, LastProviderResult: lastPres,
 				}, err
 			} else if in.PolicyClass == PolicyClassSecurity {
-				// PRODUCTIVITY fail-open / SECURITY fail-closed — resolver owns ordinary failures.
+				// PRODUCTIVITY fail-open / SECURITY fail-closed — resolver owns ordinary failures
+				// including adapter-owned timeout (typed ProviderError class=timeout).
 				res.Decision = DecisionBlock
 				res.ResolverReason = "fail_closed_security"
 				res.ReasonCode = "provider_unavailable"
@@ -226,12 +267,14 @@ func (s *ShadowClassifier) EvaluateShadow(ctx context.Context, in ShadowInput) (
 
 	ih := hashShadowInput(in)
 	return ShadowResult{
-		Raw:            raw,
-		Resolved:       res,
-		Disagreement:   dis,
-		HookGateAction: in.HookGateAction,
-		InputHash:      ih,
-		CreatedAt:      now,
+		Raw:                raw,
+		Resolved:           res,
+		Disagreement:       dis,
+		HookGateAction:     in.HookGateAction,
+		InputHash:          ih,
+		CreatedAt:          now,
+		ProviderCall:       providerAudit,
+		LastProviderResult: lastPres,
 	}, nil
 }
 
@@ -244,10 +287,6 @@ func hashShadowInput(in ShadowInput) string {
 	}{in.SessionID, in.Proposed.ToolName, in.Proposed.Command, in.HookGateAction})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:8])
-}
-
-func isContextAbort(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // Stage0FullSuiteBlock is a helper: simple disproportionate full suite → Stage0 block signal.

@@ -92,15 +92,79 @@ func (cp ClassifierProviderConfig) NormalizeKind() string {
 	}
 }
 
+// redactedAPIKeyRef returns a diagnostics-safe api_key_ref (env placeholders kept).
+func (cp ClassifierProviderConfig) redactedAPIKeyRef() string {
+	if cp.APIKeyRef == "" {
+		return ""
+	}
+	if IsEnvPlaceholder(cp.APIKeyRef) {
+		return cp.APIKeyRef
+	}
+	return "[REDACTED]"
+}
+
 // MarshalJSON redacts secret-like api_key_ref values that are not env placeholders,
 // so diagnostics remain secret-safe even before Validate succeeds.
 func (cp ClassifierProviderConfig) MarshalJSON() ([]byte, error) {
 	type alias ClassifierProviderConfig
 	out := alias(cp)
-	if out.APIKeyRef != "" && !IsEnvPlaceholder(out.APIKeyRef) {
-		out.APIKeyRef = "[REDACTED]"
-	}
+	out.APIKeyRef = cp.redactedAPIKeyRef()
 	return json.Marshal(out)
+}
+
+// String is secret-safe for fmt / logs (never prints raw api_key_ref secrets).
+func (cp ClassifierProviderConfig) String() string {
+	return fmt.Sprintf(
+		"ClassifierProviderConfig{kind:%q model:%q base_url:%q path:%q api_key_ref:%q timeout_ms:%d max_input_bytes:%d max_output_bytes:%d capabilities_profile:%q}",
+		cp.Kind, cp.Model, cp.BaseURL, cp.Path, cp.redactedAPIKeyRef(),
+		cp.TimeoutMS, cp.MaxInputBytes, cp.MaxOutputBytes, cp.CapabilitiesProfile,
+	)
+}
+
+// GoString is secret-safe for %#v diagnostics.
+func (cp ClassifierProviderConfig) GoString() string {
+	return cp.String()
+}
+
+// Format implements fmt.Formatter so %v / %+v / %#v never leak raw secrets.
+func (cp ClassifierProviderConfig) Format(f fmt.State, verb rune) {
+	switch verb {
+	case 'v', 's':
+		if f.Flag('#') {
+			_, _ = fmt.Fprint(f, cp.GoString())
+			return
+		}
+		_, _ = fmt.Fprint(f, cp.String())
+	default:
+		_, _ = fmt.Fprint(f, cp.String())
+	}
+}
+
+// MarshalYAML redacts non-placeholder api_key_ref so YAML dumps are secret-safe.
+// Compatible with gopkg.in/yaml.v3 Marshaler interface.
+func (cp ClassifierProviderConfig) MarshalYAML() (any, error) {
+	type alias struct {
+		Kind                string `yaml:"kind,omitempty"`
+		Model               string `yaml:"model,omitempty"`
+		BaseURL             string `yaml:"base_url,omitempty"`
+		Path                string `yaml:"path,omitempty"`
+		APIKeyRef           string `yaml:"api_key_ref,omitempty"`
+		TimeoutMS           int    `yaml:"timeout_ms,omitempty"`
+		MaxInputBytes       int    `yaml:"max_input_bytes,omitempty"`
+		MaxOutputBytes      int    `yaml:"max_output_bytes,omitempty"`
+		CapabilitiesProfile string `yaml:"capabilities_profile,omitempty"`
+	}
+	return alias{
+		Kind:                cp.Kind,
+		Model:               cp.Model,
+		BaseURL:             cp.BaseURL,
+		Path:                cp.Path,
+		APIKeyRef:           cp.redactedAPIKeyRef(),
+		TimeoutMS:           cp.TimeoutMS,
+		MaxInputBytes:       cp.MaxInputBytes,
+		MaxOutputBytes:      cp.MaxOutputBytes,
+		CapabilitiesProfile: cp.CapabilitiesProfile,
+	}, nil
 }
 
 // SessionDefaults are applied to new supervised sessions unless overridden.

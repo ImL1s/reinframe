@@ -341,7 +341,7 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 	maxAttempts := p.cfg.MaxRetries + 1
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if err := preserveContextError(ctx, opCtx); err != nil {
+		if err := classifyOpError(ctx, opCtx, nil); err != nil {
 			return ProviderResult{}, err
 		}
 		if attempt > 0 {
@@ -357,14 +357,18 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 			if dl, ok := opCtx.Deadline(); ok {
 				rem := time.Until(dl)
 				if rem <= 0 {
-					return ProviderResult{}, preserveContextError(ctx, opCtx)
+					return ProviderResult{}, classifyOpError(ctx, opCtx, opCtx.Err())
 				}
 				if delay > rem {
 					delay = rem
 				}
 			}
 			if err := p.sleep(opCtx, delay); err != nil {
-				return ProviderResult{}, preserveContextError(ctx, opCtx)
+				// Sleep failure must never become (ProviderResult{}, nil).
+				if ce := classifyOpError(ctx, opCtx, err); ce != nil {
+					return ProviderResult{}, ce
+				}
+				return ProviderResult{}, newProviderError("transport", "retry backoff failed", false, 0)
 			}
 		}
 
@@ -372,6 +376,11 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 		lastStatus = status
 		nextDelay = retryAfter
 		if err == nil {
+			// Recheck parent after successful attempt (cancel may race with success).
+			if ce := classifyOpError(ctx, opCtx, nil); ce != nil {
+				return ProviderResult{}, ce
+			}
+			res.SchemaVersion = SchemaProviderResult
 			res.Meta.RetryCount = retryCount
 			res.Meta.LatencyMS = p.now().Sub(start).Milliseconds()
 			res.Meta.HTTPStatus = status
@@ -381,12 +390,21 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 			res.Assessment.RulesetID = req.Input.RulesetID
 			return res, nil
 		}
-		// Cancellation/deadline must not become ordinary provider errors.
-		if cerr := preserveContextError(ctx, opCtx); cerr != nil {
-			return ProviderResult{}, cerr
+		// Parent abort preserves raw identity; adapter-owned timeout → typed timeout.
+		if ce := classifyOpError(ctx, opCtx, err); ce != nil {
+			if isParentContextAbort(ce) || isAdapterTimeout(ce) {
+				return ProviderResult{}, ce
+			}
+			// classifyOpError wraps ordinary errors; keep retryable path below.
+			if !retryable || attempt+1 >= maxAttempts {
+				lastErr = ce
+				break
+			}
+			lastErr = ce
+			continue
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return ProviderResult{}, err
+			return ProviderResult{}, classifyOpError(ctx, opCtx, err)
 		}
 		lastErr = err
 		if !retryable || attempt+1 >= maxAttempts {
@@ -394,18 +412,24 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 		}
 	}
 
-	if cerr := preserveContextError(ctx, opCtx); cerr != nil {
-		return ProviderResult{}, cerr
+	if ce := classifyOpError(ctx, opCtx, lastErr); ce != nil && (isParentContextAbort(ce) || isAdapterTimeout(ce)) {
+		return ProviderResult{}, ce
 	}
 	if lastErr != nil && (errors.Is(lastErr, context.Canceled) || errors.Is(lastErr, context.DeadlineExceeded)) {
-		return ProviderResult{}, lastErr
+		return ProviderResult{}, classifyOpError(ctx, opCtx, lastErr)
 	}
 	pe, ok := lastErr.(*ProviderError)
 	if !ok {
-		pe = newProviderError("transport", "provider call failed", false, lastStatus)
+		var typed *ProviderError
+		if errors.As(lastErr, &typed) {
+			pe = typed
+		} else {
+			pe = newProviderError("transport", "provider call failed", false, lastStatus)
+		}
 	}
 	pe.Message = redactSecret(pe.Message, p.apiKey)
 	return ProviderResult{
+		SchemaVersion: SchemaProviderResult,
 		Meta: ProviderMeta{
 			Provider:            "openai_compatible",
 			ModelID:             p.cfg.Model,
@@ -418,22 +442,6 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 			FallbackReason:      pe.Class,
 		},
 	}, pe
-}
-
-// preserveContextError returns the parent cancellation/deadline when either parent
-// or the derived op context is canceled/expired, preferring parent identity.
-func preserveContextError(parent, op context.Context) error {
-	if parent != nil {
-		if err := parent.Err(); err != nil {
-			return err
-		}
-	}
-	if op != nil {
-		if err := op.Err(); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, payload []byte, maxOut int, req ProviderRequest) (ProviderResult, int, bool, time.Duration, error) {
@@ -488,7 +496,7 @@ func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, payload []byte, m
 		return ProviderResult{}, status, false, 0, newProviderError("parse", err.Error(), false, status)
 	}
 
-	assessment, err := ParseRawAssessmentStrict([]byte(content), maxOut, AllowedEvidenceSet(req.Input))
+	assessment, err := ParseRawAssessmentStrict([]byte(content), maxOut, evidenceAllowlist(req.Input))
 	if err != nil {
 		return ProviderResult{}, status, false, 0, newProviderError("parse", err.Error(), false, status)
 	}
@@ -501,8 +509,9 @@ func (p *OpenAICompatibleProvider) doOnce(ctx context.Context, payload []byte, m
 	assessment.LatencyMS = 0
 
 	return ProviderResult{
-		Assessment: assessment,
-		Usage:      usage,
+		SchemaVersion: SchemaProviderResult,
+		Assessment:    assessment,
+		Usage:         usage,
 		Meta: ProviderMeta{
 			Provider:            "openai_compatible",
 			ModelID:             p.cfg.Model,

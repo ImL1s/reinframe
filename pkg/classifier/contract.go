@@ -45,9 +45,10 @@ type ProviderRequest struct {
 
 // ProviderResult is the canonical Stage-1 provider response envelope (#132).
 type ProviderResult struct {
-	Assessment RawAssessment
-	Usage      ProviderUsage
-	Meta       ProviderMeta
+	SchemaVersion string
+	Assessment    RawAssessment
+	Usage         ProviderUsage
+	Meta          ProviderMeta
 }
 
 // ProviderUsage is transport-derived token/cache telemetry only.
@@ -86,8 +87,8 @@ type ProviderMeta struct {
 
 // ValidateProviderRequest checks closed bounds and PromptPlan integrity before transport.
 func ValidateProviderRequest(req ProviderRequest) error {
-	if req.SchemaVersion != "" && req.SchemaVersion != SchemaProviderRequest {
-		return fmt.Errorf("classifier: unsupported provider request schema %q", boundErr(req.SchemaVersion))
+	if req.SchemaVersion != SchemaProviderRequest {
+		return fmt.Errorf("classifier: provider request schema required")
 	}
 	if req.MaxInputBytes < 0 || req.MaxOutputBytes < 0 {
 		return fmt.Errorf("classifier: negative byte limits")
@@ -104,8 +105,45 @@ func ValidateProviderRequest(req ProviderRequest) error {
 	if req.Timeout > MaxAllowedTimeout {
 		return fmt.Errorf("classifier: timeout exceeds ceiling")
 	}
+	if err := ValidateClassifierInput(req.Input); err != nil {
+		return err
+	}
 	if err := ValidatePromptPlan(req.Prompt, req.Input); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ValidateProviderResult checks result schema and usage/meta bounds.
+func ValidateProviderResult(res ProviderResult) error {
+	if res.SchemaVersion != SchemaProviderResult {
+		return fmt.Errorf("classifier: provider result schema required")
+	}
+	if err := ValidateProviderUsage(res.Usage); err != nil {
+		return err
+	}
+	return ValidateProviderMeta(res.Meta)
+}
+
+// ValidateProviderUsage rejects negative/overflow token fields.
+func ValidateProviderUsage(u ProviderUsage) error {
+	if u.InputTokens < 0 || u.OutputTokens < 0 || u.ReasoningTokens < 0 ||
+		u.CacheReadTokens < 0 || u.CacheWriteTokens < 0 || u.UncachedInputTokens < 0 {
+		return fmt.Errorf("classifier: invalid negative usage tokens")
+	}
+	return nil
+}
+
+// ValidateProviderMeta bounds status and retry count.
+func ValidateProviderMeta(m ProviderMeta) error {
+	if m.HTTPStatus < 0 || m.HTTPStatus > 999 {
+		return fmt.Errorf("classifier: invalid http_status")
+	}
+	if m.RetryCount < 0 || m.RetryCount > MaxRetryCount+1 {
+		return fmt.Errorf("classifier: invalid retry_count")
+	}
+	if len(m.Provider) > MaxAuditStringBytes || len(m.ModelID) > MaxAuditStringBytes {
+		return fmt.Errorf("classifier: meta string too long")
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
 	"github.com/ImL1s/reinframe/pkg/classifier"
@@ -38,6 +39,8 @@ type ReEvalContext struct {
 	RecentEventIDs []string
 	// PolicyClass defaults to PRODUCTIVITY.
 	PolicyClass string
+	// Observer receives best-effort provider-call audits (nil-safe).
+	Observer classifier.ProviderCallObserver
 }
 
 // ReEvalResult is the re-evaluation outcome for a retry.
@@ -122,11 +125,18 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 		}
 		// Closed challenge/justification summary for model-backed re-eval (no private CoT).
 		ch := &classifier.ChallengeContext{
-			ChallengeID:   rec.ChallengeID,
-			State:         string(rec.State),
-			BlockClass:    rec.BlockClass,
-			Appealability: rec.Appealability,
-			Claims:        append([]string(nil), rec.RequiredClaims...),
+			ChallengeID:       rec.ChallengeID,
+			State:             string(rec.State),
+			BlockClass:        rec.BlockClass,
+			ReasonCode:        rec.ReasonCode,
+			Appealability:     rec.Appealability,
+			RequiredClaims:    append([]string(nil), rec.RequiredClaims...),
+			RetryBudget:       rec.RetryBudget,
+			ExpiresAtSequence: rec.ExpiresAtSequence,
+			OriginalActionID:  rec.OriginalActionID,
+			ActionFingerprint: rec.ActionFingerprint,
+			// Claims remain closed claim names only; RequiredClaims is the closed checklist.
+			Claims: append([]string(nil), rec.RequiredClaims...),
 		}
 		if just != nil {
 			ch.ConcreteValue = just.ConcreteValue
@@ -141,6 +151,9 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			cin.RelatedEventIDs = append([]string(nil), just.SupportingEvidenceEventIDs...)
 		}
 		cin.Challenge = ch
+		if in.ContractRevision > 0 {
+			cin.ContractRevision = in.ContractRevision
+		}
 		preq, perr := classifier.NewProviderRequest(cin)
 		if perr != nil {
 			if in.PolicyClass == PolicyClassSecurity {
@@ -150,15 +163,35 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 		}
 		pres, err := in.Provider.Assess(ctx, preq)
 		raw := pres.Assessment
+		// Surface closed provider-call audit (retain Usage/Meta) on real re-eval path.
+		if in.Observer != nil {
+			a := classifier.BuildProviderCallAudit(preq, pres, rec.SessionID, rec.ChallengeID, time.Now().UTC())
+			if err != nil {
+				var pe *classifier.ProviderError
+				if errors.As(err, &pe) && pe != nil {
+					a.ErrorClass = pe.Class
+					a.FallbackReason = pe.Class
+				} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					a.ErrorClass = "canceled"
+					a.FallbackReason = "canceled"
+				} else {
+					a.ErrorClass = "transport"
+					a.FallbackReason = "transport"
+				}
+				a.ParseStatus = classifier.ParseStatusError
+			}
+			_ = in.Observer.RecordProviderCall(ctx, a) // best-effort
+		}
 		if err != nil {
-			// Never fail-open on owner cancellation — AttemptRetry must not persist ALLOWED_ONCE.
+			// Parent cancel/deadline: raw identity (never fail-open / persist ALLOWED_ONCE).
+			// Adapter-owned timeout is typed ProviderError{Class:"timeout"} — ordinary matrix.
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_context_canceled"}, err
 			}
 			if in.PolicyClass == PolicyClassSecurity {
 				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_fail_closed"}, nil
 			}
-			// Productivity fail-open on provider error — still not "auto allow from justification".
+			// Productivity fail-open on provider error (incl. adapter timeout) — not justification auto-allow.
 			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "provider_fail_open", RawSeverity: 0}, nil
 		}
 		// Stage 2 threshold

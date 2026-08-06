@@ -340,12 +340,12 @@ func (p *OpenAIResponsesProvider) buildRequestJSON(req ProviderRequest, maxIn in
 			role = PromptRoleSystem
 		}
 		if explicit {
-			parts := []oaiRespContentPart{{Type: "input_text", Text: b.Text}}
+			part := oaiRespContentPart{Type: "input_text", Text: b.Text}
 			if i == nStable-1 {
-				// Documented explicit breakpoint at end of stable prefix.
-				parts = append(parts, oaiRespContentPart{Type: "prompt_cache_breakpoint"})
+				// Breakpoint is a field on the last stable input_text block (OpenAI Responses schema).
+				part.PromptCacheBreakpoint = &oaiPromptCacheBreakpoint{Mode: "explicit"}
 			}
-			msgs = append(msgs, oaiRespInputItem{Role: role, Content: parts})
+			msgs = append(msgs, oaiRespInputItem{Role: role, Content: []oaiRespContentPart{part}})
 		} else {
 			msgs = append(msgs, oaiRespInputItem{Role: role, Content: b.Text})
 		}
@@ -499,12 +499,17 @@ type oaiRespInputItem struct {
 }
 
 type oaiRespContentPart struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
+	Type                  string                    `json:"type"`
+	Text                  string                    `json:"text,omitempty"`
+	PromptCacheBreakpoint *oaiPromptCacheBreakpoint `json:"prompt_cache_breakpoint,omitempty"`
+}
+
+type oaiPromptCacheBreakpoint struct {
+	Mode string `json:"mode"` // "explicit"
 }
 
 type oaiPromptCacheOptions struct {
-	Mode string `json:"mode"`
+	Mode string `json:"mode"` // top-level "explicit" — no implicit latest-message breakpoint
 }
 
 type oaiResponsesText struct {

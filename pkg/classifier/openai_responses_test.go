@@ -93,7 +93,7 @@ func TestOpenAIResponses_StructuredOutputAndCacheKey(t *testing.T) {
 	if opts["mode"] != "explicit" {
 		t.Fatalf("prompt_cache_options=%v", opts)
 	}
-	// Last stable input part must include prompt_cache_breakpoint; dynamic must not.
+	// Last stable input_text must carry prompt_cache_breakpoint.mode=explicit; dynamic must not.
 	input, _ := wire["input"].([]any)
 	if len(input) < 2 {
 		t.Fatalf("input len=%d", len(input))
@@ -101,23 +101,30 @@ func TestOpenAIResponses_StructuredOutputAndCacheKey(t *testing.T) {
 	foundBP := false
 	for i, raw := range input {
 		msg, _ := raw.(map[string]any)
-		content := msg["content"]
-		arr, ok := content.([]any)
+		arr, ok := msg["content"].([]any)
 		if !ok {
 			continue
 		}
 		for _, p := range arr {
 			part, _ := p.(map[string]any)
-			if part["type"] == "prompt_cache_breakpoint" {
-				if i >= len(req.Prompt.StablePrefix) {
-					t.Fatal("breakpoint must not appear on dynamic messages")
-				}
-				foundBP = true
+			bp, has := part["prompt_cache_breakpoint"].(map[string]any)
+			if !has {
+				continue
 			}
+			if i >= len(req.Prompt.StablePrefix) {
+				t.Fatal("breakpoint must not appear on dynamic messages")
+			}
+			if part["type"] != "input_text" {
+				t.Fatal("breakpoint must be a field on input_text, not a separate part type")
+			}
+			if bp["mode"] != "explicit" {
+				t.Fatalf("breakpoint mode=%v", bp["mode"])
+			}
+			foundBP = true
 		}
 	}
 	if !foundBP {
-		t.Fatal("explicit profile must place prompt_cache_breakpoint after stable prefix")
+		t.Fatal("explicit profile must set prompt_cache_breakpoint on last stable input_text")
 	}
 	text, _ := wire["text"].(map[string]any)
 	format, _ := text["format"].(map[string]any)

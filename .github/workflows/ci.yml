@@ -5,6 +5,8 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # Allow manual re-run when GitHub Actions PR event delivery stalls.
+  workflow_dispatch:
 
 jobs:
   lint:

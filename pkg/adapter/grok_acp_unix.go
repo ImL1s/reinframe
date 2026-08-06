@@ -8,17 +8,25 @@ import (
 	"syscall"
 )
 
-// configureGrokACPProcess puts the child in its own process group so Close can
-// signal the whole tree (OBJECTIVE Phase 3 Unix process-group cleanup).
-func configureGrokACPProcess(cmd *exec.Cmd) {
+// grokProcPlatform holds Unix process-group ownership (Setpgid).
+type grokProcPlatform struct{}
+
+// configureGrokProcess puts the child in its own process group so Close can
+// signal the whole tree (#191 / Phase 3 Unix process-group cleanup).
+func configureGrokProcess(cmd *exec.Cmd) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Setpgid = true
 }
 
-// signalGrokACPProcess sends SIGINT (graceful) or SIGKILL (force) to the process group.
-func signalGrokACPProcess(cmd *exec.Cmd, force bool) error {
+// attachGrokProcess is a no-op on Unix (Setpgid applied before Start).
+func attachGrokProcess(cmd *exec.Cmd) (grokProcPlatform, error) {
+	return grokProcPlatform{}, nil
+}
+
+// signalGrokProcess sends SIGINT (graceful) or SIGKILL (force) to the process group.
+func signalGrokProcess(cmd *exec.Cmd, _ *grokProcPlatform, force bool) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
@@ -29,7 +37,6 @@ func signalGrokACPProcess(cmd *exec.Cmd, force bool) error {
 	}
 	// Negative PID targets the process group when Setpgid was used.
 	if err := syscall.Kill(-pid, sig); err != nil {
-		// Fallback to the single process if group signal fails.
 		if force {
 			return cmd.Process.Kill()
 		}
@@ -37,3 +44,6 @@ func signalGrokACPProcess(cmd *exec.Cmd, force bool) error {
 	}
 	return nil
 }
+
+// releaseGrokProcess has no handles to close on Unix.
+func releaseGrokProcess(_ *grokProcPlatform) {}

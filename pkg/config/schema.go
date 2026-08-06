@@ -9,6 +9,8 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,12 +45,105 @@ type Config struct {
 	// Reviewer configures ReviewerProvider selection and egress posture (ADR 003).
 	Reviewer ReviewerConfig `json:"reviewer" yaml:"reviewer"`
 
+	// ClassifierProvider configures the Stage-1 classifier provider runtime (#132).
+	// Separate from Reviewer — never silently reuses reviewer advice path.
+	// Empty/disabled means shadow/tests use FakeClassifierProvider only (no network).
+	ClassifierProvider ClassifierProviderConfig `json:"classifier_provider,omitempty" yaml:"classifier_provider,omitempty"`
+
 	// Secrets maps logical names to env placeholders only — never raw values.
 	Secrets SecretsConfig `json:"secrets" yaml:"secrets"`
 
 	// Workspace configures managed worktree isolation (ADR 004).
 	Workspace WorkspaceConfig `json:"workspace" yaml:"workspace"`
 }
+
+// ClassifierProviderConfig selects the optional real classifier provider (#132).
+// kind empty or "none" disables network providers (default).
+type ClassifierProviderConfig struct {
+	// Kind: ""|"none"|"openai_compatible".
+	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
+	// Model identifier (required when kind is openai_compatible).
+	Model string `json:"model,omitempty" yaml:"model,omitempty"`
+	// BaseURL for OpenAI-compatible endpoint (origin only).
+	BaseURL string `json:"base_url,omitempty" yaml:"base_url,omitempty"`
+	// Path defaults to /v1/chat/completions.
+	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+	// APIKeyRef must be ${ENV} placeholder — never a raw secret.
+	APIKeyRef string `json:"api_key_ref,omitempty" yaml:"api_key_ref,omitempty"`
+	// TimeoutMS per-call timeout (default 1500).
+	TimeoutMS int `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+	// MaxInputBytes / MaxOutputBytes bounds.
+	MaxInputBytes  int `json:"max_input_bytes,omitempty" yaml:"max_input_bytes,omitempty"`
+	MaxOutputBytes int `json:"max_output_bytes,omitempty" yaml:"max_output_bytes,omitempty"`
+	// CapabilitiesProfile defaults to generic-none-v1.
+	CapabilitiesProfile string `json:"capabilities_profile,omitempty" yaml:"capabilities_profile,omitempty"`
+}
+
+// NormalizeKind returns the closed, trimmed kind used by validation and factory.
+func (cp ClassifierProviderConfig) NormalizeKind() string {
+	k := strings.TrimSpace(strings.ToLower(cp.Kind))
+	switch k {
+	case "", "none":
+		return "none"
+	case "openai_compatible":
+		return "openai_compatible"
+	default:
+		return k
+	}
+}
+
+// redactedAPIKeyRef returns a diagnostics-safe api_key_ref (env placeholders kept).
+func (cp ClassifierProviderConfig) redactedAPIKeyRef() string {
+	if cp.APIKeyRef == "" {
+		return ""
+	}
+	if IsEnvPlaceholder(cp.APIKeyRef) {
+		return cp.APIKeyRef
+	}
+	return "[REDACTED]"
+}
+
+// MarshalJSON redacts secret-like api_key_ref values that are not env placeholders,
+// so diagnostics remain secret-safe even before Validate succeeds.
+func (cp ClassifierProviderConfig) MarshalJSON() ([]byte, error) {
+	type alias ClassifierProviderConfig
+	out := alias(cp)
+	out.APIKeyRef = cp.redactedAPIKeyRef()
+	return json.Marshal(out)
+}
+
+// String is secret-safe for fmt / logs (never prints raw api_key_ref secrets).
+func (cp ClassifierProviderConfig) String() string {
+	return fmt.Sprintf(
+		"ClassifierProviderConfig{kind:%q model:%q base_url:%q path:%q api_key_ref:%q timeout_ms:%d max_input_bytes:%d max_output_bytes:%d capabilities_profile:%q}",
+		cp.Kind, cp.Model, cp.BaseURL, cp.Path, cp.redactedAPIKeyRef(),
+		cp.TimeoutMS, cp.MaxInputBytes, cp.MaxOutputBytes, cp.CapabilitiesProfile,
+	)
+}
+
+// GoString is secret-safe for %#v diagnostics.
+func (cp ClassifierProviderConfig) GoString() string {
+	return cp.String()
+}
+
+// Format implements fmt.Formatter so %v / %+v / %#v never leak raw secrets.
+func (cp ClassifierProviderConfig) Format(f fmt.State, verb rune) {
+	switch verb {
+	case 'v', 's':
+		if f.Flag('#') {
+			_, _ = fmt.Fprint(f, cp.GoString())
+			return
+		}
+		_, _ = fmt.Fprint(f, cp.String())
+	default:
+		_, _ = fmt.Fprint(f, cp.String())
+	}
+}
+
+// YAML note: structural `yaml:` tags remain for a future secure loader, but this
+// package does not ship a YAML marshaler (no gopkg.in/yaml dependency). Do not
+// claim secret-safe YAML dumps until a redacting MarshalYAML + loader lands.
+// Secret-safe diagnostics for this type are JSON + fmt (String/GoString/Format).
 
 // SessionDefaults are applied to new supervised sessions unless overridden.
 type SessionDefaults struct {
@@ -181,10 +276,103 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
+	if err := validateClassifierProvider(c.ClassifierProvider); err != nil {
+		return err
+	}
 	for name, ref := range c.Secrets.Refs {
 		if err := validateEnvPlaceholder(fmt.Sprintf("secrets.refs[%s]", name), ref); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateClassifierProvider(cp ClassifierProviderConfig) error {
+	kind := cp.NormalizeKind()
+	// Secret-like fields always validated with redacted errors (even when disabled).
+	if cp.APIKeyRef != "" {
+		if err := validateEnvPlaceholder("classifier_provider.api_key_ref", cp.APIKeyRef); err != nil {
+			// Never echo the raw value.
+			return fmt.Errorf("classifier_provider.api_key_ref is invalid")
+		}
+	}
+	switch kind {
+	case "none":
+		// Disabled: every other field must be empty/zero.
+		if strings.TrimSpace(cp.Model) != "" || strings.TrimSpace(cp.BaseURL) != "" ||
+			strings.TrimSpace(cp.Path) != "" || strings.TrimSpace(cp.APIKeyRef) != "" ||
+			cp.TimeoutMS != 0 || cp.MaxInputBytes != 0 || cp.MaxOutputBytes != 0 ||
+			strings.TrimSpace(cp.CapabilitiesProfile) != "" {
+			return fmt.Errorf("classifier_provider: disabled kind requires empty fields")
+		}
+		return nil
+	case "openai_compatible":
+		// ok
+	default:
+		return fmt.Errorf("classifier_provider.kind is not supported")
+	}
+	if strings.TrimSpace(cp.Model) == "" {
+		return fmt.Errorf("classifier_provider.model is required")
+	}
+	base := strings.TrimSpace(cp.BaseURL)
+	if base == "" {
+		return fmt.Errorf("classifier_provider.base_url is required")
+	}
+	// Origin-only contract: scheme+host, no path/query/fragment/userinfo.
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("classifier_provider.base_url is invalid")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
+		return fmt.Errorf("classifier_provider.base_url scheme must be http or https")
+	}
+	if u.User != nil {
+		return fmt.Errorf("classifier_provider.base_url must not include userinfo")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("classifier_provider.base_url must not include query or fragment")
+	}
+	if strings.TrimSpace(u.Hostname()) == "" {
+		return fmt.Errorf("classifier_provider.base_url hostname is required")
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("classifier_provider.base_url port must be 1-65535")
+		}
+	}
+	p := u.EscapedPath()
+	if p != "" && p != "/" {
+		return fmt.Errorf("classifier_provider.base_url must be origin only")
+	}
+	if path := strings.TrimSpace(cp.Path); path != "" {
+		if !strings.HasPrefix(path, "/") {
+			return fmt.Errorf("classifier_provider.path must begin with /")
+		}
+		if strings.Contains(path, "://") || strings.ContainsAny(path, "?#") {
+			return fmt.Errorf("classifier_provider.path is invalid")
+		}
+		for _, seg := range strings.Split(path, "/") {
+			if seg == ".." {
+				return fmt.Errorf("classifier_provider.path traversal rejected")
+			}
+		}
+	}
+	if cp.TimeoutMS < 0 || cp.TimeoutMS > 60000 {
+		return fmt.Errorf("classifier_provider.timeout_ms out of range")
+	}
+	if cp.MaxInputBytes < 0 || cp.MaxInputBytes > 1<<20 {
+		return fmt.Errorf("classifier_provider.max_input_bytes out of range")
+	}
+	if cp.MaxOutputBytes < 0 || cp.MaxOutputBytes > 256<<10 {
+		return fmt.Errorf("classifier_provider.max_output_bytes out of range")
+	}
+	switch strings.TrimSpace(cp.CapabilitiesProfile) {
+	case "", "generic-none-v1":
+	default:
+		return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
 	}
 	return nil
 }
@@ -229,6 +417,7 @@ func validateRequiredDuration(field, value string) error {
 }
 
 // IsEnvPlaceholder reports whether s is a ${NAME} style reference.
+// NAME must match [A-Za-z_][A-Za-z0-9_]* (no spaces, dashes, dots, or leading digits).
 func IsEnvPlaceholder(s string) bool {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, EnvPlaceholderPrefix) || !strings.HasSuffix(s, EnvPlaceholderSuffix) {
@@ -238,16 +427,32 @@ func IsEnvPlaceholder(s string) bool {
 	if inner == "" {
 		return false
 	}
-	// Disallow nested braces / whitespace-only names.
-	if strings.ContainsAny(inner, "${}") {
-		return false
+	for i, r := range inner {
+		if i == 0 {
+			if !isEnvIdentStart(r) {
+				return false
+			}
+			continue
+		}
+		if !isEnvIdentCont(r) {
+			return false
+		}
 	}
-	return strings.TrimSpace(inner) == inner
+	return true
+}
+
+func isEnvIdentStart(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_'
+}
+
+func isEnvIdentCont(r rune) bool {
+	return isEnvIdentStart(r) || (r >= '0' && r <= '9')
 }
 
 func validateEnvPlaceholder(field, value string) error {
 	if !IsEnvPlaceholder(value) {
-		return fmt.Errorf("%s must be an env placeholder like ${VAR_NAME}, got %q", field, value)
+		// Never echo the supplied value (may be a raw secret).
+		return fmt.Errorf("%s must be an env placeholder like ${VAR_NAME}", field)
 	}
 	return nil
 }

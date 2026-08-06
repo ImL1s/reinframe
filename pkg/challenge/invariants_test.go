@@ -298,6 +298,11 @@ func (failProvider) ReEvaluate(ctx context.Context, rec challenge.ChallengeRecor
 
 type failClassifier struct{}
 
-func (failClassifier) Assess(ctx context.Context, in classifier.ClassifierInput) (classifier.RawAssessment, error) {
-	return classifier.RawAssessment{}, context.DeadlineExceeded
+func (failClassifier) Assess(ctx context.Context, req classifier.ProviderRequest) (classifier.ProviderResult, error) {
+	// Ordinary transport failure (not parent cancel/deadline) so ReEval takes
+	// productivity fail-open / security fail-closed matrix — not context-cancel path.
+	return classifier.ProviderResult{
+		SchemaVersion: classifier.SchemaProviderResult,
+		Meta:          classifier.ProviderMeta{Provider: "fail", ErrorClass: "transport", ParseStatus: classifier.ParseStatusError},
+	}, &classifier.ProviderError{Class: "transport", Message: "injected transport failure", Retryable: false}
 }

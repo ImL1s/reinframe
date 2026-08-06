@@ -214,3 +214,80 @@ func TestIsEnvPlaceholder(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifierProviderConfig_Validate(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// empty kind ok
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{Kind: "none"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// raw key rejected
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_compatible", Model: "m", BaseURL: "http://127.0.0.1:1",
+		APIKeyRef: "sk-raw",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("raw api key must fail")
+	}
+	// unknown profile
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_compatible", Model: "m", BaseURL: "http://127.0.0.1:1",
+		APIKeyRef: "${REINFRAME_CLASSIFIER_API_KEY}", CapabilitiesProfile: "native-openai",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("unknown profile must fail")
+	}
+	// invalid base_url shapes (OBJECTIVE G / P2-E origin-only) + port range
+	for _, bad := range []string{
+		"not-a-url", "ftp://127.0.0.1/v1", "http://user:pass@127.0.0.1:1",
+		"http://127.0.0.1:1/v1", "http://127.0.0.1:1?x=1",
+		"http://127.0.0.1:0", "http://127.0.0.1:65536", "http://127.0.0.1:99999",
+	} {
+		cfg.ClassifierProvider = config.ClassifierProviderConfig{
+			Kind: "openai_compatible", Model: "m", BaseURL: bad,
+			APIKeyRef: "${REINFRAME_CLASSIFIER_API_KEY}", CapabilitiesProfile: "generic-none-v1",
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("base_url %q must fail validation", bad)
+		}
+	}
+	// disabled kind must not hide raw secrets / extraneous fields
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{Kind: "none", APIKeyRef: "sk-live-secret"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("kind none + raw api_key_ref must fail")
+	} else if strings.Contains(err.Error(), "sk-live-secret") {
+		t.Fatal("validation error must not echo raw secret")
+	}
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{Kind: "none", Model: "m"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("kind none + model must fail")
+	}
+	for _, bad := range []string{"${A B}", "${A-B}", "${1KEY}", "${}"} {
+		cfg.ClassifierProvider = config.ClassifierProviderConfig{
+			Kind: "openai_compatible", Model: "m", BaseURL: "http://127.0.0.1:1",
+			APIKeyRef: bad, CapabilitiesProfile: "generic-none-v1",
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("placeholder %q must fail", bad)
+		}
+	}
+	// good
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_compatible", Model: "m", BaseURL: "http://127.0.0.1:1",
+		APIKeyRef: "${REINFRAME_CLASSIFIER_API_KEY}", CapabilitiesProfile: "generic-none-v1",
+		TimeoutMS: 1500, MaxInputBytes: 1024, MaxOutputBytes: 512,
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// secret not in JSON
+	b, _ := config.MarshalJSONDocument(cfg)
+	if strings.Contains(string(b), "sk-") {
+		t.Fatal("raw secret in json")
+	}
+}

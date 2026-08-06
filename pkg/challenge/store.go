@@ -524,23 +524,32 @@ func validateTransition(from, to ChallengeState, evType string) error {
 
 // appendEvent is a helper used by Service under lock via store methods.
 func (s *Store) appendTransition(rec ChallengeRecord, from ChallengeState, to ChallengeState, typ, corr, cause, payloadHash, note string, at time.Time, just *Justification) ChallengeRecord {
+	return s.appendTransitionAudit(rec, from, to, typ, corr, cause, payloadHash, note, "", at, just)
+}
+
+// appendTransitionAudit is appendTransition with an optional durable provider-call audit id.
+func (s *Store) appendTransitionAudit(rec ChallengeRecord, from ChallengeState, to ChallengeState, typ, corr, cause, payloadHash, note, providerCallAuditID string, at time.Time, just *Justification) ChallengeRecord {
 	seq := s.nextSeqLocked()
 	rec.State = to
 	rec.UpdatedSequence = seq
 	rec.UpdatedAt = at
+	if providerCallAuditID != "" {
+		rec.ProviderCallAuditID = providerCallAuditID
+	}
 	ev := ChallengeEvent{
-		SchemaVersion: SchemaChallengeEvent,
-		Sequence:      seq,
-		ChallengeID:   rec.ChallengeID,
-		SessionID:     rec.SessionID,
-		Type:          typ,
-		FromState:     from,
-		ToState:       to,
-		CorrelationID: corr,
-		CausationID:   cause,
-		PayloadHash:   payloadHash,
-		Note:          note,
-		At:            at,
+		SchemaVersion:       SchemaChallengeEvent,
+		Sequence:            seq,
+		ChallengeID:         rec.ChallengeID,
+		SessionID:           rec.SessionID,
+		Type:                typ,
+		FromState:           from,
+		ToState:             to,
+		CorrelationID:       corr,
+		CausationID:         cause,
+		PayloadHash:         payloadHash,
+		ProviderCallAuditID: providerCallAuditID,
+		Note:                note,
+		At:                  at,
 	}
 	s.putLocked(rec, ev, just)
 	return rec

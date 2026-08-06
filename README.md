@@ -74,7 +74,7 @@ Evaluation:
 | Appealable BLOCK challenge core (#131 / PR #148) | ✅ Host-neutral core; one-shot retry; no live Claude claim |
 | Live Claude ALLOW/BLOCK/context smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
 | Real advice consumer / ACK (#108) | 🔲 Open — blocked by #120 |
-| Real classifier provider runtime (#132) | 🔲 Open — ready; generic adapter cache-neutral |
+| Real classifier provider runtime (#132) | ✅ Generic OpenAI-compatible foundation (cache-neutral); native vendors still open |
 | Native OpenAI/Anthropic/Gemini/xAI classifier adapters (#134–#137) | 🔲 Open — blocked by #132 |
 | Exact `RawAssessment` cache + singleflight (#138) | 🔲 Open — blocked by #132 |
 | Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; still blocked by #120 live host evidence |
@@ -172,7 +172,7 @@ reinframe/
 - **`pkg/detector`**: deterministic repeated-failure, verification-churn, tool-budget and hypothesis-loop signals.
 - **`pkg/policy`**: fast deterministic gates and slow advisory path.
 - **`pkg/supervisor`**: composition root for detect → policy → queue → deliver → ACK.
-- **`pkg/classifier`**: current closed shadow classifier and fake provider; production provider runtime is #132.
+- **`pkg/classifier`**: closed shadow classifier, FakeClassifierProvider, and #132 provider-neutral runtime (PromptPlan, strict parser, generic OpenAI-compatible adapter, cache-neutral).
 - **`pkg/challenge`**: versioned appealable `BLOCK` records, closed justification schema, one-shot retry, semantic fingerprinting, replay, and audit/cache identity.
 - **`pkg/evaluation`**: offline fixture scoring and reports; #100 disposition remains MORE-DATA.
 - **`pkg/workspace`**: clean-only checkpoint/rollback inside a verified Reinframe-owned worktree.

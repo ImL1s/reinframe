@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
 	"github.com/ImL1s/reinframe/pkg/classifier"
@@ -34,10 +35,22 @@ type ReEvalContext struct {
 	UserException       bool
 	RepoPolicyException bool
 	FlakyInvestigation  bool
-	// RecentEventIDs for classifier evidence validation.
+	// RecentEventIDs for classifier evidence validation (legacy).
 	RecentEventIDs []string
+	// RelatedEventIDs legacy related evidence.
+	RelatedEventIDs []string
+	// Trajectory packet (wire §5) — binds TaskAnchor + digests into Stage-1 prompt.
+	TaskAnchor    classifier.TaskAnchor
+	RecentEvents  []classifier.EventDigest
+	RelatedEvents []classifier.EventDigest
+	// EvidenceRevision pairs with ContractRevision for cache identity.
+	EvidenceRevision int
 	// PolicyClass defaults to PRODUCTIVITY.
 	PolicyClass string
+	// Observer receives best-effort provider-call audits (nil-safe).
+	Observer classifier.ProviderCallObserver
+	// AllowLegacyFixtureIDs is an explicit #105 Fake-only option. Never inferred.
+	AllowLegacyFixtureIDs bool
 }
 
 // ReEvalResult is the re-evaluation outcome for a retry.
@@ -46,6 +59,8 @@ type ReEvalResult struct {
 	Intervention   string // none | HUMAN_REVIEW (APPEALABLE already established)
 	Reason         string
 	RawSeverity    int
+	// ProviderCall retains closed provider-call audit when Stage1 ran (may be nil).
+	ProviderCall *classifier.ProviderCallAudit
 }
 
 // ReEvaluator re-runs hard rules → contract/evidence → optional classifier → Stage2.
@@ -115,39 +130,126 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			PolicyClass:         in.PolicyClass,
 			RulesetHash:         firstNonEmpty(in.RulesetHash, rec.RulesetHash),
 			ProposedAction:      &pa,
+			TaskAnchor:          in.TaskAnchor,
+			ContractRevision:    in.ContractRevision,
+			EvidenceRevision:    in.EvidenceRevision,
+			RecentEvents:        append([]classifier.EventDigest(nil), in.RecentEvents...),
+			RelatedEvents:       append([]classifier.EventDigest(nil), in.RelatedEvents...),
 			RecentEventIDs:      append([]string(nil), in.RecentEventIDs...),
+			RelatedEventIDs:     append([]string(nil), in.RelatedEventIDs...),
 			UserException:       in.UserException,
 			RepoPolicyException: in.RepoPolicyException,
 			FlakyInvestigation:  in.FlakyInvestigation,
 		}
-		// Include justification evidence ids as related evidence (not auto-allow).
-		if just != nil {
-			cin.RelatedEventIDs = append([]string(nil), just.SupportingEvidenceEventIDs...)
+		// Closed challenge/justification summary for model-backed re-eval (no private CoT).
+		ch := &classifier.ChallengeContext{
+			ChallengeID:       rec.ChallengeID,
+			State:             string(rec.State),
+			BlockClass:        rec.BlockClass,
+			ReasonCode:        rec.ReasonCode,
+			Appealability:     rec.Appealability,
+			RequiredClaims:    append([]string(nil), rec.RequiredClaims...),
+			RetryBudget:       rec.RetryBudget,
+			ExpiresAtSequence: rec.ExpiresAtSequence,
+			OriginalActionID:  rec.OriginalActionID,
+			ActionFingerprint: rec.ActionFingerprint,
+			// Claims remain closed claim names only; RequiredClaims is the closed checklist.
+			Claims: append([]string(nil), rec.RequiredClaims...),
 		}
-		raw, err := in.Provider.Assess(ctx, cin)
-		if err != nil {
-			// Never fail-open on owner cancellation — AttemptRetry must not persist ALLOWED_ONCE.
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_context_canceled"}, err
-			}
+		if just != nil {
+			ch.ConcreteValue = just.ConcreteValue
+			ch.PreventedFailureOrThreat = just.PreventedFailureOrThreat
+			ch.EstimatedCost = just.EstimatedCost
+			ch.AlternativesConsidered = just.AlternativesConsidered
+			ch.ScopeLimit = just.ScopeLimit
+			ch.VerificationPlan = just.VerificationPlan
+			ch.RollbackPlan = just.RollbackPlan
+			// Justification evidence IDs stay on ChallengeContext only (not RelatedEventIDs).
+			// Do not inject legacy ID-only trajectory — that silently forced fixture mode.
+			ch.EvidenceEventIDs = append([]string(nil), just.SupportingEvidenceEventIDs...)
+		}
+		cin.Challenge = ch
+		if in.ContractRevision > 0 {
+			cin.ContractRevision = in.ContractRevision
+		}
+		var preq classifier.ProviderRequest
+		var perr error
+		// Fixture mode only when explicitly requested — never inferred from empty digests.
+		if in.AllowLegacyFixtureIDs {
+			preq, perr = classifier.NewFixtureProviderRequest(cin)
+		} else {
+			preq, perr = classifier.NewProviderRequest(cin)
+		}
+		if perr != nil {
 			if in.PolicyClass == PolicyClassSecurity {
 				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_fail_closed"}, nil
 			}
-			// Productivity fail-open on provider error — still not "auto allow from justification".
 			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "provider_fail_open", RawSeverity: 0}, nil
 		}
-		// Stage 2 threshold
-		if raw.ParseStatus != "ok" {
-			if in.PolicyClass == PolicyClassSecurity {
-				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "parse_fail_closed"}, nil
+		pres, err := in.Provider.Assess(ctx, preq)
+		// Request-bound validation before any threshold scoring.
+		if err == nil {
+			if verr := classifier.ValidateProviderResultForRequest(preq, pres); verr != nil {
+				err = verr
+				pres.Meta.ParseStatus = classifier.ParseStatusError
+				pres.Meta.ErrorClass = "parse"
+				pres.Meta.FallbackReason = "contract"
 			}
-			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "parse_fail_open"}, nil
+		}
+		raw := pres.Assessment
+		// Always retain closed provider-call audit (Usage/Meta); observer is best-effort.
+		a := classifier.BuildProviderCallAudit(preq, pres, rec.SessionID, rec.ChallengeID, time.Now().UTC())
+		if err != nil {
+			var pe *classifier.ProviderError
+			if errors.As(err, &pe) && pe != nil {
+				a.ErrorClass = pe.Class
+				a.FallbackReason = pe.Class
+			} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				a.ErrorClass = "canceled"
+				a.FallbackReason = "canceled"
+			} else {
+				a.ErrorClass = "transport"
+				a.FallbackReason = "transport"
+			}
+			a.ParseStatus = classifier.ParseStatusError
+		}
+		auditPtr := &a
+		if in.Observer != nil {
+			obsCtx := context.WithoutCancel(ctx)
+			_ = in.Observer.RecordProviderCall(obsCtx, a) // best-effort; never alters policy
+		}
+		if err != nil {
+			// Parent cancel/deadline: raw identity (never fail-open / persist ALLOWED_ONCE).
+			// Adapter-owned timeout is typed ProviderError{Class:"timeout"} — ordinary matrix.
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_context_canceled", ProviderCall: auditPtr}, err
+			}
+			// Contract/parse validation failures are parse-class, not transport.
+			var pe *classifier.ProviderError
+			if errors.As(err, &pe) && pe != nil && pe.Class == "parse" {
+				if in.PolicyClass == PolicyClassSecurity {
+					return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "parse_fail_closed", ProviderCall: auditPtr}, nil
+				}
+				return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "parse_fail_open", ProviderCall: auditPtr}, nil
+			}
+			if in.PolicyClass == PolicyClassSecurity {
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "provider_fail_closed", ProviderCall: auditPtr}, nil
+			}
+			// Productivity fail-open on provider error (incl. adapter timeout) — not justification auto-allow.
+			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "provider_fail_open", RawSeverity: 0, ProviderCall: auditPtr}, nil
+		}
+		// Stage 2 threshold — only validated ParseStatus=ok reaches scoring.
+		if raw.ParseStatus != "ok" && raw.ParseStatus != classifier.ParseStatusOK {
+			if in.PolicyClass == PolicyClassSecurity {
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "parse_fail_closed", ProviderCall: auditPtr}, nil
+			}
+			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "parse_fail_open", ProviderCall: auditPtr}, nil
 		}
 		if !classifier.ValidateSeverity(raw.Severity) {
 			if in.PolicyClass == PolicyClassSecurity {
-				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "severity_fail_closed"}, nil
+				return ReEvalResult{Stage2Decision: DecisionBlock, Reason: "severity_fail_closed", ProviderCall: auditPtr}, nil
 			}
-			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "severity_fail_open"}, nil
+			return ReEvalResult{Stage2Decision: DecisionAllow, Reason: "severity_fail_open", ProviderCall: auditPtr}, nil
 		}
 		dec := DecisionAllow
 		reason := "below_threshold"
@@ -173,6 +275,7 @@ func (DefaultReEvaluator) ReEvaluate(ctx context.Context, rec ChallengeRecord, p
 			Intervention:   InterventionNone,
 			Reason:         reason,
 			RawSeverity:    raw.Severity,
+			ProviderCall:   auditPtr,
 		}, nil
 	}
 

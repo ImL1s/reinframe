@@ -63,7 +63,7 @@ Evaluation:
 | TaskSubmitted intake mappers (#84) | ✅ Fixture/host mappers (no protocol host type names) |
 | Codex EventSource offline + near-live tail (#95/#107/#118) | ✅ Observe-only L0; collision-safe source identity |
 | Codex project-local hooks control (#163) | ✅ Foundation — project-local hooks.json install/doctor + PreTool/Permission mapping; **live proof #164** |
-| Grok Build native hooks (#165) | 🔲 Open — Ready; **not implemented yet** |
+| Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; **live #167** |
 | Grok Build ACP stdio bridge (#166) | 🔲 Open — Ready; **not implemented yet** |
 | Live Codex hooks proof (#164) | 🔲 Open — blocked until #163 + interactive Codex |
 | Live Grok Build hooks+ACP proof (#167) | 🔲 Open — blocked until #165+#166 + authenticated Grok |

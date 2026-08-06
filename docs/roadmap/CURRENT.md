@@ -31,8 +31,11 @@
 
 | Issue | Notes |
 |-------|-------|
-| **#165** | Grok Build native hooks foundation |
 | **#166** | Grok Build ACP stdio bridge |
+
+| Track | Notes |
+|-------|-------|
+| Grok Build native hooks | **#165** foundation (host fail-open; live **#167**) |
 
 ## Residual open work
 

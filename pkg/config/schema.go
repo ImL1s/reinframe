@@ -140,32 +140,10 @@ func (cp ClassifierProviderConfig) Format(f fmt.State, verb rune) {
 	}
 }
 
-// MarshalYAML redacts non-placeholder api_key_ref so YAML dumps are secret-safe.
-// Compatible with gopkg.in/yaml.v3 Marshaler interface.
-func (cp ClassifierProviderConfig) MarshalYAML() (any, error) {
-	type alias struct {
-		Kind                string `yaml:"kind,omitempty"`
-		Model               string `yaml:"model,omitempty"`
-		BaseURL             string `yaml:"base_url,omitempty"`
-		Path                string `yaml:"path,omitempty"`
-		APIKeyRef           string `yaml:"api_key_ref,omitempty"`
-		TimeoutMS           int    `yaml:"timeout_ms,omitempty"`
-		MaxInputBytes       int    `yaml:"max_input_bytes,omitempty"`
-		MaxOutputBytes      int    `yaml:"max_output_bytes,omitempty"`
-		CapabilitiesProfile string `yaml:"capabilities_profile,omitempty"`
-	}
-	return alias{
-		Kind:                cp.Kind,
-		Model:               cp.Model,
-		BaseURL:             cp.BaseURL,
-		Path:                cp.Path,
-		APIKeyRef:           cp.redactedAPIKeyRef(),
-		TimeoutMS:           cp.TimeoutMS,
-		MaxInputBytes:       cp.MaxInputBytes,
-		MaxOutputBytes:      cp.MaxOutputBytes,
-		CapabilitiesProfile: cp.CapabilitiesProfile,
-	}, nil
-}
+// YAML note: structural `yaml:` tags remain for a future secure loader, but this
+// package does not ship a YAML marshaler (no gopkg.in/yaml dependency). Do not
+// claim secret-safe YAML dumps until a redacting MarshalYAML + loader lands.
+// Secret-safe diagnostics for this type are JSON + fmt (String/GoString/Format).
 
 // SessionDefaults are applied to new supervised sessions unless overridden.
 type SessionDefaults struct {

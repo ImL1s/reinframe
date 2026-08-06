@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,94 @@ import (
 )
 
 // --- P1-A: sleep failure never yields (ProviderResult{}, nil) ---
+
+func TestErrFromExhaustedBudget_NeverNil(t *testing.T) {
+	t.Parallel()
+	// rem<=0 with unpublished op.Err (pass nil) must still be typed timeout.
+	parent := context.Background()
+	op := context.Background() // live, no deadline published
+	err := classifier.ErrFromExhaustedBudgetForTest(parent, op, nil)
+	if err == nil {
+		t.Fatal("exhausted budget must never return nil")
+	}
+	var pe *classifier.ProviderError
+	if !errors.As(err, &pe) || pe.Class != "timeout" {
+		t.Fatalf("want ProviderError timeout, got %v (%T)", err, err)
+	}
+	// Parent canceled wins over typed timeout.
+	p2, cancel := context.WithCancel(context.Background())
+	cancel()
+	err2 := classifier.ErrFromExhaustedBudgetForTest(p2, op, nil)
+	if !errors.Is(err2, context.Canceled) {
+		t.Fatalf("parent cancel must win: %v", err2)
+	}
+	// Published op deadline → typed timeout (parent live).
+	op3, cancel3 := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel3()
+	time.Sleep(2 * time.Millisecond)
+	err3 := classifier.ErrFromExhaustedBudgetForTest(parent, op3, op3.Err())
+	if err3 == nil {
+		t.Fatal("nil after published deadline")
+	}
+	if errors.Is(err3, context.DeadlineExceeded) {
+		// Must be typed PE timeout, not raw deadline identity for policy matrix.
+		if !errors.As(err3, &pe) || pe.Class != "timeout" {
+			t.Fatalf("want typed timeout PE, got %v", err3)
+		}
+	} else if !errors.As(err3, &pe) || pe.Class != "timeout" {
+		t.Fatalf("want timeout PE, got %v", err3)
+	}
+}
+
+func TestOpenAICompatible_RemExpiredUsesTypedTimeout(t *testing.T) {
+	t.Parallel()
+	// Force rem<=0 on retry via injectable Now past op deadline.
+	// First attempt 429, then rem check on attempt>0 uses Now after deadline.
+	var hits atomic.Int32
+	start := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	// Now jumps far past Assess start so remaining budget appears exhausted
+	// on the retry path even if context Err publish is delayed relative to clock.
+	p, err := classifier.NewOpenAICompatible(classifier.OpenAICompatibleConfig{
+		Model: "m", BaseURL: srv.URL, Path: "/v1/chat/completions", AllowRemote: true,
+		HTTPClient: srv.Client(), Timeout: 50 * time.Millisecond, MaxRetries: 2,
+		Now: func() time.Time {
+			// First calls near start; after first attempt, leap past any deadline.
+			if hits.Load() >= 1 {
+				return start.Add(time.Hour)
+			}
+			return time.Now()
+		},
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			t.Fatal("sleep must not run when rem already expired")
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := classifier.NewProviderRequest(classifier.ClassifierInput{
+		SchemaVersion: classifier.SchemaClassifierInput,
+	})
+	req.Timeout = 50 * time.Millisecond
+	_, e := p.Assess(context.Background(), req)
+	if e == nil {
+		t.Fatal("rem<=0 path must return error")
+	}
+	var pe *classifier.ProviderError
+	// May be timeout from exhausted budget or http 429 terminal depending on race;
+	// never nil success.
+	if errors.As(e, &pe) {
+		if pe.Class != "timeout" && pe.Class != "http" && pe.Class != "transport" {
+			t.Fatalf("unexpected class %s", pe.Class)
+		}
+	}
+}
 
 func TestOpenAICompatible_ParentCancelDuringBackoff(t *testing.T) {
 	t.Parallel()

@@ -92,8 +92,9 @@ func TestAttemptRetry_SleepErrorAfter429NeverAllowedOnce(t *testing.T) {
 
 func TestAttemptRetry_ProviderFailOpenNeverAllowedOnce(t *testing.T) {
 	t.Parallel()
-	// Explicit transport-class provider error on PRODUCTIVITY: fail-open policy may
-	// surface as ALLOW at Stage2 for shadow, but AttemptRetry must reject one-shot.
+	// Explicit transport-class provider error on PRODUCTIVITY: ReEval returns
+	// provider_fail_open (Stage2 ALLOW soft-policy) but AttemptRetry must REJECT
+	// and never mint ALLOWED_ONCE — note carries provider_fail_open_no_allowed_once.
 	fail := failClassifier{}
 	svc := challenge.NewService(challenge.ServiceConfig{})
 	pa := samplePA("rm -rf build")
@@ -106,6 +107,17 @@ func TestAttemptRetry_ProviderFailOpenNeverAllowedOnce(t *testing.T) {
 	if _, err := svc.Justify(context.Background(), validJustification(rec.ChallengeID, nil), nil); err != nil {
 		t.Fatal(err)
 	}
+	// Direct ReEval must surface provider_fail_open on PRODUCTIVITY transport error.
+	re := challenge.DefaultReEvaluator{}
+	out, err := re.ReEvaluate(context.Background(), rec, pa, nil, &challenge.ReEvalContext{
+		Provider: fail, PolicyClass: classifier.PolicyClassProductivity,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Reason != "provider_fail_open" || out.Stage2Decision != challenge.DecisionAllow {
+		t.Fatalf("want productivity fail-open Stage2 ALLOW reason=provider_fail_open, got %+v", out)
+	}
 	retry, _ := svc.AttemptRetry(context.Background(), challenge.RetryRequest{
 		ChallengeID: rec.ChallengeID, SessionID: pa.SessionID, Proposed: pa,
 		CorrelationID: "fail-open-no-once",
@@ -116,6 +128,14 @@ func TestAttemptRetry_ProviderFailOpenNeverAllowedOnce(t *testing.T) {
 	})
 	if retry.Record.State == challenge.StateAllowedOnce || retry.Stage2Decision == challenge.DecisionAllow {
 		t.Fatalf("provider fail-open must not ALLOWED_ONCE: %+v", retry)
+	}
+	if retry.Record.State != challenge.StateRejected {
+		t.Fatalf("want REJECTED, got state=%s", retry.Record.State)
+	}
+	// Event note should record fail-open without one-shot allow.
+	// Fetch last event via Get is enough for state; assert Stage2 BLOCK.
+	if retry.Stage2Decision != challenge.DecisionBlock {
+		t.Fatalf("Stage2 must BLOCK for fail-open one-shot deny: %+v", retry)
 	}
 }
 

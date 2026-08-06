@@ -280,6 +280,21 @@ func wrapClientNoRedirect(in *http.Client) *http.Client {
 	return out
 }
 
+// errFromExhaustedBudget maps exhausted overall Assess budget to a non-nil error.
+// Parent abort preserves raw identity; otherwise typed adapter timeout even when
+// op.Err has not yet been published (rem<=0 clock race / unpublished Err).
+func errFromExhaustedBudget(parent, op context.Context, opErr error) error {
+	if ce := classifyOpError(parent, op, opErr); ce != nil {
+		return ce
+	}
+	return newProviderError("timeout", "provider request timeout", false, 0)
+}
+
+// ErrFromExhaustedBudgetForTest exports errFromExhaustedBudget for unit tests.
+func ErrFromExhaustedBudgetForTest(parent, op context.Context, opErr error) error {
+	return errFromExhaustedBudget(parent, op, opErr)
+}
+
 // Assess implements ClassifierProvider.
 func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderRequest) (ProviderResult, error) {
 	if ctx == nil {
@@ -354,10 +369,12 @@ func (p *OpenAICompatibleProvider) Assess(ctx context.Context, req ProviderReque
 				delay = MaxRetryAfter
 			}
 			// Respect remaining deadline of the overall Assess budget.
+			// Use provider clock so tests can inject expired budget; never return nil
+			// when rem<=0 even if opCtx.Err is not yet published (P1-A item 5).
 			if dl, ok := opCtx.Deadline(); ok {
-				rem := time.Until(dl)
+				rem := dl.Sub(p.now())
 				if rem <= 0 {
-					return ProviderResult{}, classifyOpError(ctx, opCtx, opCtx.Err())
+					return ProviderResult{}, errFromExhaustedBudget(ctx, opCtx, opCtx.Err())
 				}
 				if delay > rem {
 					delay = rem

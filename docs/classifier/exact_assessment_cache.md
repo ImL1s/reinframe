@@ -39,6 +39,7 @@ Concurrent identical keys produce one provider call.
 - The first registrant (leader) receives real provider usage; additional waiters get zero-usage `reinframe_exact` coalesced results (no token double-count).
 - If the leader cancels before observing the shared result, usage is best-effort unattributed rather than double-counted; remaining waiters still receive the assessment.
 - Provider failures are not admitted; later callers may retry.
+- **Panic-safe (PR #172):** the shared Assess goroutine recovers panics, publishes an error to all waiters, deletes the inflight slot, and never admits the panic outcome — subsequent Assess calls can retry.
 
 ## Observability
 

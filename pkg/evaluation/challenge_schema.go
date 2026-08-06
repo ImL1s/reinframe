@@ -217,9 +217,10 @@ type ChallengeMetrics struct {
 	InvalidAppealRejected int `json:"invalid_appeal_rejected"`
 	InvalidAppealAttempts int `json:"invalid_appeal_attempts"`
 
-	// Bypass resistance
+	// Bypass / rewrite binding
 	BypassAttempts        int `json:"bypass_attempts"`
-	BypassBlocked         int `json:"bypass_blocked"`
+	RewriteBoundOK        int `json:"rewrite_bound_ok"`  // syntax rewrite stays bound (may ALLOW once)
+	HostileRejectOK       int `json:"hostile_reject_ok"` // different-target must not ALLOW
 	ReducedScopeCases     int `json:"reduced_scope_cases"`
 	ReducedScopeOK        int `json:"reduced_scope_ok"`
 	DuplicateRetryCases   int `json:"duplicate_retry_cases"`

@@ -67,8 +67,9 @@ func ChallengeDatasetHash(cases []ChallengeCase) (string, error) {
 
 // RunLaneA executes all cases with a fresh challenge.Service per case (isolation).
 func (r *ChallengeRunner) RunLaneA(ctx context.Context, cases []ChallengeCase) (ChallengeReport, error) {
-	if r.DatasetVersion == "" {
-		r.DatasetVersion = "challenge-lane-a-v1"
+	dv := r.DatasetVersion
+	if dv == "" {
+		dv = "challenge-lane-a-v1"
 	}
 	dh, err := ChallengeDatasetHash(cases)
 	if err != nil {
@@ -78,7 +79,7 @@ func (r *ChallengeRunner) RunLaneA(ctx context.Context, cases []ChallengeCase) (
 		SchemaVersion:   ChallengeReportSchemaVersion,
 		Lane:            ChallengeLaneDeterministic,
 		Commit:          r.Commit,
-		DatasetVersion:  r.DatasetVersion,
+		DatasetVersion:  dv,
 		DatasetHash:     dh,
 		FingerprintNote: "challenge.ComputeFingerprint + ClassifyRelationship (semantic, not universal)",
 		HardGateEnabled: false,
@@ -212,12 +213,14 @@ func runOneChallengeCase(ctx context.Context, c ChallengeCase) ChallengeCaseResu
 		if c.RetryUserException {
 			reEval = &challenge.ReEvalContext{UserException: true}
 		}
-		res, _ := svc.AttemptRetry(ctx, challenge.RetryRequest{
+		// Shared correlation for duplicate idempotent replay scoring.
+		corr := "eval-retry-" + c.CaseID
+		res, rerr := svc.AttemptRetry(ctx, challenge.RetryRequest{
 			ChallengeID:   rec.ChallengeID,
 			SessionID:     c.SessionID,
 			Branch:        c.Branch,
 			Proposed:      rpa,
-			CorrelationID: "eval-retry-" + c.CaseID,
+			CorrelationID: corr,
 			ReEval:        reEval,
 		})
 		out.ObservedRelation = res.Relationship
@@ -226,26 +229,23 @@ func runOneChallengeCase(ctx context.Context, c ChallengeCase) ChallengeCaseResu
 		out.ObservedRejected = res.RejectedReason
 		out.IdempotentReplay = res.IdempotentReplay
 		out.RetryMatch = matchRetry(c, res)
+		if rerr != nil && c.ExpectRejectedReason == "" && res.RejectedReason == "" {
+			out.RetryMatch = false
+		}
 
 		if c.DuplicateRetry {
 			out.AddedTurns++
+			// Same CorrelationID → true IdempotentReplay path.
 			res2, _ := svc.AttemptRetry(ctx, challenge.RetryRequest{
 				ChallengeID:   rec.ChallengeID,
 				SessionID:     c.SessionID,
 				Branch:        c.Branch,
 				Proposed:      rpa,
-				CorrelationID: "eval-retry2-" + c.CaseID,
+				CorrelationID: corr,
+				ReEval:        reEval,
 			})
-			// Second attempt must be idempotent or non-increasing budget (business outcome once).
-			if !res2.IdempotentReplay && res2.RejectedReason == "" && res.Record.State == challenge.StateAllowedOnce {
-				// If first already terminal ALLOWED_ONCE, second should not re-open.
-				out.RetryMatch = out.RetryMatch && (res2.IdempotentReplay || res2.RejectedReason != "" ||
-					res2.Record.State == challenge.StateAllowedOnce || res2.Record.State == challenge.StateRejected)
-			} else {
-				out.RetryMatch = out.RetryMatch && (res2.IdempotentReplay || res2.RejectedReason != "" ||
-					string(res2.Record.State) == c.ExpectRetryState)
-			}
-			out.IdempotentReplay = out.IdempotentReplay || res2.IdempotentReplay
+			out.RetryMatch = out.RetryMatch && res2.IdempotentReplay
+			out.IdempotentReplay = res2.IdempotentReplay
 		}
 		out.PassRetry = out.RetryMatch
 	} else {
@@ -272,9 +272,11 @@ func matchOpen(c ChallengeCase, rec challenge.ChallengeRecord) bool {
 func matchRetry(c ChallengeCase, res challenge.RetryResult) bool {
 	ok := true
 	if c.ExpectRelationship != "" && res.Relationship != c.ExpectRelationship {
-		// Bypass attempts may be rejected before relationship is classified; accept empty relation with reject.
-		if !(c.Kind == ChallengeKindBypassAttempt && res.RejectedReason != "" && res.Relationship == "") {
-			ok = false
+		// Rejected path may leave relationship empty when identity fails early.
+		if res.RejectedReason == "" || res.Relationship != "" {
+			if res.Relationship != c.ExpectRelationship {
+				ok = false
+			}
 		}
 	}
 	if c.ExpectRetryState != "" && string(res.Record.State) != c.ExpectRetryState {
@@ -286,9 +288,9 @@ func matchRetry(c ChallengeCase, res challenge.RetryResult) bool {
 	if c.ExpectRejectedReason != "" && !strings.Contains(res.RejectedReason, c.ExpectRejectedReason) {
 		ok = false
 	}
-	// Bypass resistance: if expect relationship bypass, final must not be ALLOWED_ONCE success without reject.
-	if c.ExpectRelationship == challenge.RelBypass {
-		if res.Record.State == challenge.StateAllowedOnce && res.Stage2Decision == challenge.DecisionAllow {
+	// Hostile different-target: must not ALLOW.
+	if c.ExpectRelationship == challenge.RelDifferent && c.ExpectRejectedReason != "" {
+		if res.Stage2Decision == challenge.DecisionAllow && res.Record.State == challenge.StateAllowedOnce {
 			ok = false
 		}
 	}
@@ -325,7 +327,12 @@ func accumulateChallengeMetrics(m *ChallengeMetrics, c ChallengeCase, res Challe
 	case ChallengeKindBypassAttempt:
 		m.BypassAttempts++
 		if res.PassRetry {
-			m.BypassBlocked++
+			// Bound rewrite (same/bypass relation + expected outcome) vs hostile reject.
+			if c.ExpectRejectedReason != "" || c.ExpectRelationship == challenge.RelDifferent {
+				m.HostileRejectOK++
+			} else {
+				m.RewriteBoundOK++
+			}
 		}
 		if res.PassOpen {
 			m.AppealableCases++

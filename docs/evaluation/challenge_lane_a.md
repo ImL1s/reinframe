@@ -9,7 +9,9 @@ Deterministic offline evaluation of the host-neutral challenge core (#131) via
 |-------|----------|
 | Open | Appealability routing (APPEALABLE / NON_APPEALABLE / HUMAN_REVIEW) |
 | Justify | Schema/claim validity vs invalid prose |
-| Retry | Semantic relationship, Stage 2, idempotent duplicate |
+| Retry | Semantic relationship, Stage 2, true idempotent replay (same CorrelationID) |
+| Rewrite bind | Syntax rewrite stays bound (`rewrite_bound_ok`) |
+| Hostile reject | Different target after justify must not ALLOW (`hostile_reject_ok`) |
 
 **Not scored here:** live Claude host (Lane C / #139), model-backed offline (Lane B).
 

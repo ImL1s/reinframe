@@ -3,15 +3,23 @@
 package adapter
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
-// configureGrokACPProcess creates a new process group so tree signals can target the child.
-// Full Windows Job Object binding is not required for foundation; CREATE_NEW_PROCESS_GROUP
-// enables Ctrl-break style group signals without shell interpolation.
-func configureGrokACPProcess(cmd *exec.Cmd) {
+// grokProcPlatform holds a Windows Job Object with KILL_ON_JOB_CLOSE so the
+// entire owned process tree is reaped (#191).
+type grokProcPlatform struct {
+	job windows.Handle
+}
+
+// configureGrokProcess creates a new process group (interrupt surface) before Start.
+func configureGrokProcess(cmd *exec.Cmd) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
@@ -19,17 +27,79 @@ func configureGrokACPProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr.CreationFlags |= 0x00000200
 }
 
-// signalGrokACPProcess interrupts or kills the process (and group when available).
-func signalGrokACPProcess(cmd *exec.Cmd, force bool) error {
+// attachGrokProcess binds the started process to a kill-on-close Job Object.
+func attachGrokProcess(cmd *exec.Cmd) (grokProcPlatform, error) {
+	var plat grokProcPlatform
+	if cmd == nil || cmd.Process == nil {
+		return plat, fmt.Errorf("nil process")
+	}
+	job, err := windows.CreateJobObject(nil, nil)
+	if err != nil {
+		return plat, err
+	}
+	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	if _, err := windows.SetInformationJobObject(
+		job,
+		windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(&info)),
+		uint32(unsafe.Sizeof(info)),
+	); err != nil {
+		_ = windows.CloseHandle(job)
+		return plat, err
+	}
+	// Open a handle with rights required for job assignment.
+	const access = windows.PROCESS_SET_QUOTA | windows.PROCESS_TERMINATE
+	ph, err := windows.OpenProcess(access, false, uint32(cmd.Process.Pid))
+	if err != nil {
+		_ = windows.CloseHandle(job)
+		return plat, err
+	}
+	err = windows.AssignProcessToJobObject(job, ph)
+	_ = windows.CloseHandle(ph)
+	if err != nil {
+		_ = windows.CloseHandle(job)
+		return plat, err
+	}
+	plat.job = job
+	return plat, nil
+}
+
+// signalGrokProcess graceful-interrupts the root, or force-terminates the whole job tree.
+func signalGrokProcess(cmd *exec.Cmd, plat *grokProcPlatform, force bool) error {
+	if force {
+		if plat != nil && plat.job != 0 {
+			// Terminate entire job tree (parent + children).
+			if err := windows.TerminateJobObject(plat.job, 1); err != nil {
+				if cmd != nil && cmd.Process != nil {
+					return cmd.Process.Kill()
+				}
+				return err
+			}
+			return nil
+		}
+		if cmd != nil && cmd.Process != nil {
+			return cmd.Process.Kill()
+		}
+		return nil
+	}
+	// Graceful: best-effort interrupt of the root process.
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	if force {
-		return cmd.Process.Kill()
-	}
-	// Interrupt is best-effort on Windows.
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		// Fall through to force on next escalation; root kill is last resort here.
 		return cmd.Process.Kill()
 	}
 	return nil
+}
+
+// releaseGrokProcess closes the job handle; with KILL_ON_JOB_CLOSE any remaining
+// members are terminated.
+func releaseGrokProcess(plat *grokProcPlatform) {
+	if plat == nil || plat.job == 0 {
+		return
+	}
+	_ = windows.CloseHandle(plat.job)
+	plat.job = 0
 }

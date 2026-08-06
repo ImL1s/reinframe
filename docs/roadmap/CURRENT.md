@@ -17,7 +17,7 @@
 | Host roadmap sync | **#170** | Public status for Codex/Grok lanes |
 | Codex project-local hooks | **#163** | Foundation; live **#164** |
 | Grok Build native hooks | **#165** | Foundation; host fail-open; live **#167** |
-| Grok Build ACP stdio | **#166** + residual **#180** | Negotiated auth/load/cancel; process-group cleanup; headless observe-only; transport/session_visible ACK; live **#167** |
+| Grok Build ACP stdio | **#166** + residual **#180**; hardening **#191** | Foundation on main; #191 fixes delegated-auth, canonical levels, official headless argv, Windows Job Object tree; live **#167** |
 | Cross-host eval framework | **#168** offline | Fake hosts only; disposition **MORE-DATA**; issue stays open for live match |
 
 ## Residual open work
@@ -27,7 +27,7 @@
 | Issue | Blocker | Notes |
 |-------|---------|-------|
 | **#164** | Interactive Codex + project trust | Live hooks smoke |
-| **#167** | Authenticated Grok CLI + trust | Live hooks + ACP |
+| **#167** | **#191** + Authenticated Grok CLI + trust | Live hooks + ACP |
 | **#120** | Interactive Claude | Live Claude smoke |
 | **#139** | #120 | Claude challenge delivery |
 | **#140 Claude host lane** | #139 | Manual evidence |
@@ -36,6 +36,7 @@
 
 | Issue | Blocker | Notes |
 |-------|---------|-------|
+| **#191** | — | Grok ACP official-contract / lifecycle hardening (auth, levels, argv, Win job tree) |
 | **#108** | First of #164 \| #167 \| #120 | Real multi-host advice + honest ACK |
 
 ### Evaluation

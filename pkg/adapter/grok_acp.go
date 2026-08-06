@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,17 +14,26 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
+
+	"github.com/ImL1s/reinframe/pkg/protocol"
 )
 
-// Pinned Grok Build ACP profile (#166).
-// Official: grok --no-auto-update agent stdio | grok agent stdio
-// Docs retrieved 2026-08-06: ~/.grok/docs/user-guide/15-agent-mode.md
+// Pinned Grok Build ACP profile (#166 foundation, #191 official-contract hardening).
+// Official launch: grok --no-auto-update agent stdio
+// Auth: method selection only — credentials stay with the Grok process / XAI_API_KEY.
+// Docs: https://docs.x.ai/build/integrations/acp (retrieved 2026-08-06)
 const (
 	GrokACPProfileV1       = "reinframe.grok_build_acp.v1"
 	GrokACPProtocolVersion = 1
 	MaxGrokACPMessageBytes = 1 << 20
 	DefaultGrokACPStartup  = 15 * time.Second
 	DefaultGrokACPQueue    = 64
+	MaxGrokACPAuthMethods  = 16
+	MaxGrokACPAuthMethodID = 128
+	// Graceful then bounded force for owned process trees.
+	grokACPGracefulWait = 2 * time.Second
+	grokACPForceWait    = 3 * time.Second
 )
 
 // ACK layers (never collapse transport success into explicit agent ACK).
@@ -34,6 +44,29 @@ const (
 	ACKLayerExplicit       = "explicit"        // host protocol documents agent receipt
 	ACKLayerBehavioral     = "behavioral"      // subsequent tool/turn evidence
 )
+
+// Terminal transport errors (pending RPCs must not hang on caller deadlines alone).
+var (
+	ErrGrokACPReaderClosed = errors.New("grok acp: transport reader closed")
+	ErrGrokACPClosed       = errors.New("grok acp: closed")
+	ErrGrokACPAuth         = errors.New("grok acp: authenticate failed")
+)
+
+// GrokACPAuthError is a closed, non-retryable auth failure without credential material.
+type GrokACPAuthError struct {
+	Reason string
+}
+
+func (e *GrokACPAuthError) Error() string {
+	if e == nil || e.Reason == "" {
+		return ErrGrokACPAuth.Error()
+	}
+	return "grok acp: authenticate: " + e.Reason
+}
+
+func (e *GrokACPAuthError) Is(target error) bool {
+	return target == ErrGrokACPAuth
+}
 
 // GrokACPConfig launches or attaches a Grok ACP stdio process.
 type GrokACPConfig struct {
@@ -57,6 +90,7 @@ type GrokACPConfig struct {
 type GrokACPClient struct {
 	cfg    GrokACPConfig
 	cmd    *exec.Cmd
+	plat   grokProcPlatform
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	mu     sync.Mutex
@@ -65,13 +99,19 @@ type GrokACPClient struct {
 	pending map[int64]chan jsonRPCMessage
 	// updates is a bounded queue of session/update notifications
 	updates chan map[string]any
+	// audit holds bounded lifecycle diagnostics (no secrets).
+	audit []string
 	// lastACK tracks strongest ACK layer observed for last advice delivery
 	lastACK string
 	closed  atomic.Bool
 	// readerDone closed when stdout reader exits
 	readerDone chan struct{}
+	// terminalErr set when reader dies; fail-pending uses this.
+	terminalErr error
 	// negotiated holds capabilities from the last successful initialize result.
 	negotiated GrokACPNegotiatedCaps
+	// initOK is true only after fail-closed initialize succeeded.
+	initOK bool
 }
 
 type jsonRPCMessage struct {
@@ -151,8 +191,7 @@ func StartGrokACPClient(ctx context.Context, cfg GrokACPConfig) (*GrokACPClient,
 		cmd.Env = append(os.Environ(), cfg.Env...)
 	}
 	// Never load auth.json contents into env here.
-	// Platform process group / job setup for tree cleanup (Unix Setpgid; Windows new group).
-	configureGrokACPProcess(cmd)
+	configureGrokProcess(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -166,9 +205,18 @@ func StartGrokACPClient(ctx context.Context, cfg GrokACPConfig) (*GrokACPClient,
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("grok acp: start: %w", err)
 	}
+	plat, err := attachGrokProcess(cmd)
+	if err != nil {
+		_ = stdin.Close()
+		_ = signalGrokProcess(cmd, &plat, true)
+		_, _ = cmd.Process.Wait()
+		releaseGrokProcess(&plat)
+		return nil, fmt.Errorf("grok acp: attach process tree: %w", err)
+	}
 	c := &GrokACPClient{
 		cfg:        cfg,
 		cmd:        cmd,
+		plat:       plat,
 		stdin:      stdin,
 		stdout:     stdout,
 		pending:    make(map[int64]chan jsonRPCMessage),
@@ -200,13 +248,11 @@ func NewGrokACPClientForTest(serverIn io.WriteCloser, serverOut io.ReadCloser, c
 		lastACK:    ACKLayerNone,
 		readerDone: make(chan struct{}),
 	}
-	// Swap naming: for tests, caller provides client-facing pipes.
-	// Convention: serverIn is what client writes to; serverOut is what client reads.
 	go c.readLoop()
 	return c
 }
 
-// Initialize sends initialize and returns server capabilities result.
+// Initialize sends initialize and returns the raw result only after fail-closed validation.
 // Negotiated capabilities are stored for SessionLoad/Cancel and ManifestFromNegotiated.
 func (c *GrokACPClient) Initialize(ctx context.Context, clientInfo map[string]any) (map[string]any, error) {
 	params := map[string]any{
@@ -217,13 +263,17 @@ func (c *GrokACPClient) Initialize(ctx context.Context, clientInfo map[string]an
 	if err != nil {
 		return nil, err
 	}
+	caps, err := ParseGrokACPNegotiatedCaps(raw)
+	if err != nil {
+		return nil, err
+	}
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("grok acp: initialize result: %w", err)
 	}
-	caps := ParseGrokACPNegotiatedCaps(out)
 	c.mu.Lock()
 	c.negotiated = caps
+	c.initOK = true
 	c.mu.Unlock()
 	c.upgradeACK(ACKLayerTransport)
 	return out, nil
@@ -236,43 +286,79 @@ func (c *GrokACPClient) Negotiated() GrokACPNegotiatedCaps {
 	return c.negotiated
 }
 
-// Authenticate calls ACP authenticate when the server advertised auth methods.
-// methodName must appear in negotiated authMethods. Never reads auth.json.
-// tokenOrCode is an operator-supplied credential (env/CLI), never logged.
-func (c *GrokACPClient) Authenticate(ctx context.Context, methodName, tokenOrCode string) error {
+// Authenticate selects an advertised auth method and sends the official delegated-auth
+// envelope. Reinframe never accepts, stores, forwards, logs, or error-echoes credentials.
+// Credential ownership remains with the Grok process environment (e.g. XAI_API_KEY).
+func (c *GrokACPClient) Authenticate(ctx context.Context, methodID string) error {
+	if !utf8.ValidString(methodID) || methodID == "" {
+		return &GrokACPAuthError{Reason: "invalid method id"}
+	}
+	if len(methodID) > MaxGrokACPAuthMethodID {
+		return &GrokACPAuthError{Reason: "method id too long"}
+	}
+	// Reject credential-shaped values if a caller mistakes the API.
+	if looksLikeCredentialMarker(methodID) {
+		return &GrokACPAuthError{Reason: "method id must not carry credential material"}
+	}
 	caps := c.Negotiated()
 	if len(caps.AuthMethods) == 0 {
-		return fmt.Errorf("grok acp: authenticate not advertised")
+		return &GrokACPAuthError{Reason: "not advertised"}
 	}
 	ok := false
 	for _, m := range caps.AuthMethods {
-		if m == methodName {
+		if m == methodID {
 			ok = true
 			break
 		}
 	}
 	if !ok {
-		return fmt.Errorf("grok acp: auth method %q not advertised", methodName)
+		return &GrokACPAuthError{Reason: "method not advertised"}
 	}
-	if strings.TrimSpace(tokenOrCode) == "" {
-		return fmt.Errorf("grok acp: empty credential")
-	}
-	// Do not put credential into error strings if call fails with wrapper only.
+	// Official shape: methodId + _meta.headless — no token/code fields.
 	params := map[string]any{
-		"methodId": methodName,
-		// ACP auth shapes vary; keep opaque token field without logging it.
-		"token": tokenOrCode,
+		"methodId": methodID,
+		"_meta": map[string]any{
+			"headless": true,
+		},
 	}
-	_, err := c.call(ctx, "authenticate", params)
-	if err != nil {
-		return fmt.Errorf("grok acp: authenticate failed")
+	if _, err := c.call(ctx, "authenticate", params); err != nil {
+		// Never wrap remote payloads that might echo secrets.
+		return &GrokACPAuthError{Reason: "rejected by agent"}
 	}
 	c.upgradeACK(ACKLayerTransport)
 	return nil
 }
 
+// BuildGrokACPAuthenticateParams is the pure builder for the delegated-auth envelope (tests).
+func BuildGrokACPAuthenticateParams(methodID string) (map[string]any, error) {
+	if methodID == "" || !utf8.ValidString(methodID) || len(methodID) > MaxGrokACPAuthMethodID {
+		return nil, &GrokACPAuthError{Reason: "invalid method id"}
+	}
+	if looksLikeCredentialMarker(methodID) {
+		return nil, &GrokACPAuthError{Reason: "method id must not carry credential material"}
+	}
+	return map[string]any{
+		"methodId": methodID,
+		"_meta":    map[string]any{"headless": true},
+	}, nil
+}
+
+func looksLikeCredentialMarker(s string) bool {
+	lower := strings.ToLower(s)
+	markers := []string{"token=", "bearer ", "sk-", "xai-", "api_key", "apikey", "auth.json", "-----begin"}
+	for _, m := range markers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // SessionNew creates a session; returns session id when present.
 func (c *GrokACPClient) SessionNew(ctx context.Context, params map[string]any) (string, error) {
+	if !c.initialized() {
+		return "", fmt.Errorf("grok acp: initialize required")
+	}
 	if params == nil {
 		params = map[string]any{}
 	}
@@ -321,7 +407,6 @@ func (c *GrokACPClient) Cancel(ctx context.Context, sessionID string) error {
 	if sessionID != "" {
 		params["sessionId"] = sessionID
 	}
-	// Prefer session/cancel when advertised; fall back to generic cancel method name.
 	method := "session/cancel"
 	if c.Negotiated().CancelMethod != "" {
 		method = c.Negotiated().CancelMethod
@@ -337,6 +422,9 @@ func (c *GrokACPClient) Cancel(ctx context.Context, sessionID string) error {
 // SessionPrompt delivers a prompt (safe-boundary advice path).
 // Records transport ACK on JSON-RPC success; session_visible when a matching update arrives.
 func (c *GrokACPClient) SessionPrompt(ctx context.Context, sessionID, prompt string, interventionID, challengeID string) error {
+	if !c.initialized() {
+		return fmt.Errorf("grok acp: initialize required")
+	}
 	if sessionID == "" || prompt == "" {
 		return fmt.Errorf("grok acp: sessionId and prompt required")
 	}
@@ -362,6 +450,12 @@ func (c *GrokACPClient) SessionPrompt(ctx context.Context, sessionID, prompt str
 	// Transport ACK only if not already upgraded (session/update may race during call).
 	c.upgradeACK(ACKLayerTransport)
 	return nil
+}
+
+func (c *GrokACPClient) initialized() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.initOK
 }
 
 // NoteSessionVisible upgrades ACK when a session/update is observed after delivery.
@@ -394,7 +488,23 @@ func (c *GrokACPClient) Updates() <-chan map[string]any {
 	return c.updates
 }
 
-// Close gracefully shuts down the client and process group / job tree.
+// AuditSnapshot returns a copy of bounded lifecycle diagnostics (no secrets).
+func (c *GrokACPClient) AuditSnapshot() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.audit...)
+}
+
+func (c *GrokACPClient) noteAudit(msg string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.audit) >= 32 {
+		c.audit = c.audit[1:]
+	}
+	c.audit = append(c.audit, boundRunes(msg, 120))
+}
+
+// Close gracefully shuts down the client and owned process tree (graceful → force).
 func (c *GrokACPClient) Close() error {
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil
@@ -403,30 +513,38 @@ func (c *GrokACPClient) Close() error {
 	// Wait briefly for reader
 	select {
 	case <-c.readerDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(grokACPGracefulWait):
 	}
 	if c.cmd != nil && c.cmd.Process != nil {
-		// Platform-aware: Unix process group; Windows process tree signal.
-		_ = signalGrokACPProcess(c.cmd, false)
+		_ = signalGrokProcess(c.cmd, &c.plat, false)
 		done := make(chan error, 1)
 		go func() { done <- c.cmd.Wait() }()
 		select {
 		case <-done:
-		case <-time.After(3 * time.Second):
-			_ = signalGrokACPProcess(c.cmd, true)
-			<-done
+		case <-time.After(grokACPForceWait):
+			_ = signalGrokProcess(c.cmd, &c.plat, true)
+			select {
+			case <-done:
+			case <-time.After(grokACPForceWait):
+			}
 		}
+		releaseGrokProcess(&c.plat)
 	}
 	return nil
 }
 
 func (c *GrokACPClient) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	if c.closed.Load() {
-		return nil, fmt.Errorf("grok acp: closed")
+		return nil, ErrGrokACPClosed
 	}
 	id := c.nextID.Add(1)
 	ch := make(chan jsonRPCMessage, 1)
 	c.mu.Lock()
+	if c.terminalErr != nil {
+		err := c.terminalErr
+		c.mu.Unlock()
+		return nil, err
+	}
 	c.pending[id] = ch
 	c.mu.Unlock()
 	defer func() {
@@ -458,31 +576,67 @@ func (c *GrokACPClient) call(ctx context.Context, method string, params any) (js
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-c.readerDone:
+		c.mu.Lock()
+		term := c.terminalErr
+		c.mu.Unlock()
+		if term == nil {
+			term = ErrGrokACPReaderClosed
+		}
+		return nil, term
 	case resp := <-ch:
 		if resp.Error != nil {
-			return nil, fmt.Errorf("grok acp: %s: %s", method, resp.Error.Message)
+			// Bound remote error text; never pass through credential-looking payloads.
+			em := boundRunes(resp.Error.Message, 200)
+			if looksLikeCredentialMarker(em) {
+				em = "agent error redacted"
+			}
+			return nil, fmt.Errorf("grok acp: %s: %s", method, em)
 		}
 		return resp.Result, nil
 	}
 }
 
+func (c *GrokACPClient) failAllPending(err error) {
+	c.mu.Lock()
+	c.terminalErr = err
+	pending := c.pending
+	c.pending = make(map[int64]chan jsonRPCMessage)
+	c.mu.Unlock()
+	for _, ch := range pending {
+		select {
+		case ch <- jsonRPCMessage{Error: &jsonRPCError{Code: -32000, Message: "reader closed"}}:
+		default:
+		}
+	}
+}
+
 func (c *GrokACPClient) readLoop() {
-	defer close(c.readerDone)
+	defer func() {
+		c.failAllPending(ErrGrokACPReaderClosed)
+		close(c.readerDone)
+	}()
 	sc := bufio.NewScanner(c.stdout)
-	// Increase buffer for large messages
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, c.cfg.MaxMessageBytes+1)
+	seenIDs := make(map[int64]struct{})
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(line) == 0 {
 			continue
 		}
 		if len(line) > c.cfg.MaxMessageBytes {
-			continue // drop oversized
+			c.noteAudit("drop_oversized_line")
+			continue
+		}
+		if !utf8.Valid(line) {
+			c.noteAudit("drop_invalid_utf8")
+			continue
 		}
 		var msg jsonRPCMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			continue // drop malformed
+			c.noteAudit("drop_malformed_json")
+			continue
 		}
 		if msg.Method != "" && msg.ID == nil {
 			// Notification
@@ -499,19 +653,32 @@ func (c *GrokACPClient) readLoop() {
 			select {
 			case c.updates <- params:
 			default:
-				// drop when queue full (bounded)
+				c.noteAudit("queue_overflow_drop")
 			}
 			continue
 		}
 		if msg.ID != nil {
+			id := *msg.ID
+			if _, dup := seenIDs[id]; dup {
+				c.noteAudit("duplicate_response_id")
+				continue
+			}
+			seenIDs[id] = struct{}{}
+			// Bound seenIDs growth
+			if len(seenIDs) > 4096 {
+				seenIDs = map[int64]struct{}{id: {}}
+			}
 			c.mu.Lock()
-			ch := c.pending[*msg.ID]
+			ch := c.pending[id]
 			c.mu.Unlock()
-			if ch != nil {
-				select {
-				case ch <- msg:
-				default:
-				}
+			if ch == nil {
+				c.noteAudit("unknown_response_id")
+				continue
+			}
+			select {
+			case ch <- msg:
+			default:
+				c.noteAudit("pending_channel_full")
 			}
 		}
 	}
@@ -545,19 +712,24 @@ func MapSessionUpdateToSummary(update map[string]any) (kind string, summary stri
 	return kind, boundRunes(summary, 200)
 }
 
-// GrokACPNegotiatedCaps holds facts parsed from initialize (not assumed).
+// GrokACPNegotiatedCaps holds validated facts from initialize (not assumed).
+// No unbounded raw maps — only closed typed fields.
 type GrokACPNegotiatedCaps struct {
 	ProtocolVersion int
 	LoadSession     bool
-	Cancel          bool
+	// Pause/Cancel/Resume are independent native capability facts.
+	Pause  bool
+	Cancel bool
+	Resume bool
 	// CancelMethod is session/cancel when empty and Cancel is true.
 	CancelMethod string
+	// ToolInspection / DiffInspection only when explicitly advertised.
+	ToolInspection bool
+	DiffInspection bool
 	// AuthMethods are advertised method ids (never secrets).
 	AuthMethods []string
-	// CapPause is true only when server explicitly advertises pause/cancel/resume mask.
-	CapPause bool
-	// Raw caps object for diagnostics (bounded, no secrets).
-	Raw map[string]any
+	// CapsDigest is a bounded non-secret summary of recognized caps (not a raw dump).
+	CapsDigest string
 }
 
 // GrokACPFoundationManifest is honest ACP-only capability claim.
@@ -566,113 +738,216 @@ type GrokACPFoundationManifest struct {
 	Profile            string   `json:"profile"`
 	ProtocolVersion    int      `json:"protocol_version"`
 	CapEventStream     bool     `json:"cap_event_stream"`
+	CapToolInspection  bool     `json:"cap_tool_inspection"`
 	CapAdviceDelivery  bool     `json:"cap_advice_delivery"`
+	CapDiffInspection  bool     `json:"cap_diff_inspection"`
 	CapPause           bool     `json:"cap_pause"`
+	CapCancel          bool     `json:"cap_cancel"`
+	CapResume          bool     `json:"cap_resume"`
 	CapInterventionAck bool     `json:"cap_intervention_ack"`
 	ExplicitAck        bool     `json:"explicit_ack"`
 	LoadSession        bool     `json:"load_session"`
-	Cancel             bool     `json:"cancel"`
 	AuthMethods        []string `json:"auth_methods,omitempty"`
-	NegotiatedLevel    int      `json:"negotiated_level"`
-	HonestyNote        string   `json:"honesty_note"`
+	// NegotiatedLevel is -1 pre-handshake (not achieved); post-init from canonical evaluator.
+	NegotiatedLevel int    `json:"negotiated_level"`
+	HonestyNote     string `json:"honesty_note"`
 }
 
-// NewGrokACPFoundationManifest returns pre-negotiation defaults (conservative).
+// NewGrokACPFoundationManifest returns pre-negotiation defaults (no achieved level/caps).
 func NewGrokACPFoundationManifest() GrokACPFoundationManifest {
 	return GrokACPFoundationManifest{
 		Profile:            GrokACPProfileV1,
 		ProtocolVersion:    GrokACPProtocolVersion,
-		CapEventStream:     true,
-		CapAdviceDelivery:  true,
+		CapEventStream:     false,
+		CapToolInspection:  false,
+		CapAdviceDelivery:  false,
+		CapDiffInspection:  false,
 		CapPause:           false,
+		CapCancel:          false,
+		CapResume:          false,
 		CapInterventionAck: false,
 		ExplicitAck:        false,
 		LoadSession:        false,
-		Cancel:             false,
-		NegotiatedLevel:    1,
-		HonestyNote: "pre-handshake defaults; call ManifestFromNegotiated after initialize; " +
-			"JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json",
+		NegotiatedLevel:    -1,
+		HonestyNote: "pre-handshake: no achieved level or unproven caps; call ManifestFromNegotiated after initialize; " +
+			"JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; live #167 needs #191 + auth env",
 	}
 }
 
-// ParseGrokACPNegotiatedCaps extracts capability facts from an initialize result map.
-func ParseGrokACPNegotiatedCaps(initResult map[string]any) GrokACPNegotiatedCaps {
-	out := GrokACPNegotiatedCaps{ProtocolVersion: GrokACPProtocolVersion}
-	if initResult == nil {
-		return out
+// ParseGrokACPNegotiatedCaps validates and extracts capability facts from an initialize result.
+// Accepts raw JSON bytes (preferred) or will marshal a map when used from tests via helper.
+func ParseGrokACPNegotiatedCaps(initResult json.RawMessage) (GrokACPNegotiatedCaps, error) {
+	var out GrokACPNegotiatedCaps
+	if len(initResult) == 0 {
+		return out, fmt.Errorf("grok acp: empty initialize result")
 	}
-	if pv, ok := initResult["protocolVersion"].(float64); ok {
-		out.ProtocolVersion = int(pv)
+	if len(initResult) > MaxGrokACPMessageBytes {
+		return out, fmt.Errorf("grok acp: initialize result too large")
 	}
-	caps, _ := initResult["capabilities"].(map[string]any)
+	if !utf8.Valid(initResult) {
+		return out, fmt.Errorf("grok acp: initialize result invalid utf-8")
+	}
+	// Closed typed decode — reject wrong types via strict intermediate.
+	var wire struct {
+		ProtocolVersion *float64       `json:"protocolVersion"`
+		Capabilities    map[string]any `json:"capabilities"`
+		AgentCaps       map[string]any `json:"agentCapabilities"`
+		AuthMethods     []any          `json:"authMethods"`
+	}
+	dec := json.NewDecoder(strings.NewReader(string(initResult)))
+	dec.UseNumber()
+	if err := dec.Decode(&wire); err != nil {
+		return out, fmt.Errorf("grok acp: initialize decode: %w", err)
+	}
+	if wire.ProtocolVersion == nil {
+		return out, fmt.Errorf("grok acp: protocolVersion required")
+	}
+	pv := int(*wire.ProtocolVersion)
+	// Fail-closed: exact supported version only.
+	if pv != GrokACPProtocolVersion {
+		return out, fmt.Errorf("grok acp: unsupported protocolVersion %d (want %d)", pv, GrokACPProtocolVersion)
+	}
+	out.ProtocolVersion = pv
+
+	caps := wire.Capabilities
 	if caps == nil {
-		// Some servers nest under agentCapabilities
-		caps, _ = initResult["agentCapabilities"].(map[string]any)
+		caps = wire.AgentCaps
 	}
 	if caps != nil {
-		out.Raw = caps
-		if v, ok := caps["loadSession"].(bool); ok {
-			out.LoadSession = v
-		}
-		if v, ok := caps["load_session"].(bool); ok {
-			out.LoadSession = v
-		}
-		// Cancel / prompt cancel
-		if v, ok := caps["cancel"].(bool); ok && v {
-			out.Cancel = true
+		out.LoadSession = boolCap(caps, "loadSession") || boolCap(caps, "load_session")
+		out.Pause = boolCap(caps, "pause")
+		out.Cancel = boolCap(caps, "cancel") || boolCap(caps, "promptCancel")
+		out.Resume = boolCap(caps, "resume")
+		out.ToolInspection = boolCap(caps, "toolInspection") || boolCap(caps, "tool_inspection")
+		out.DiffInspection = boolCap(caps, "diffInspection") || boolCap(caps, "diff_inspection")
+		if out.Cancel {
 			out.CancelMethod = "session/cancel"
 		}
-		if v, ok := caps["promptCancel"].(bool); ok && v {
-			out.Cancel = true
-			out.CancelMethod = "session/cancel"
-		}
-		// CapPause only with full pause/cancel/resume mask if advertised.
-		pause, _ := caps["pause"].(bool)
-		cancel, _ := caps["cancel"].(bool)
-		resume, _ := caps["resume"].(bool)
-		if pause && cancel && resume {
-			out.CapPause = true
-			out.Cancel = true
-		}
+		// Compact non-secret digest of recognized booleans only.
+		out.CapsDigest = fmt.Sprintf("load=%t pause=%t cancel=%t resume=%t tool=%t diff=%t",
+			out.LoadSession, out.Pause, out.Cancel, out.Resume, out.ToolInspection, out.DiffInspection)
 	}
-	// Auth methods: authMethods array of {id} or string ids — never tokens.
-	if arr, ok := initResult["authMethods"].([]any); ok {
-		for _, item := range arr {
-			switch t := item.(type) {
-			case string:
-				if t != "" {
-					out.AuthMethods = append(out.AuthMethods, t)
-				}
-			case map[string]any:
-				if id, _ := t["id"].(string); id != "" {
-					out.AuthMethods = append(out.AuthMethods, id)
-				} else if id, _ := t["methodId"].(string); id != "" {
-					out.AuthMethods = append(out.AuthMethods, id)
-				}
+
+	if wire.AuthMethods != nil {
+		if len(wire.AuthMethods) > MaxGrokACPAuthMethods {
+			return out, fmt.Errorf("grok acp: too many authMethods")
+		}
+		seen := make(map[string]struct{}, len(wire.AuthMethods))
+		for _, item := range wire.AuthMethods {
+			id, err := parseAuthMethodID(item)
+			if err != nil {
+				return out, err
 			}
+			if id == "" {
+				continue
+			}
+			if _, dup := seen[id]; dup {
+				return out, fmt.Errorf("grok acp: duplicate auth method %q", id)
+			}
+			seen[id] = struct{}{}
+			out.AuthMethods = append(out.AuthMethods, id)
 		}
 	}
-	return out
+	return out, nil
 }
 
-// ManifestFromNegotiated builds the honest capability claim from negotiated facts.
+// ParseGrokACPNegotiatedCapsMap is a test/helper wrapper for map input.
+func ParseGrokACPNegotiatedCapsMap(initResult map[string]any) (GrokACPNegotiatedCaps, error) {
+	raw, err := json.Marshal(initResult)
+	if err != nil {
+		return GrokACPNegotiatedCaps{}, err
+	}
+	return ParseGrokACPNegotiatedCaps(raw)
+}
+
+func boolCap(caps map[string]any, key string) bool {
+	v, ok := caps[key]
+	if !ok {
+		return false
+	}
+	b, ok := v.(bool)
+	return ok && b
+}
+
+func parseAuthMethodID(item any) (string, error) {
+	switch t := item.(type) {
+	case string:
+		if !utf8.ValidString(t) {
+			return "", fmt.Errorf("grok acp: auth method invalid utf-8")
+		}
+		if len(t) > MaxGrokACPAuthMethodID {
+			return "", fmt.Errorf("grok acp: auth method id too long")
+		}
+		if looksLikeCredentialMarker(t) {
+			return "", fmt.Errorf("grok acp: auth method id rejects credential markers")
+		}
+		return t, nil
+	case map[string]any:
+		id, _ := t["id"].(string)
+		if id == "" {
+			id, _ = t["methodId"].(string)
+		}
+		if id == "" {
+			return "", nil
+		}
+		if !utf8.ValidString(id) || len(id) > MaxGrokACPAuthMethodID {
+			return "", fmt.Errorf("grok acp: auth method id invalid")
+		}
+		if looksLikeCredentialMarker(id) {
+			return "", fmt.Errorf("grok acp: auth method id rejects credential markers")
+		}
+		// Reject maps that embed credential-looking keys.
+		for k := range t {
+			lk := strings.ToLower(k)
+			if lk == "token" || lk == "secret" || lk == "api_key" || lk == "apikey" || lk == "password" {
+				return "", fmt.Errorf("grok acp: auth method object must not include credential fields")
+			}
+		}
+		return id, nil
+	default:
+		return "", fmt.Errorf("grok acp: auth method entry has unsupported type")
+	}
+}
+
+// ProtocolCapabilityManifest builds the canonical protocol.CapabilityManifest from negotiated facts.
+// session/prompt is the advice path; session/update is the event stream. Tool/diff/pause require explicit ads.
+func ProtocolCapabilityManifest(caps GrokACPNegotiatedCaps) protocol.CapabilityManifest {
+	return protocol.CapabilityManifest{
+		AgentID:                "grok_build_acp",
+		Version:                GrokACPProfileV1,
+		SupportsEventStream:    true, // ACP notifications after successful initialize
+		SupportsAdviceDelivery: true, // session/prompt delivery path
+		SupportsToolInspection: caps.ToolInspection,
+		SupportsDiffInspection: caps.DiffInspection,
+		SupportsPause:          caps.Pause, // native pause only when advertised
+		SupportsCancel:         caps.Cancel,
+		SupportsResume:         caps.Resume,
+	}
+}
+
+// ManifestFromNegotiated builds the honest capability claim via the canonical level evaluator.
+// Partial pause/cancel/resume never yields Level 2 without the full Level1+Level2 mask.
 func ManifestFromNegotiated(caps GrokACPNegotiatedCaps) GrokACPFoundationManifest {
 	m := NewGrokACPFoundationManifest()
 	if caps.ProtocolVersion > 0 {
 		m.ProtocolVersion = caps.ProtocolVersion
 	}
+	pm := ProtocolCapabilityManifest(caps)
+	level := protocol.EvaluateAchievableLevel(&pm)
+	m.CapEventStream = pm.SupportsEventStream
+	m.CapToolInspection = pm.SupportsToolInspection
+	m.CapAdviceDelivery = pm.SupportsAdviceDelivery
+	m.CapDiffInspection = pm.SupportsDiffInspection
+	m.CapPause = pm.SupportsPause
+	m.CapCancel = pm.SupportsCancel
+	m.CapResume = pm.SupportsResume
 	m.LoadSession = caps.LoadSession
-	m.Cancel = caps.Cancel
-	m.CapPause = caps.CapPause
 	m.AuthMethods = append([]string(nil), caps.AuthMethods...)
-	if caps.CapPause {
-		m.NegotiatedLevel = 2
-	} else {
-		m.NegotiatedLevel = 1
-		m.CapPause = false
-	}
-	m.HonestyNote = "derived from initialize negotiation; CapPause only with full pause+cancel+resume; " +
-		"JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json"
+	m.NegotiatedLevel = level
+	m.HonestyNote = "derived from initialize via protocol.EvaluateAchievableLevel; " +
+		"Level 2 requires full Level1 mask plus CapDiffInspection+CapPause+CapCancel+CapResume; " +
+		"JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; " +
+		"live #167 blocked on #191 + authenticated Grok env"
 	return m
 }
 

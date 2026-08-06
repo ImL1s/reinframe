@@ -1,8 +1,8 @@
-# Grok Build ACP stdio bridge (#166)
+# Grok Build ACP stdio bridge (#166 / #191)
 
 ## Profile
 
-`reinframe.grok_build_acp.v1` — JSON-RPC protocolVersion **1**.
+`reinframe.grok_build_acp.v1` — JSON-RPC protocolVersion **1** (exact; fail-closed).
 
 Launch (production):
 
@@ -10,39 +10,58 @@ Launch (production):
 grok --no-auto-update agent stdio
 ```
 
-Pins (2026-08-06): `~/.grok/docs/user-guide/15-agent-mode.md`, docs.x.ai ACP/headless.
+Pins (2026-08-06): https://docs.x.ai/build/integrations/acp , https://docs.x.ai/build/cli/headless-scripting
 
 ## Methods
 
 | Method | Purpose |
 |--------|---------|
-| `initialize` | Handshake + capabilities (stored for negotiation) |
-| `authenticate` | Only advertised auth methods; never reads `auth.json` |
-| `session/new` | Create session |
+| `initialize` | Handshake; exact `protocolVersion` required; closed capability/auth parse |
+| `authenticate` | **Delegated auth only**: advertised `methodId` + `_meta.headless` — **no token field** |
+| `session/new` | Create session (after initialize) |
 | `session/load` | Only when `loadSession` negotiated |
 | `session/prompt` | Safe-boundary advice delivery (`ContentBlock[]`) |
 | `session/cancel` | Only when cancel negotiated |
 | `session/update` (notif) | Stream → AgentEvent summary |
 
-## Process cleanup
+### Authenticate contract (#191)
 
-- Unix: child `Setpgid`; Close signals the process group (`Kill(-pid)`).
-- Windows: `CREATE_NEW_PROCESS_GROUP`; interrupt then kill.
+Credential ownership stays with the Grok process / environment (`XAI_API_KEY` or local login).
+Reinframe **never** accepts, stores, forwards, logs, or error-echoes raw credentials or `~/.grok/auth.json`.
+
+Official request shape:
+
+```json
+{"methodId":"…","_meta":{"headless":true}}
+```
+
+## Process cleanup (#191)
+
+- **Unix:** child `Setpgid`; Close signals the process group (`Kill(-pid)`), graceful → force.
+- **Windows:** Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` + `TerminateJobObject` on force; not root-only `Process.Kill()`.
+- Headless observe uses the same ownership helpers.
+- Reader EOF/crash fails all pending RPCs immediately with a terminal transport error.
 - No shell interpolation; explicit executable path only.
 
 ## Capability manifest
 
-- `NewGrokACPFoundationManifest()` — pre-handshake defaults (conservative).
-- `ManifestFromNegotiated(ParseGrokACPNegotiatedCaps(initResult))` — **required** after initialize for loadSession/cancel/authMethods/CapPause.
-- CapPause only when pause **and** cancel **and** resume are all advertised.
+- `NewGrokACPFoundationManifest()` — pre-handshake: **no** achieved caps; `NegotiatedLevel = -1`.
+- `ManifestFromNegotiated` builds a `protocol.CapabilityManifest` and calls **`protocol.EvaluateAchievableLevel`**.
+- Partial pause/cancel/resume **never** yields Level 2 without the full Level 1 mask + `CapDiffInspection` + native pause/cancel/resume.
+- Session/prompt proves advice delivery + event stream only; tool/diff inspection require explicit ads.
+- No unbounded `Raw map[string]any` on negotiated caps (bounded `CapsDigest` only).
 
 ## Headless observe-only (separate profile)
 
-`reinframe.grok_build_headless_observe.v1` — `grok -p --output-format streaming-json`.
+`reinframe.grok_build_headless_observe.v1`:
+
+```text
+grok --no-auto-update -p <PROMPT> --output-format streaming-json
+```
 
 - Observe-only: no CapToolGate / CapAdviceDelivery / explicit ACK.
 - Thoughts omitted from summaries.
-- Tool approvals still require ACP.
+- Fake-exec tests lock argv order/shape.
 
 ## ACK layers
 
@@ -56,12 +75,12 @@ Pins (2026-08-06): `~/.grok/docs/user-guide/15-agent-mode.md`, docs.x.ai ACP/hea
 ## Non-claims
 
 - Never read/write/log `~/.grok/auth.json`
-- No CapPause unless negotiated live
+- No CapPause / Level 2 unless canonical evaluator says so from full mask
 - Hooks remain #165; composition is optional
-- Live proof is **#167**
+- Live proof is **#167**, blocked on **#191** + authenticated Grok Build environment
 
 ## Process safety
 
 - Explicit executable resolution; no shell interpolation
-- Bounded message size / queue / startup timeout
-- Graceful interrupt then kill; no orphan claim without Wait
+- Bounded message size / queue / startup timeout / auth method count
+- Graceful interrupt then force tree kill; pending RPC terminal on reader death

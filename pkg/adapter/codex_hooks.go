@@ -328,14 +328,13 @@ func CodexPermissionResponseFromDecision(dec HookDecision, fallThrough bool) map
 	if fallThrough {
 		return map[string]any{}
 	}
-	behavior := "deny"
-	msg := boundReason(dec.ReasonCode)
+	var behavior, msg string
 	switch dec.Action {
 	case HookActionAllow:
 		behavior = "allow"
-		msg = ""
 	case HookActionDeny, HookActionDefer:
 		behavior = "deny"
+		msg = boundReason(dec.ReasonCode)
 		if msg == "" {
 			msg = "denied_by_policy"
 		}

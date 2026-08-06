@@ -277,18 +277,26 @@ func (c *GrokACPClient) SessionPrompt(ctx context.Context, sessionID, prompt str
 	if err != nil {
 		return err
 	}
-	c.mu.Lock()
-	c.lastACK = ACKLayerTransport // never claim explicit from JSON-RPC alone
-	c.mu.Unlock()
+	// Transport ACK only if not already upgraded (session/update may race during call).
+	c.upgradeACK(ACKLayerTransport)
 	return nil
 }
 
 // NoteSessionVisible upgrades ACK when a session/update is observed after delivery.
 func (c *GrokACPClient) NoteSessionVisible() {
+	c.upgradeACK(ACKLayerSessionVisible)
+}
+
+// upgradeACK records the strongest ACK layer without inventing explicit/behavioral.
+func (c *GrokACPClient) upgradeACK(layer string) {
+	rank := map[string]int{
+		ACKLayerNone: 0, ACKLayerTransport: 1, ACKLayerSessionVisible: 2,
+		// explicit/behavioral reserved for live proof only
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.lastACK == ACKLayerTransport || c.lastACK == ACKLayerNone {
-		c.lastACK = ACKLayerSessionVisible
+	if rank[layer] > rank[c.lastACK] {
+		c.lastACK = layer
 	}
 }
 

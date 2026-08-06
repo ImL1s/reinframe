@@ -70,13 +70,6 @@ type GrokACPClient struct {
 	closed  atomic.Bool
 	// readerDone closed when stdout reader exits
 	readerDone chan struct{}
-	// For tests: custom dial without process
-	testRW *testStdio
-}
-
-type testStdio struct {
-	in  io.ReadCloser
-	out io.WriteCloser
 }
 
 type jsonRPCMessage struct {

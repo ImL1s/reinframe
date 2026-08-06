@@ -638,6 +638,10 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 
 	now2 := s.now()
 	from2 := rec.State
+	// Provider fail-open (unavailable/parse/timeout/transport) may yield Stage2 ALLOW for
+	// shadow product policy, but must never mint one-shot ALLOWED_ONCE authorization.
+	// Only genuine successful assessment (or explicit Stage2 exception flags) may allow-once.
+	allowOnce := re.Stage2Decision == DecisionAllow && !isProviderFailOpenReason(re.Reason)
 	switch {
 	case re.Intervention == InterventionHumanReview:
 		rec.Stage2Decision = DecisionBlock
@@ -647,7 +651,7 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 		s.store.byID[rec.ChallengeID].Intervention = InterventionHumanReview
 		s.store.byID[rec.ChallengeID].ConsumedRetryKey = attemptKey
-	case re.Stage2Decision == DecisionAllow:
+	case allowOnce:
 		rec.Stage2Decision = DecisionAllow
 		rec.Intervention = InterventionNone
 		rec.ConsumedRetryKey = attemptKey
@@ -658,7 +662,11 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	default:
 		rec.Stage2Decision = DecisionBlock
 		rec.ConsumedRetryKey = attemptKey
-		rec = s.store.appendTransition(rec, from2, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, attemptKey, re.Reason, now2, nil)
+		note := re.Reason
+		if re.Stage2Decision == DecisionAllow && isProviderFailOpenReason(re.Reason) {
+			note = re.Reason + "_no_allowed_once"
+		}
+		rec = s.store.appendTransition(rec, from2, StateRejected, "rejected", req.CorrelationID, req.Proposed.ActionID, attemptKey, note, now2, nil)
 		s.store.byID[rec.ChallengeID].Stage2Decision = DecisionBlock
 		s.store.byID[rec.ChallengeID].ConsumedRetryKey = attemptKey
 	}
@@ -667,6 +675,18 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 	return RetryResult{
 		Record: out, Stage2Decision: out.Stage2Decision, Intervention: out.Intervention, Relationship: rel,
 	}, nil
+}
+
+// isProviderFailOpenReason reports Stage2 "ALLOW" outcomes that come from ordinary
+// provider unavailability / parse soft-fail paths — not from a successful assessment.
+// These must not mint ALLOWED_ONCE on AttemptRetry.
+func isProviderFailOpenReason(reason string) bool {
+	switch reason {
+	case "provider_fail_open", "parse_fail_open", "severity_fail_open", "reeval_error":
+		return true
+	default:
+		return false
+	}
 }
 
 // Abandon marks an OPEN or JUSTIFIED challenge abandoned.

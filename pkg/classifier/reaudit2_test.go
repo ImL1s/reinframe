@@ -19,6 +19,81 @@ import (
 
 // --- P1-A: sleep failure never yields (ProviderResult{}, nil) ---
 
+func TestOpenAICompatible_ParentCancelDuringBackoff(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	parent, cancel := context.WithCancel(context.Background())
+	p, err := classifier.NewOpenAICompatible(classifier.OpenAICompatibleConfig{
+		Model: "m", BaseURL: srv.URL, Path: "/v1/chat/completions", AllowRemote: true,
+		HTTPClient: srv.Client(), Timeout: 2 * time.Second, MaxRetries: 2,
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			cancel() // parent cancel during backoff
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := classifier.NewProviderRequest(classifier.ClassifierInput{
+		SchemaVersion: classifier.SchemaClassifierInput,
+	})
+	req.Timeout = 2 * time.Second
+	_, e := p.Assess(parent, req)
+	if !errors.Is(e, context.Canceled) {
+		t.Fatalf("want parent Canceled during backoff, got %v", e)
+	}
+	var pe *classifier.ProviderError
+	if errors.As(e, &pe) {
+		t.Fatalf("must not wrap parent cancel: %+v", pe)
+	}
+}
+
+func TestOpenAICompatible_NoEmptyNilAfterFailedAttempt(t *testing.T) {
+	t.Parallel()
+	// Multiple failure modes must never yield (ProviderResult{}, nil).
+	cases := []struct {
+		name  string
+		sleep func(context.Context, time.Duration) error
+		code  int
+	}{
+		{"sleep_err", func(ctx context.Context, d time.Duration) error { return errors.New("boom") }, 429},
+		{"http_500", nil, 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			cfg := classifier.OpenAICompatibleConfig{
+				Model: "m", BaseURL: srv.URL, Path: "/v1/chat/completions", AllowRemote: true,
+				HTTPClient: srv.Client(), Timeout: time.Second, MaxRetries: 1,
+			}
+			if tc.sleep != nil {
+				cfg.Sleep = tc.sleep
+			}
+			p, err := classifier.NewOpenAICompatible(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, _ := classifier.NewProviderRequest(classifier.ClassifierInput{
+				SchemaVersion: classifier.SchemaClassifierInput,
+			})
+			req.Timeout = time.Second
+			res, e := p.Assess(context.Background(), req)
+			if e == nil {
+				t.Fatalf("nil error after failure: res=%+v", res)
+			}
+		})
+	}
+}
+
 func TestOpenAICompatible_SleepErrorNeverNilSuccess(t *testing.T) {
 	t.Parallel()
 	var hits int

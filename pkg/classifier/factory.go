@@ -18,6 +18,18 @@ type ProviderFactoryOptions struct {
 	Sleep       func(context.Context, time.Duration) error
 	Now         func() time.Time
 	AllowRemote bool
+	// ExactCache when non-nil and enabled wraps the provider with CachingClassifierProvider (#138).
+	ExactCache *ExactAssessmentCache
+	// ExactCacheIdentity is required when ExactCache is enabled.
+	ExactCacheIdentity ExactCacheIdentity
+}
+
+// WrapWithExactCache applies the process-local exact cache when cfg is enabled.
+func WrapWithExactCache(inner ClassifierProvider, cache *ExactAssessmentCache, id ExactCacheIdentity) ClassifierProvider {
+	if inner == nil || cache == nil || !cache.Enabled() {
+		return inner
+	}
+	return &CachingClassifierProvider{Inner: inner, Cache: cache, Identity: id}
 }
 
 // NewClassifierProviderFromConfig maps config.ClassifierProviderConfig to a ClassifierProvider.
@@ -152,4 +164,42 @@ func NewClassifierProviderFromConfig(cfg config.ClassifierProviderConfig, opts P
 	default:
 		return nil, fmt.Errorf("classifier factory: unknown kind")
 	}
+}
+
+// NewClassifierProviderFromConfigWithExactCache builds a provider and optionally wraps #138 cache.
+func NewClassifierProviderFromConfigWithExactCache(cfg config.ClassifierProviderConfig, cacheCfg config.ClassifierCacheConfig, opts ProviderFactoryOptions) (ClassifierProvider, error) {
+	p, err := NewClassifierProviderFromConfig(cfg, opts)
+	if err != nil {
+		return nil, err
+	}
+	enabled, maxE, maxB, ttl, sf, err := cacheCfg.ExactCacheBounds()
+	if err != nil {
+		return nil, fmt.Errorf("classifier factory: %w", err)
+	}
+	if !enabled {
+		return p, nil
+	}
+	ec, err := NewExactAssessmentCache(ExactCacheConfig{
+		Enabled: true, MaxEntries: maxE, MaxBytes: maxB, TTL: ttl, Singleflight: sf,
+	}, opts.Now)
+	if err != nil {
+		return nil, err
+	}
+	id := opts.ExactCacheIdentity
+	if id.ProviderKind == "" {
+		id.ProviderKind = cfg.NormalizeKind()
+	}
+	if id.ModelID == "" {
+		id.ModelID = cfg.Model
+	}
+	if id.CapabilitiesProfile == "" {
+		id.CapabilitiesProfile = cfg.CapabilitiesProfile
+	}
+	if id.EgressProfile == "" {
+		id.EgressProfile = cfg.EgressProfile
+	}
+	if id.ParserSchema == "" {
+		id.ParserSchema = SchemaRawAssessment
+	}
+	return WrapWithExactCache(p, ec, id), nil
 }

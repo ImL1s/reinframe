@@ -37,7 +37,12 @@
 //   - Chat Completions x-grok-conv-id is out of scope for this Responses profile;
 //   - CacheHit only from positive provider-reported cached tokens (key match ≠ hit).
 //
-// Non-claims for this package revision: Gemini Interactions API, Gemini explicit cache
-// object lifecycle, hosted Anthropic equivalence, exact-assessment memoization (#138),
-// voting/failover, measured cache savings (#141), or hard-gate.
+// #138 adds:
+//   - process-local exact RawAssessment cache (content-addressed key, TTL/LRU);
+//   - per-key singleflight coalescing; Stage-2 ResolvedDecision is never cached;
+//   - layer tag reinframe_exact distinct from provider prefix cache telemetry.
+//
+// Non-claims for this package revision: persistent/distributed assessment cache,
+// Gemini Interactions API, Gemini explicit cache object lifecycle, hosted Anthropic
+// equivalence, voting/failover, measured cache savings (#141), or hard-gate.
 package classifier

@@ -526,17 +526,24 @@ func (p *CachingClassifierProvider) assessCoalesced(ctx context.Context, req Pro
 	c.mu.Unlock()
 
 	// Detach shared Assess from any single waiter cancellation.
+	// Panic-safe: recover, publish error, delete inflight slot so later callers retry.
 	sharedCtx := context.WithoutCancel(ctx)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				inf.res = ProviderResult{}
+				inf.err = fmt.Errorf("classifier: exact cache singleflight panic: %v", r)
+			}
+			c.mu.Lock()
+			delete(c.inflight, keyHash)
+			close(inf.done)
+			c.mu.Unlock()
+		}()
 		res, err := p.Inner.Assess(sharedCtx, req)
 		if err == nil {
 			p.tryAdmit(keyHash, res)
 		}
 		inf.res, inf.err = copyProviderResult(res), err
-		c.mu.Lock()
-		delete(c.inflight, keyHash)
-		close(inf.done)
-		c.mu.Unlock()
 	}()
 
 	return p.waitInflight(ctx, inf, true, keyHash, req)

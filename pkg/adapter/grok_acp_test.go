@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -29,10 +30,22 @@ func fakeACPServer(t *testing.T, clientWrites io.Reader, clientReads io.Writer) 
 			writeRPC(clientReads, idInt, map[string]any{
 				"protocolVersion": 1,
 				"serverInfo":      map[string]any{"name": "fake-grok"},
-				"capabilities":    map[string]any{"loadSession": false},
+				"capabilities": map[string]any{
+					"loadSession":  true,
+					"promptCancel": true,
+				},
+				"authMethods": []any{
+					map[string]any{"id": "env_token"},
+				},
 			})
+		case "authenticate":
+			writeRPC(clientReads, idInt, map[string]any{"ok": true})
 		case "session/new":
 			writeRPC(clientReads, idInt, map[string]any{"sessionId": "sess-1"})
+		case "session/load":
+			writeRPC(clientReads, idInt, map[string]any{"ok": true})
+		case "session/cancel":
+			writeRPC(clientReads, idInt, map[string]any{"ok": true})
 		case "session/prompt":
 			// Assert official prompt ContentBlock[] shape.
 			params, _ := req["params"].(map[string]any)
@@ -167,6 +180,97 @@ func TestGrokACP_ManifestHonest(t *testing.T) {
 		t.Fatalf("%+v", m)
 	}
 	if m.ProtocolVersion != 1 || !m.CapAdviceDelivery {
+		t.Fatalf("%+v", m)
+	}
+}
+
+func TestGrokACP_AuthLoadCancelAndNegotiatedManifest(t *testing.T) {
+	t.Parallel()
+	serverR, clientW := io.Pipe()
+	clientR, serverW := io.Pipe()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fakeACPServer(t, serverR, serverW)
+	}()
+	c := adapter.NewGrokACPClientForTest(clientW, clientR, adapter.GrokACPConfig{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Cancel before initialize must fail.
+	if err := c.Cancel(ctx, "s"); err == nil {
+		t.Fatal("cancel before negotiate")
+	}
+	if err := c.SessionLoad(ctx, "s", nil); err == nil {
+		t.Fatal("load before negotiate")
+	}
+	if _, err := c.Initialize(ctx, map[string]any{"name": "t"}); err != nil {
+		t.Fatal(err)
+	}
+	neg := c.Negotiated()
+	if !neg.LoadSession || !neg.Cancel || len(neg.AuthMethods) != 1 || neg.AuthMethods[0] != "env_token" {
+		t.Fatalf("%+v", neg)
+	}
+	man := adapter.ManifestFromNegotiated(neg)
+	if !man.LoadSession || !man.Cancel || man.CapPause {
+		t.Fatalf("manifest %+v", man)
+	}
+	// Auth with non-advertised method fails.
+	if err := c.Authenticate(ctx, "nope", "x"); err == nil {
+		t.Fatal("bad method")
+	}
+	if err := c.Authenticate(ctx, "env_token", "operator-supplied"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SessionLoad(ctx, "sess-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Cancel(ctx, "sess-1"); err != nil {
+		t.Fatal(err)
+	}
+	// CapPause requires full mask — incomplete pause alone must not elevate.
+	partial := adapter.ParseGrokACPNegotiatedCaps(map[string]any{
+		"capabilities": map[string]any{"pause": true, "cancel": false, "resume": false},
+	})
+	if partial.CapPause {
+		t.Fatal("partial pause mask must not set CapPause")
+	}
+	_ = c.Close()
+	_ = clientW.Close()
+	_ = serverW.Close()
+	wg.Wait()
+}
+
+func TestGrokHeadlessObserve_ParseStream(t *testing.T) {
+	t.Parallel()
+	r := strings.NewReader(`{"type":"init"}
+{"type":"agent_thought_chunk","text":"secret-reasoning"}
+{"type":"tool_call","toolName":"run_terminal_command"}
+not-json
+{"type":"result","status":"ok"}
+`)
+	ev, err := adapter.ParseGrokHeadlessStream(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ev) < 4 {
+		t.Fatalf("%+v", ev)
+	}
+	foundThought := false
+	for _, e := range ev {
+		if e.Type == "agent_thought_chunk" {
+			foundThought = true
+			if e.Summary != "thought_omitted" {
+				t.Fatalf("%+v", e)
+			}
+		}
+	}
+	if !foundThought {
+		t.Fatal("missing thought omit")
+	}
+	m := adapter.NewGrokHeadlessObserveManifest()
+	if m.CapToolGate || m.CapAdviceDelivery || m.ExplicitAck {
 		t.Fatalf("%+v", m)
 	}
 }

@@ -114,6 +114,24 @@ func LookupCapabilitiesProfile(name string) (ProviderCapabilities, error) {
 			StatefulContinuation:   false,
 			MaxInputBytes:          DefaultMaxInputBytes,
 		}, nil
+	case CapabilitiesProfileXAIOffV1:
+		return ProviderCapabilities{
+			NativeStructuredOutput: true,
+			CacheMode:              CacheModeNone,
+			CacheKey:               false,
+			CacheUsageTelemetry:    true,
+			StatefulContinuation:   false,
+			MaxInputBytes:          DefaultMaxInputBytes,
+		}, nil
+	case CapabilitiesProfileXAIResponsesPrefixV1:
+		return ProviderCapabilities{
+			NativeStructuredOutput: true,
+			CacheMode:              CacheModeImplicitPrefix,
+			CacheKey:               true,
+			CacheUsageTelemetry:    true,
+			StatefulContinuation:   false,
+			MaxInputBytes:          DefaultMaxInputBytes,
+		}, nil
 	default:
 		return ProviderCapabilities{}, fmt.Errorf("classifier: unknown capabilities_profile %q", boundErr(name))
 	}

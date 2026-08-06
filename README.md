@@ -10,33 +10,26 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 
 ## Project Status
 
-> **Phase: M1 + M2 library + experimental host bridges + shadow classifier + host-neutral challenge core + provider foundation + offline evaluation**  
-> **Implemented:** [#131](https://github.com/ImL1s/reinframe/issues/131) / PR [#148](https://github.com/ImL1s/reinframe/pull/148) host-neutral appealable `BLOCK` core; [#132](https://github.com/ImL1s/reinframe/issues/132) / PR [#150](https://github.com/ImL1s/reinframe/pull/150) classifier provider runtime (generic OpenAI-compatible, cache-neutral — **not** native OpenAI).  
-> **Ready:** [#134](https://github.com/ImL1s/reinframe/issues/134)–[#138](https://github.com/ImL1s/reinframe/issues/138) native providers + exact assessment cache; [#140](https://github.com/ImL1s/reinframe/issues/140) Lane A (deterministic challenge evaluation).  
-> **Environment-blocked:** [#120](https://github.com/ImL1s/reinframe/issues/120) pinned live Claude ALLOW/BLOCK/context smoke (`BLOCKED_BY_ENVIRONMENT`), which blocks [#108](https://github.com/ImL1s/reinframe/issues/108) and the Claude-specific lane of [#139](https://github.com/ImL1s/reinframe/issues/139).  
-> **Dependency-blocked:** [#141](https://github.com/ImL1s/reinframe/issues/141) provider/cache economics (needs #138 + selected native provider lanes). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) remains open.  
+> **Phase: M1 + M2 library + experimental host bridges + shadow classifier + host-neutral challenge core + native classifier providers + exact cache + offline evaluation**  
+> **Implemented:** [#131](https://github.com/ImL1s/reinframe/issues/131)/[#148](https://github.com/ImL1s/reinframe/pull/148) challenge core; [#132](https://github.com/ImL1s/reinframe/issues/132)/[#150](https://github.com/ImL1s/reinframe/pull/150) provider runtime; [#134](https://github.com/ImL1s/reinframe/issues/134)/[#153](https://github.com/ImL1s/reinframe/pull/153) OpenAI Responses; [#135](https://github.com/ImL1s/reinframe/issues/135)/[#154](https://github.com/ImL1s/reinframe/pull/154) Anthropic Messages; [#136](https://github.com/ImL1s/reinframe/issues/136)/[#155](https://github.com/ImL1s/reinframe/pull/155) Gemini generateContent; [#137](https://github.com/ImL1s/reinframe/issues/137)/[#156](https://github.com/ImL1s/reinframe/pull/156) xAI Responses; [#138](https://github.com/ImL1s/reinframe/issues/138)/[#157](https://github.com/ImL1s/reinframe/pull/157) process-local exact assessment cache + singleflight.  
+> **Ready:** [#140](https://github.com/ImL1s/reinframe/issues/140) Lane A (deterministic challenge evaluation); [#141](https://github.com/ImL1s/reinframe/issues/141) provider/exact-cache economics (evidence only — **MORE-DATA**, no fabricated savings).  
+> **Environment-blocked:** [#120](https://github.com/ImL1s/reinframe/issues/120) live Claude smoke → [#108](https://github.com/ImL1s/reinframe/issues/108), Claude lane of [#139](https://github.com/ImL1s/reinframe/issues/139).  
+> **Dependency-blocked:** Epic [#80](https://github.com/ImL1s/reinframe/issues/80) residual.  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Street map: [`docs/dev/STREET_WIRE.md`](docs/dev/STREET_WIRE.md).
 
 ### Current dependency shape
 
 ```text
-Ready in parallel:
-  #134 OpenAI Responses native adapter/cache
-  #135 Anthropic Messages native adapter/cache
-  #136 Gemini generateContent native adapter/cache
-  #137 xAI Responses native adapter/cache
-  #138 exact RawAssessment cache + singleflight
+Shipped native provider + cache stack:
+  #134 OpenAI Responses · #135 Anthropic Messages · #136 Gemini · #137 xAI Responses
+  #138 exact RawAssessment cache + singleflight (default disabled)
+
+Ready evaluation:
   #140 Lane A deterministic challenge evaluation
+  #141 cache-layer mechanics / economics (fake + optional live; no silent enable)
 
 Interactive environment:
-  #120 live Claude smoke
-    → #108 generic advice consumer
-    → #139 Claude challenge delivery / structured appeal / one-shot retry
-       (#131 core is already merged)
-
-Evaluation:
-  #140 model-backed lane after a selected #134–#137 provider; Claude lane after #139
-  #141 after #138 and the selected provider/cache implementation lanes
+  #120 live Claude smoke → #108 · #139 Claude challenge delivery
 ```
 
 | Component | Status |
@@ -69,17 +62,17 @@ Evaluation:
 | Optional LLM Reviewer (OpenAI-compatible, ADR 003 local-only default) | ✅ Uncertain advice path only; not the classifier provider |
 | Open-set governance (#142 / PR #143, PR #144, PR #147) | ✅ Closed — public/current backlog synchronization |
 | Appealable BLOCK challenge core (#131 / PR #148) | ✅ Host-neutral core; one-shot retry; no live Claude claim |
-| Classifier provider runtime (#132 / PR #150) | ✅ Generic OpenAI-compatible foundation (cache-neutral); **not** native OpenAI/Anthropic/Gemini/xAI |
+| Classifier provider runtime (#132 / PR #150) | ✅ Generic OpenAI-compatible foundation (cache-neutral) |
+| Native OpenAI Responses adapter (#134 / PR #153) | ✅ Pinned `/v1/responses` + explicit cache profiles |
+| Native Anthropic Messages adapter (#135 / PR #154) | ✅ Direct Claude API only; explicit recommended |
+| Native Gemini generateContent adapter (#136 / PR #155) | ✅ Implicit profiles; explicit objects deferred |
+| Native xAI Responses adapter (#137 / PR #156) | ✅ `prompt_cache_key` sticky routing; no `x-grok-conv-id` |
+| Exact `RawAssessment` cache + singleflight (#138 / PR #157) | ✅ Process-local; default disabled; Stage-2 never cached |
 | Live Claude ALLOW/BLOCK/context smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
 | Real advice consumer / ACK (#108) | 🔲 Open — blocked by #120 |
-| Native OpenAI Responses adapter (#134) | 🔲 Open — ready |
-| Native Anthropic Messages adapter (#135) | 🔲 Open — ready |
-| Native Gemini generateContent adapter (#136) | 🔲 Open — ready |
-| Native xAI Responses adapter (#137) | 🔲 Open — ready |
-| Exact `RawAssessment` cache + singleflight (#138) | 🔲 Open — ready |
-| Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; still blocked by #120 live host evidence |
-| Challenge evaluation (#140) | 🔲 Open — Lane A ready; model lane after a native provider; Claude lane after #139 |
-| Provider/cache evaluation (#141) | 🔲 Open — needs #138 + selected #134–#137 lanes; no measured savings claim yet |
+| Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; blocked by #120 |
+| Challenge evaluation (#140) | 🔲 Open — Lane A ready; model/Claude lanes later |
+| Provider/cache evaluation (#141) | 🔲 Open — stack landed; economics unmeasured (MORE-DATA) |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Core invariants
@@ -289,8 +282,8 @@ Intervention escalation after detection is a **separate axis**. See `docs/resear
 
 Contributions are welcome. Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Ready product work is currently #134–#138 and #140 Lane A.
-2. Follow the dependency graph. Do not start #139 before #120 live evidence, treat #120 as code-ready while its interactive evidence is unavailable, or claim measured provider-cache savings before #141.
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Ready evaluation work is currently #140 Lane A and #141 (evidence only).
+2. Follow the dependency graph. Do not start #139 before #120 live evidence, or claim measured provider-cache savings without #141 MORE-DATA disposition.
 3. Preserve honesty boundaries: no false provider/cache/live-host/hard-gate claims.
 4. Run `go test -race ./...` before submitting PRs.
 5. Project-standard PRs require multi-platform CI and independent AI review before merge.

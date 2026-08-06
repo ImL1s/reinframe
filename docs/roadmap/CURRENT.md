@@ -1,9 +1,7 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-06) — post-#132 / PR #150 provider-runtime merge  
+**Status:** current (2026-08-06) — post-#134–#138 native provider + exact-cache merge  
 **Executable status source:** this file plus live GitHub issue labels. `README.md` is the public summary and must remain capability-honest; `docs/specs/*` remain normative contracts; Epic #80 remains the tracker.
-
-PR #148 completed the host-neutral #131 challenge core. PR #150 completed the #132 provider-neutral classifier foundation. Closed work is historical here, not an active dependency.
 
 ## Implemented — narrow DoD, do not reopen for the same scope
 
@@ -16,8 +14,13 @@ PR #148 completed the host-neutral #131 challenge core. PR #150 completed the #1
 | Offline evaluation foundation | #100 / PR #129 | **MORE-DATA**; no calibrated hard-gate |
 | Managed-worktree rollback | #99 / PR #130 | Clean-only; not primary checkout or external rollback |
 | Appealable `BLOCK` core | **#131 / PR #148** | Host-neutral challenge state, justification, one-shot retry, replay; no live Claude delivery |
-| Classifier provider foundation | **#132 / PR #150** | Closed request/result contracts, recent-N packet, strict parser, generic OpenAI-compatible adapter, normalized usage/audit; **no native provider cache claim** |
-| Governance synchronization | #109, #121, #142 / PR #110, #122, #143, #144, #147, #149 | Source-of-truth maintenance only |
+| Classifier provider foundation | **#132 / PR #150** | Closed request/result contracts, generic OpenAI-compatible adapter (cache-neutral) |
+| Native OpenAI Responses | **#134 / PR #153** | `/v1/responses` only; explicit prefix profiles |
+| Native Anthropic Messages | **#135 / PR #154** | `claude_api` only; automatic-* is no wire enablement; explicit recommended |
+| Native Gemini generateContent | **#136 / PR #155** | Implicit eligibility; explicit cache objects deferred |
+| Native xAI Responses | **#137 / PR #156** | `prompt_cache_key` sticky routing; no Chat Completions `x-grok-conv-id` |
+| Exact assessment cache | **#138 / PR #157** | Process-local LRU/TTL + singleflight; default disabled; Stage-2 never cached |
+| Governance synchronization | #109, #121, #142 / PR #110, #122, #143, #144, #147, #149, #152 | Source-of-truth maintenance only |
 
 ## Active backlog
 
@@ -25,12 +28,8 @@ PR #148 completed the host-neutral #131 challenge core. PR #150 completed the #1
 
 | Issue | Pri | Scope | Boundary |
 |-------|-----|-------|----------|
-| **#134** | P1 | Native OpenAI Responses classifier adapter and explicit prompt-cache controls | OpenAI-native profile only; generic adapter remains cache-neutral |
-| **#135** | P1 | Native Anthropic Messages adapter and `cache_control` profiles | Direct Claude API profile; no hosted-platform equivalence claim |
-| **#136** | P1 | Native Gemini `generateContent` adapter and implicit-cache telemetry/eligibility | Explicit cache objects remain deferred |
-| **#137** | P1 | Native xAI Responses adapter and sticky prefix-cache routing | Responses profile only; no generic OpenAI/xAI equivalence |
-| **#138** | P1 | Process-local exact `RawAssessment` cache, singleflight and observability | Never cache final Stage 2 decisions or transient fallback outcomes |
-| **#140 Lane A** | P2 | Deterministic challenge fixtures, bypass/replay/race/recovery evaluation | Evidence only; later model/Claude lanes remain dependency-bound |
+| **#140 Lane A** | P2 | Deterministic challenge fixtures, bypass/replay/race/recovery evaluation | Evidence only; model/Claude lanes remain dependency-bound |
+| **#141** | P2 | Cache-layer mechanics and economics across exact + native providers | Fake/CI mechanics OK; live cost claims require provider telemetry — disposition **MORE-DATA** unless measured |
 
 ### Blocked by environment
 
@@ -38,40 +37,30 @@ PR #148 completed the host-neutral #131 challenge core. PR #150 completed the #1
 |-------|-----|---------|-------|
 | **#120** | P0 | Interactive/operator Claude Code session | Pinned project-local ALLOW/BLOCK/context smoke; `BLOCKED_BY_ENVIRONMENT` |
 
-Closed #115/#116/#117 are implementation prerequisites, not current blockers. Do not mark #120 ready until live behavioral evidence exists.
-
 ### Blocked by remaining dependency/evidence
 
 | Issue | Pri | Blocked by | Notes |
 |-------|-----|------------|-------|
 | **#108** | P0 | **#120** | Real advice consumer / SafeBoundary / honest ACK |
-| **#139** | P1 | **#120** | #131 core is satisfied; Claude challenge delivery/retry still needs pinned live context/behavior evidence |
-| **#140 later lanes** | P2 | model lane: one selected **#134–#137** provider; Claude lane: **#139** | Lane A is ready; #132 foundation is satisfied |
-| **#141** | P2 | **#138** plus one or more selected **#134–#137** lanes | #132 foundation is satisfied; provider/exact-cache correctness and economics remain unmeasured |
+| **#139** | P1 | **#120** | #131 core is satisfied; Claude challenge delivery still needs live evidence |
+| **#140 later lanes** | P2 | model: any of **#134–#137**; Claude: **#139** | Lane A independent |
 | **#80** | epic | — | Residual tracker; keep open |
 
 ## Execution order
 
 ```text
-Ready in parallel:
-  #134 OpenAI native adapter/cache
-  #135 Anthropic native adapter/cache
-  #136 Gemini native adapter/cache
-  #137 xAI native adapter/cache
-  #138 exact assessment cache + singleflight
+Shipped:
+  #134–#137 native adapters
+  #138 exact cache + singleflight
+
+Ready evaluation:
   #140 Lane A deterministic challenge evaluation
+  #141 cache economics / correctness invariance (no silent global enable)
 
 Environment lane:
   #120 live Claude smoke
     → #108 generic advice consumer
     → #139 Claude challenge integration
-       (#131 core dependency is satisfied)
-
-Evaluation:
-  #140 Lane A now
-       model-backed lane after one selected native provider
-       Claude lane after #139
-  #141 after #138 + selected provider/cache lanes
 ```
 
 ## Architectural invariants
@@ -83,10 +72,6 @@ Classifier / deterministic resolver: ALLOW | BLOCK
 Appeal workflow metadata: none | APPEALABLE_CHALLENGE | HUMAN_REVIEW
 ```
 
-`CHALLENGE` is not a third classifier decision. A justification is bounded external decision evidence, never private chain-of-thought and never automatic permission. Hard security boundaries remain non-appealable or require human review.
-
-Only a fully validated provider result may enter threshold scoring. Provider failure, parse failure, timeout, invalid telemetry or fail-open fallback cannot mint `ALLOWED_ONCE`.
-
 ### Cache layers are distinct
 
 ```text
@@ -96,29 +81,17 @@ Provider prompt/prefix cache     → provider call occurs; provider may reuse pr
 No cache                         → normal provider path
 ```
 
-The generic OpenAI-compatible adapter defaults to no vendor-specific cache capability. Native adapters own provider-specific fields. Exact cache may store only validated provider-stage assessments; deterministic Stage 2 reruns with current threshold, policy, exceptions, approval and challenge state.
-
 ## Explicit non-claims
 
 - No calibrated classifier/detector hard-gate; #100 remains **MORE-DATA**
 - No live Claude challenge-response product; #139 remains open
-- No live Claude ALLOW/BLOCK/context proof until #120 evidence
-- Merged #132 generic foundation ≠ native OpenAI/Anthropic/Gemini/xAI support
-- No provider-prefix or exact-cache savings claim before #141 evidence
+- No measured provider-prefix or exact-cache **savings** claim without #141 evidence
 - No persistent/distributed assessment cache claim
-- No silent global Claude/Codex install
 - No dual-host production supervision claim
-- FileActuator write or context transport ≠ explicit agent ACK
-- Codex JSONL tail / codexctl ≠ bidirectional control
-- Managed-worktree rollback ≠ primary checkout or external-side-effect rollback
 
 ## Evaluation
 
-Baseline offline reports remain under [`docs/evaluation/`](../evaluation/). #100 disposition is **MORE-DATA** and hard-gates remain disabled.
-
-- #140 Lane A can evaluate deterministic challenge quality, semantic bypass resistance, replay, concurrency, recovery and added cost.
-- #140 model-backed/Claude lanes depend on a selected native provider and #139 respectively.
-- #141 evaluates provider prefix caching, Reinframe exact caching, singleflight, correctness invariance and measured economics.
+Baseline offline reports remain under [`docs/evaluation/`](../evaluation/). Adapter docs: `docs/classifier/*`.
 
 Any promotion or default-enable decision requires a separate issue.
 

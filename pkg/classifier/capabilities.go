@@ -16,6 +16,7 @@ const (
 	CapabilitiesProfileOpenAIOffV1            = "openai-off-v1"
 	CapabilitiesProfileOpenAIImplicitV1       = "openai-implicit-v1"
 	CapabilitiesProfileOpenAIExplicitPrefixV1 = "openai-explicit-prefix-v1"
+	// Anthropic profiles live in anthropic_messages.go constants (#135).
 )
 
 // ProviderCapabilities is the closed capability contract for a provider profile.
@@ -60,6 +61,33 @@ func LookupCapabilitiesProfile(name string) (ProviderCapabilities, error) {
 			MaxInputBytes:          DefaultMaxInputBytes,
 		}, nil
 	case CapabilitiesProfileOpenAIExplicitPrefixV1:
+		return ProviderCapabilities{
+			NativeStructuredOutput: true,
+			CacheMode:              CacheModeExplicitBreakpoint,
+			CacheKey:               true,
+			CacheUsageTelemetry:    true,
+			StatefulContinuation:   false,
+			MaxInputBytes:          DefaultMaxInputBytes,
+		}, nil
+	case CapabilitiesProfileAnthropicOffV1:
+		return ProviderCapabilities{
+			NativeStructuredOutput: true,
+			CacheMode:              CacheModeNone,
+			CacheKey:               false,
+			CacheUsageTelemetry:    true,
+			StatefulContinuation:   false,
+			MaxInputBytes:          DefaultMaxInputBytes,
+		}, nil
+	case CapabilitiesProfileAnthropicAutomatic5mV1, CapabilitiesProfileAnthropicAutomatic1hV1:
+		return ProviderCapabilities{
+			NativeStructuredOutput: true,
+			CacheMode:              CacheModeImplicitPrefix,
+			CacheKey:               false,
+			CacheUsageTelemetry:    true,
+			StatefulContinuation:   false,
+			MaxInputBytes:          DefaultMaxInputBytes,
+		}, nil
+	case CapabilitiesProfileAnthropicExplicitPrefix5mV1, CapabilitiesProfileAnthropicExplicitPrefix1hV1:
 		return ProviderCapabilities{
 			NativeStructuredOutput: true,
 			CacheMode:              CacheModeExplicitBreakpoint,

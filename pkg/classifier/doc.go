@@ -11,10 +11,15 @@
 //   - capability profiles (generic-none-v1 is cache-neutral);
 //   - transport-only ProviderUsage;
 //   - strict closed RawAssessment parser;
-//   - generic OpenAI-compatible adapter (not native OpenAI/Anthropic/Gemini/xAI);
+//   - generic OpenAI-compatible adapter (cache-neutral Chat Completions);
 //   - provider-call audit without raw prompts or secrets.
 //
-// Non-claims for this package revision: native vendor adapters, provider-native
-// prompt caching, exact-assessment memoization, singleflight, voting/failover,
-// or calibrated hard-gate enforcement.
+// #134 adds:
+//   - native OpenAI Responses adapter (openai_responses) with pinned profiles;
+//   - provider-native prompt_cache_key / explicit stable-prefix breakpoint wiring;
+//   - CacheHit only from positive provider-reported cache-read tokens.
+//
+// Non-claims for this package revision: Anthropic/Gemini/xAI native adapters,
+// exact-assessment memoization/singleflight (#138), voting/failover, measured
+// cache savings (#141), or calibrated hard-gate enforcement.
 package classifier

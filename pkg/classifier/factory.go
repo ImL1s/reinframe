@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ImL1s/reinframe/pkg/config"
@@ -21,8 +22,9 @@ type ProviderFactoryOptions struct {
 
 // NewClassifierProviderFromConfig maps config.ClassifierProviderConfig to a ClassifierProvider.
 //
-//	kind empty/none     → FakeClassifierProvider (no network)
+//	kind empty/none        → FakeClassifierProvider (no network)
 //	kind openai_compatible → OpenAICompatibleProvider (loopback-only by default)
+//	kind openai_responses  → OpenAIResponsesProvider (native Responses; #134)
 //
 // Loading a YAML file does not automatically wire a provider unless the process
 // calls this factory (or equivalent).
@@ -55,6 +57,29 @@ func NewClassifierProviderFromConfig(cfg config.ClassifierProviderConfig, opts P
 			AllowRemote:         opts.AllowRemote,
 		}
 		return NewOpenAICompatible(oai)
+	case KindOpenAIResponses:
+		path := cfg.Path
+		if strings.TrimSpace(path) == "" {
+			path = DefaultOpenAIResponsesPath
+		}
+		resp := OpenAIResponsesConfig{
+			Kind:                KindOpenAIResponses,
+			Model:               cfg.Model,
+			BaseURL:             cfg.BaseURL,
+			Path:                path,
+			APIKeyRef:           cfg.APIKeyRef,
+			Timeout:             time.Duration(cfg.TimeoutMS) * time.Millisecond,
+			MaxInputBytes:       cfg.MaxInputBytes,
+			MaxOutputBytes:      cfg.MaxOutputBytes,
+			CapabilitiesProfile: cfg.CapabilitiesProfile,
+			EgressProfile:       cfg.EgressProfile,
+			HTTPClient:          opts.HTTPClient,
+			LookupEnv:           opts.LookupEnv,
+			Sleep:               opts.Sleep,
+			Now:                 opts.Now,
+			AllowRemote:         opts.AllowRemote,
+		}
+		return NewOpenAIResponses(resp)
 	default:
 		return nil, fmt.Errorf("classifier factory: unknown kind")
 	}

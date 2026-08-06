@@ -60,9 +60,9 @@ type Config struct {
 // ClassifierProviderConfig selects the optional real classifier provider (#132).
 // kind empty or "none" disables network providers (default).
 type ClassifierProviderConfig struct {
-	// Kind: ""|"none"|"openai_compatible".
+	// Kind: ""|"none"|"openai_compatible"|"openai_responses".
 	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
-	// Model identifier (required when kind is openai_compatible).
+	// Model identifier (required when kind is a network provider).
 	Model string `json:"model,omitempty" yaml:"model,omitempty"`
 	// BaseURL for OpenAI-compatible endpoint (origin only).
 	BaseURL string `json:"base_url,omitempty" yaml:"base_url,omitempty"`
@@ -77,6 +77,8 @@ type ClassifierProviderConfig struct {
 	MaxOutputBytes int `json:"max_output_bytes,omitempty" yaml:"max_output_bytes,omitempty"`
 	// CapabilitiesProfile defaults to generic-none-v1.
 	CapabilitiesProfile string `json:"capabilities_profile,omitempty" yaml:"capabilities_profile,omitempty"`
+	// EgressProfile is an optional secret-free partition for native cache keys (#134).
+	EgressProfile string `json:"egress_profile,omitempty" yaml:"egress_profile,omitempty"`
 }
 
 // NormalizeKind returns the closed, trimmed kind used by validation and factory.
@@ -87,6 +89,8 @@ func (cp ClassifierProviderConfig) NormalizeKind() string {
 		return "none"
 	case "openai_compatible":
 		return "openai_compatible"
+	case "openai_responses":
+		return "openai_responses"
 	default:
 		return k
 	}
@@ -302,11 +306,11 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 		if strings.TrimSpace(cp.Model) != "" || strings.TrimSpace(cp.BaseURL) != "" ||
 			strings.TrimSpace(cp.Path) != "" || strings.TrimSpace(cp.APIKeyRef) != "" ||
 			cp.TimeoutMS != 0 || cp.MaxInputBytes != 0 || cp.MaxOutputBytes != 0 ||
-			strings.TrimSpace(cp.CapabilitiesProfile) != "" {
+			strings.TrimSpace(cp.CapabilitiesProfile) != "" || strings.TrimSpace(cp.EgressProfile) != "" {
 			return fmt.Errorf("classifier_provider: disabled kind requires empty fields")
 		}
 		return nil
-	case "openai_compatible":
+	case "openai_compatible", "openai_responses":
 		// ok
 	default:
 		return fmt.Errorf("classifier_provider.kind is not supported")
@@ -369,10 +373,25 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 	if cp.MaxOutputBytes < 0 || cp.MaxOutputBytes > 256<<10 {
 		return fmt.Errorf("classifier_provider.max_output_bytes out of range")
 	}
-	switch strings.TrimSpace(cp.CapabilitiesProfile) {
-	case "", "generic-none-v1":
+	prof := strings.TrimSpace(cp.CapabilitiesProfile)
+	switch kind {
+	case "openai_responses":
+		switch prof {
+		case "", "openai-off-v1", "openai-implicit-v1", "openai-explicit-prefix-v1":
+		default:
+			return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
+		}
 	default:
-		return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
+		switch prof {
+		case "", "generic-none-v1":
+		case "openai-implicit-v1", "openai-explicit-prefix-v1", "openai-off-v1":
+			return fmt.Errorf("classifier_provider: openai cache profiles require kind openai_responses")
+		default:
+			return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
+		}
+	}
+	if len(cp.EgressProfile) > 256 {
+		return fmt.Errorf("classifier_provider.egress_profile too long")
 	}
 	return nil
 }

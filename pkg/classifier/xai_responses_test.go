@@ -277,4 +277,22 @@ func TestXAIResponses_FactoryAndRedacted(t *testing.T) {
 	if m["x_grok_conv_id"] != false {
 		t.Fatal("must document no chat routing")
 	}
+	// Foreign native profiles fail closed on constructor.
+	_, err = classifier.NewXAIResponses(classifier.XAIResponsesConfig{
+		Model: "m", BaseURL: "https://api.x.ai", Path: "/v1/responses",
+		CapabilitiesProfile: classifier.CapabilitiesProfileOpenAIOffV1,
+		LookupEnv:           func(string) (string, bool) { return "k", true }, APIKeyRef: "${K}",
+	})
+	if err == nil {
+		t.Fatal("openai profile must not construct xai provider")
+	}
+	// Config: xai profile on wrong kind.
+	bad := config.Default()
+	bad.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_compatible", Model: "m", BaseURL: "http://127.0.0.1:1",
+		APIKeyRef: "${K}", CapabilitiesProfile: "xai-responses-prefix-v1",
+	}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("xai profile requires xai_responses kind")
+	}
 }

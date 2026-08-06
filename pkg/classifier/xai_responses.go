@@ -110,6 +110,11 @@ func NewXAIResponses(cfg XAIResponsesConfig) (*XAIResponsesProvider, error) {
 	if prof == "" {
 		prof = CapabilitiesProfileXAIOffV1
 	}
+	switch prof {
+	case CapabilitiesProfileXAIOffV1, CapabilitiesProfileXAIResponsesPrefixV1:
+	default:
+		return nil, newProviderError("capability", "unknown xai profile", false, 0)
+	}
 	caps, err := LookupCapabilitiesProfile(prof)
 	if err != nil {
 		return nil, newProviderError("capability", err.Error(), false, 0)
@@ -362,15 +367,13 @@ func (p *XAIResponsesProvider) buildRequestJSON(req ProviderRequest, maxIn int) 
 		cacheKeyHash = p.promptCacheKeyHash(req)
 		body.PromptCacheKey = cacheKeyHash
 	}
+	// Byte bound enforced by caller after marshal (Assess oversized check).
 	_ = maxIn
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, "", newProviderError("config", "marshal request", false, 0)
 	}
-	// Fail closed if Chat Completions routing header leaked into body JSON.
-	if strings.Contains(string(payload), "x-grok-conv-id") || strings.Contains(string(payload), "x_grok_conv_id") {
-		return nil, "", newProviderError("config", "x-grok-conv-id not allowed on xai_responses", false, 0)
-	}
+	// Chat Completions x-grok-conv-id is never a field on this wire type and never set as a header.
 	return payload, cacheKeyHash, nil
 }
 

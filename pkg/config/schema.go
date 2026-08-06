@@ -60,7 +60,7 @@ type Config struct {
 // ClassifierProviderConfig selects the optional real classifier provider (#132).
 // kind empty or "none" disables network providers (default).
 type ClassifierProviderConfig struct {
-	// Kind: ""|"none"|"openai_compatible"|"openai_responses"|"anthropic_messages"|"gemini_generate_content".
+	// Kind: ""|"none"|"openai_compatible"|"openai_responses"|"anthropic_messages"|"gemini_generate_content"|"xai_responses".
 	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
 	// Model identifier (required when kind is a network provider).
 	Model string `json:"model,omitempty" yaml:"model,omitempty"`
@@ -98,6 +98,8 @@ func (cp ClassifierProviderConfig) NormalizeKind() string {
 		return "anthropic_messages"
 	case "gemini_generate_content":
 		return "gemini_generate_content"
+	case "xai_responses":
+		return "xai_responses"
 	default:
 		return k
 	}
@@ -318,7 +320,7 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 			return fmt.Errorf("classifier_provider: disabled kind requires empty fields")
 		}
 		return nil
-	case "openai_compatible", "openai_responses", "anthropic_messages", "gemini_generate_content":
+	case "openai_compatible", "openai_responses", "anthropic_messages", "gemini_generate_content", "xai_responses":
 		// ok
 	default:
 		return fmt.Errorf("classifier_provider.kind is not supported")
@@ -415,6 +417,15 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 		if strings.TrimSpace(cp.Platform) != "" {
 			return fmt.Errorf("classifier_provider.platform is only valid for anthropic_messages")
 		}
+	case "xai_responses":
+		switch prof {
+		case "", "xai-off-v1", "xai-responses-prefix-v1":
+		default:
+			return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
+		}
+		if strings.TrimSpace(cp.Platform) != "" {
+			return fmt.Errorf("classifier_provider.platform is only valid for anthropic_messages")
+		}
 	default:
 		switch prof {
 		case "", "generic-none-v1":
@@ -425,6 +436,8 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 			return fmt.Errorf("classifier_provider: anthropic cache profiles require kind anthropic_messages")
 		case "gemini-off-v1", "gemini-implicit-v1", "gemini-implicit-min1024-v1":
 			return fmt.Errorf("classifier_provider: gemini cache profiles require kind gemini_generate_content")
+		case "xai-off-v1", "xai-responses-prefix-v1":
+			return fmt.Errorf("classifier_provider: xai cache profiles require kind xai_responses")
 		default:
 			return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
 		}

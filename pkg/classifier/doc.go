@@ -32,7 +32,12 @@
 //   - implicit-cache-aware stable-prefix ordering; explicit cache objects deferred;
 //   - model-profile min-token eligibility without padding; CacheHit from transport only.
 //
-// Non-claims for this package revision: xAI native adapter, Gemini Interactions API,
-// Gemini explicit cache object lifecycle, hosted Anthropic equivalence, exact-assessment
-// memoization (#138), voting/failover, measured cache savings (#141), or hard-gate.
+// #137 adds:
+//   - native xAI Responses adapter (xai_responses) with prompt_cache_key sticky routing;
+//   - Chat Completions x-grok-conv-id is out of scope for this Responses profile;
+//   - CacheHit only from positive provider-reported cached tokens (key match ≠ hit).
+//
+// Non-claims for this package revision: Gemini Interactions API, Gemini explicit cache
+// object lifecycle, hosted Anthropic equivalence, exact-assessment memoization (#138),
+// voting/failover, measured cache savings (#141), or hard-gate.
 package classifier

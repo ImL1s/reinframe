@@ -508,23 +508,9 @@ func TestGrokHeadless_FakeExecArgvAndStream(t *testing.T) {
 	dir := t.TempDir()
 	argvLog := filepath.Join(dir, "argv.json")
 	// Build a tiny Go program that records os.Args and emits streaming-json.
+	// Argv log path comes from REINFRAME_ARGV_LOG (portable across OS path separators).
 	src := filepath.Join(dir, "fake_grok.go")
 	srcBody := `package main
-import (
-  "encoding/json"
-  "fmt"
-  "os"
-)
-func main() {
-  b, _ := json.Marshal(os.Args)
-  _ = os.WriteFile(` + "`" + argvLog + "`" + `, b, 0o644)
-  fmt.Println(` + "`" + `{"type":"init"}` + "`" + `)
-  fmt.Println(` + "`" + `{"type":"agent_thought_chunk","text":"secret"}` + "`" + `)
-  fmt.Println(` + "`" + `{"type":"result","status":"ok"}` + "`" + `)
-}
-`
-	// Fix: argvLog path must be embedded correctly — use env instead for portability.
-	srcBody = `package main
 import (
   "encoding/json"
   "fmt"

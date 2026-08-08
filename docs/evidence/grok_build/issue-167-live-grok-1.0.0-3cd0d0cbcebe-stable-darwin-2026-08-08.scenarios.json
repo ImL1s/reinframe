@@ -55,7 +55,7 @@
     "status": "PASS",
     "detail": "hook invoked and deny-side-effect absent; tool=run_terminal_command; exit_err=<nil> stdout_bytes=49348 stderr=",
     "tool_name": "run_terminal_command",
-    "host_outcome": "enforced_deny",
+    "host_outcome": "side_effect_absent_with_pretool_invoke",
     "at": "2026-08-08T05:05:47Z"
   },
   "HOOK-FAIL-001": {

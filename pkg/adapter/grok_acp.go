@@ -788,7 +788,7 @@ func NewGrokACPFoundationManifest() GrokACPFoundationManifest {
 		LoadSession:        false,
 		NegotiatedLevel:    -1,
 		HonestyNote: "pre-handshake: no achieved level or unproven caps; call ManifestFromNegotiated after initialize; " +
-			"JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; live #167 needs #191 + auth env",
+			"JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; live #167 evidence GO via cmd/groklive",
 	}
 }
 
@@ -965,7 +965,7 @@ func ManifestFromNegotiated(caps GrokACPNegotiatedCaps) GrokACPFoundationManifes
 	m.HonestyNote = "derived from initialize via protocol.EvaluateAchievableLevel; " +
 		"Level 2 requires full Level1 mask plus CapDiffInspection+CapPause+CapCancel+CapResume; " +
 		"JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; " +
-		"live #167 blocked on #191 + authenticated Grok env"
+		"live #167 evidence GO on harness cmd/groklive (darwin/Grok 1.0.0); no CapPause/L2 claimed from hooks alone"
 	return m
 }
 

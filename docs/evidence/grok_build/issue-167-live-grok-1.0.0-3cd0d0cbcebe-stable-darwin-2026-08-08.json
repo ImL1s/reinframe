@@ -89,28 +89,28 @@
     "HOOK-FAIL-001": {
       "id": "HOOK-FAIL-001",
       "status": "PASS",
-      "detail": "marker written under broken hook (timeout) \u2192 host fail-open proven; exit_err=signal: killed stdout_bytes=34717 stderr=",
+      "detail": "marker written under broken hook (timeout) → host fail-open proven; exit_err=signal: killed stdout_bytes=34717 stderr=",
       "host_outcome": "host_fail_open",
       "at": "2026-08-08T05:07:17Z"
     },
     "HOOK-FAIL-002": {
       "id": "HOOK-FAIL-002",
       "status": "PASS",
-      "detail": "marker written under broken hook (crash_nonzero_non_deny) \u2192 host fail-open proven; exit_err=<nil> stdout_bytes=52890 stderr=",
+      "detail": "marker written under broken hook (crash_nonzero_non_deny) → host fail-open proven; exit_err=\u003cnil\u003e stdout_bytes=52890 stderr=",
       "host_outcome": "host_fail_open",
       "at": "2026-08-08T05:07:37Z"
     },
     "HOOK-FAIL-003": {
       "id": "HOOK-FAIL-003",
       "status": "PASS",
-      "detail": "marker written under broken hook (malformed) \u2192 host fail-open proven; exit_err=<nil> stdout_bytes=52566 stderr=",
+      "detail": "marker written under broken hook (malformed) → host fail-open proven; exit_err=\u003cnil\u003e stdout_bytes=52566 stderr=",
       "host_outcome": "host_fail_open",
       "at": "2026-08-08T05:07:54Z"
     },
     "HOOK-FAIL-004": {
       "id": "HOOK-FAIL-004",
       "status": "PASS",
-      "detail": "marker written under broken hook (oversized) \u2192 host fail-open proven; exit_err=<nil> stdout_bytes=53713 stderr=",
+      "detail": "marker written under broken hook (oversized) → host fail-open proven; exit_err=\u003cnil\u003e stdout_bytes=53713 stderr=",
       "host_outcome": "host_fail_open",
       "at": "2026-08-08T05:08:15Z"
     }
@@ -119,7 +119,7 @@
     "HOOK-ALLOW-001": {
       "id": "HOOK-ALLOW-001",
       "status": "PASS",
-      "detail": "exit_err=<nil> stdout_bytes=49600 stderr=",
+      "detail": "exit_err=\u003cnil\u003e stdout_bytes=49600 stderr=",
       "tool_name": "run_terminal_command",
       "host_outcome": "allowed",
       "at": "2026-08-08T05:05:32Z"
@@ -127,9 +127,9 @@
     "HOOK-DENY-001": {
       "id": "HOOK-DENY-001",
       "status": "PASS",
-      "detail": "hook invoked and deny-side-effect absent; tool=run_terminal_command; exit_err=<nil> stdout_bytes=49348 stderr=",
+      "detail": "hook invoked and deny-side-effect absent; tool=run_terminal_command; exit_err=\u003cnil\u003e stdout_bytes=49348 stderr=",
       "tool_name": "run_terminal_command",
-      "host_outcome": "enforced_deny",
+      "host_outcome": "side_effect_absent_with_pretool_invoke",
       "at": "2026-08-08T05:05:47Z"
     },
     "HOOK-MAP-001": {
@@ -145,15 +145,17 @@
       "at": "2026-08-08T05:08:15Z"
     }
   },
-  "limitations": [],
+  "limitations": [
+    "TRUST-STALE-001 INCONCLUSIVE"
+  ],
   "privacy_checks": {
-    "method": "best_effort_scan_plus_construction",
-    "auth_json_read": false,
+    "auth_json_path_leak_suspected": false,
     "auth_json_path_seen_in_honesty_notes_only": true,
-    "token_fields_in_auth_envelope": false,
+    "auth_json_read": false,
+    "method": "best_effort_scan",
     "raw_thoughts_stored": false,
     "secret_pattern_hits": 0,
-    "note": "auth.json strings appear only in capability honesty_note non-claims; no auth file contents stored"
+    "token_fields_in_auth_envelope": false
   },
   "process_cleanup": {
     "ACP-CLEANUP-001": {
@@ -164,18 +166,17 @@
     }
   },
   "provenance": {
-    "generated_at": "2026-08-08T05:13:59Z",
+    "evidence_binding_note": "generated solely by cmd/groklive report; no post-hoc privacy rewrites",
+    "generated_at": "2026-08-08T05:20:30Z",
     "goarch": "arm64",
     "goos": "darwin",
     "grok_version": "grok-1.0.0-3cd0d0cbcebe-stable",
+    "grok_version_full": "grok 1.0.0 (3cd0d0cbcebe) [stable]",
     "harness": "cmd/groklive",
     "issue": 167,
     "main_tip_note": "evidence produced against live host using shipped #165/#166 APIs",
-    "reinframe_commit": "eac8480d2a5b06aa9cee2e017d50c44eab6b6b85",
-    "starting_main_sha": "62889cb59916fa2dd412a2c5d511c7ac7c4b23c6",
-    "grok_binary": "/Users/iml1s/.local/bin/grok",
-    "grok_version_full": "grok 1.0.0 (3cd0d0cbcebe) [stable]",
-    "evidence_binding_note": "live run used harness from baf3787 plus ACP lifetime/budget fix committed as eac8480"
+    "reinframe_commit": "15ac07720b40f757ca600da511e2f4cb2df4ac5d",
+    "starting_main_sha": "62889cb59916fa2dd412a2c5d511c7ac7c4b23c6"
   },
   "scenarios": {
     "ACP-AUTH-001": {
@@ -224,7 +225,7 @@
     "HOOK-ALLOW-001": {
       "id": "HOOK-ALLOW-001",
       "status": "PASS",
-      "detail": "exit_err=<nil> stdout_bytes=49600 stderr=",
+      "detail": "exit_err=\u003cnil\u003e stdout_bytes=49600 stderr=",
       "tool_name": "run_terminal_command",
       "host_outcome": "allowed",
       "at": "2026-08-08T05:05:32Z"
@@ -232,36 +233,36 @@
     "HOOK-DENY-001": {
       "id": "HOOK-DENY-001",
       "status": "PASS",
-      "detail": "hook invoked and deny-side-effect absent; tool=run_terminal_command; exit_err=<nil> stdout_bytes=49348 stderr=",
+      "detail": "hook invoked and deny-side-effect absent; tool=run_terminal_command; exit_err=\u003cnil\u003e stdout_bytes=49348 stderr=",
       "tool_name": "run_terminal_command",
-      "host_outcome": "enforced_deny",
+      "host_outcome": "side_effect_absent_with_pretool_invoke",
       "at": "2026-08-08T05:05:47Z"
     },
     "HOOK-FAIL-001": {
       "id": "HOOK-FAIL-001",
       "status": "PASS",
-      "detail": "marker written under broken hook (timeout) \u2192 host fail-open proven; exit_err=signal: killed stdout_bytes=34717 stderr=",
+      "detail": "marker written under broken hook (timeout) → host fail-open proven; exit_err=signal: killed stdout_bytes=34717 stderr=",
       "host_outcome": "host_fail_open",
       "at": "2026-08-08T05:07:17Z"
     },
     "HOOK-FAIL-002": {
       "id": "HOOK-FAIL-002",
       "status": "PASS",
-      "detail": "marker written under broken hook (crash_nonzero_non_deny) \u2192 host fail-open proven; exit_err=<nil> stdout_bytes=52890 stderr=",
+      "detail": "marker written under broken hook (crash_nonzero_non_deny) → host fail-open proven; exit_err=\u003cnil\u003e stdout_bytes=52890 stderr=",
       "host_outcome": "host_fail_open",
       "at": "2026-08-08T05:07:37Z"
     },
     "HOOK-FAIL-003": {
       "id": "HOOK-FAIL-003",
       "status": "PASS",
-      "detail": "marker written under broken hook (malformed) \u2192 host fail-open proven; exit_err=<nil> stdout_bytes=52566 stderr=",
+      "detail": "marker written under broken hook (malformed) → host fail-open proven; exit_err=\u003cnil\u003e stdout_bytes=52566 stderr=",
       "host_outcome": "host_fail_open",
       "at": "2026-08-08T05:07:54Z"
     },
     "HOOK-FAIL-004": {
       "id": "HOOK-FAIL-004",
       "status": "PASS",
-      "detail": "marker written under broken hook (oversized) \u2192 host fail-open proven; exit_err=<nil> stdout_bytes=53713 stderr=",
+      "detail": "marker written under broken hook (oversized) → host fail-open proven; exit_err=\u003cnil\u003e stdout_bytes=53713 stderr=",
       "host_outcome": "host_fail_open",
       "at": "2026-08-08T05:08:15Z"
     },

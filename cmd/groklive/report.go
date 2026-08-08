@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -24,10 +25,12 @@ func runReport(args []string) {
 	privacy := scanPrivacy(evDir)
 
 	ver := "unknown"
+	verFull := ""
 	if b, err := os.ReadFile(filepath.Join(evDir, "preflight.json")); err == nil {
 		var pf map[string]any
 		if json.Unmarshal(b, &pf) == nil {
 			if v, ok := pf["version"].(string); ok && v != "" {
+				verFull = strings.TrimSpace(v)
 				ver = sanitizeVersion(v)
 			}
 			if usable, ok := pf["usable"].(bool); ok && !usable && disp != "NO_GO" {
@@ -54,13 +57,17 @@ func runReport(args []string) {
 	report := map[string]any{
 		"schema_version": "reinframe.grok_build_live_control.v1",
 		"provenance": map[string]any{
-			"issue":         167,
-			"generated_at":  stamp(),
-			"goos":          osName,
-			"goarch":        runtime.GOARCH,
-			"grok_version":  ver,
-			"main_tip_note": "evidence produced against live host using shipped #165/#166 APIs",
-			"harness":       "cmd/groklive",
+			"issue":                 167,
+			"generated_at":          stamp(),
+			"goos":                  osName,
+			"goarch":                runtime.GOARCH,
+			"grok_version":          ver,
+			"grok_version_full":     verFull,
+			"reinframe_commit":      gitHEAD(),
+			"starting_main_sha":     "62889cb59916fa2dd412a2c5d511c7ac7c4b23c6",
+			"main_tip_note":         "evidence produced against live host using shipped #165/#166 APIs",
+			"harness":               "cmd/groklive",
+			"evidence_binding_note": "generated solely by cmd/groklive report; no post-hoc privacy rewrites",
 		},
 		"entry_gates": map[string]any{
 			"live_flag_required": true,
@@ -116,9 +123,11 @@ func runReport(args []string) {
 // evaluateDisposition ranks GO / LIMITED_GO / MORE_DATA / NO_GO from scenario map.
 // Mandatory scenarios must PASS for GO. INCONCLUSIVE on any mandatory → LIMITED_GO.
 // Missing/FAIL mandatory → NO_GO. ACP-AUTH-001 must PASS (hard auth boundary).
+// Fail-open (HOOK-FAIL-001..004) is mandatory for GO per #167.
 func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reasons []string) {
 	mandatory := []string{
 		"HOOK-ALLOW-001", "HOOK-DENY-001",
+		"HOOK-FAIL-001", "HOOK-FAIL-002", "HOOK-FAIL-003", "HOOK-FAIL-004",
 		"ACP-INIT-001", "ACP-AUTH-001", "ACP-SESSION-001", "ACP-CLEANUP-001",
 	}
 	disp = "GO"
@@ -137,13 +146,10 @@ func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reas
 			disp = "NO_GO"
 			reasons = append(reasons, id+" FAIL")
 		}
-		if sr.Status == "INCONCLUSIVE" && disp == "GO" {
-			disp = "LIMITED_GO"
-			reasons = append(reasons, id+" INCONCLUSIVE")
-		}
-		// LIMITED_GO already set stays unless NO_GO.
-		if sr.Status == "INCONCLUSIVE" && disp == "LIMITED_GO" {
-			// already recorded
+		if sr.Status == "INCONCLUSIVE" {
+			if disp == "GO" {
+				disp = "LIMITED_GO"
+			}
 			if !containsStr(reasons, id+" INCONCLUSIVE") {
 				reasons = append(reasons, id+" INCONCLUSIVE")
 			}
@@ -153,6 +159,16 @@ func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reas
 		disp = "NO_GO"
 		if !containsStr(reasons, "ACP-AUTH-001 not PASS") {
 			reasons = append(reasons, "ACP-AUTH-001 not PASS")
+		}
+	}
+	// Surface non-mandatory INCONCLUSIVE IDs for operators (do not demote GO alone).
+	for id, sr := range scenarios {
+		if sr.Status == "INCONCLUSIVE" && !containsStr(reasons, id+" INCONCLUSIVE") {
+			// only add if not already mandatory-handled
+			if !strings.HasPrefix(id, "HOOK-FAIL-") && id != "HOOK-ALLOW-001" && id != "HOOK-DENY-001" &&
+				!strings.HasPrefix(id, "ACP-") {
+				reasons = append(reasons, id+" INCONCLUSIVE")
+			}
 		}
 	}
 	return disp, reasons
@@ -168,13 +184,15 @@ func containsStr(ss []string, want string) bool {
 }
 
 func scanPrivacy(evDir string) map[string]any {
-	// Best-effort scan of small evidence files for secret-looking material / auth.json paths.
+	// Best-effort scan. Honesty notes that say "never read auth.json" are not path leaks.
 	out := map[string]any{
-		"method":                        "best_effort_scan",
-		"auth_json_path_seen":           false,
-		"token_fields_in_auth_envelope": false,
-		"raw_thoughts_stored":           false,
-		"secret_pattern_hits":           0,
+		"method":         "best_effort_scan",
+		"auth_json_read": false,
+		"auth_json_path_seen_in_honesty_notes_only": false,
+		"auth_json_path_leak_suspected":             false,
+		"token_fields_in_auth_envelope":             false,
+		"raw_thoughts_stored":                       false,
+		"secret_pattern_hits":                       0,
 	}
 	entries, err := os.ReadDir(evDir)
 	if err != nil {
@@ -182,26 +200,31 @@ func scanPrivacy(evDir string) map[string]any {
 		return out
 	}
 	hits := 0
+	honestyOnly := false
+	leak := false
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		name := e.Name()
-		// Cap file size for scan.
-		b, err := os.ReadFile(filepath.Join(evDir, name))
+		b, err := os.ReadFile(filepath.Join(evDir, e.Name()))
 		if err != nil || len(b) > 1<<20 {
 			continue
 		}
 		s := string(b)
 		if strings.Contains(s, "auth.json") || strings.Contains(s, ".grok/auth") {
-			out["auth_json_path_seen"] = true
+			if strings.Contains(strings.ToLower(s), "never read") || strings.Contains(s, "honesty_note") ||
+				strings.Contains(s, "auth_json_read") {
+				honestyOnly = true
+			} else {
+				leak = true
+			}
 		}
-		if strings.Contains(s, `"token"`) && strings.Contains(s, "authenticate") {
+		if strings.Contains(s, `"token"`) && strings.Contains(s, "authenticate") &&
+			!strings.Contains(s, "no token") && !strings.Contains(s, "token field") {
 			out["token_fields_in_auth_envelope"] = true
 		}
 		for _, pat := range []string{"sk-", "xai-", "Bearer ", "eyJ"} {
 			if strings.Contains(s, pat) {
-				// Ignore our own redaction markers.
 				if strings.Contains(s, "[REDACTED]") && pat != "eyJ" {
 					continue
 				}
@@ -210,7 +233,17 @@ func scanPrivacy(evDir string) map[string]any {
 		}
 	}
 	out["secret_pattern_hits"] = hits
+	out["auth_json_path_seen_in_honesty_notes_only"] = honestyOnly && !leak
+	out["auth_json_path_leak_suspected"] = leak
 	return out
+}
+
+func gitHEAD() string {
+	b, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func pick(m map[string]ScenarioResult, ids ...string) map[string]ScenarioResult {

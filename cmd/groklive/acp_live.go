@@ -209,8 +209,10 @@ func runACP(args []string) {
 		}
 	}
 
-	// ADVICE-DEDUP-001 — actually issue second delivery with same InterventionID.
-	// Durable machine suppression is #108; here we only prove second transport attempt.
+	// ADVICE-DEDUP-001 — second delivery with same InterventionID.
+	// PASS only when second SessionPrompt returns nil (transport accepted a second attempt).
+	// Transport error → INCONCLUSIVE (host may have rejected; durable #108 machine not claimed).
+	// Durable InterventionID suppression is #108 only.
 	if sid != "" {
 		body2 := adapter.BuildAdvicePrompt("REQUEST_REPLAN",
 			"Duplicate InterventionID proof. Reply STOP only.",
@@ -219,9 +221,9 @@ func runACP(args []string) {
 		err2 := client.SessionPrompt(dupCtx, sid, body2, "issue167-live-advice-001", "")
 		dupCancel()
 		if err2 != nil {
-			set("ADVICE-DEDUP-001", "PASS", "second delivery same InterventionID rejected/errored at transport: "+boundStr(err2.Error(), 120)+"; durable dedup machine is #108", nil)
+			set("ADVICE-DEDUP-001", "INCONCLUSIVE", "second delivery same InterventionID transport error: "+boundStr(err2.Error(), 120)+"; durable dedup is #108", nil)
 		} else {
-			set("ADVICE-DEDUP-001", "PASS", "second delivery same InterventionID accepted by host transport; durable suppression is #108 not claimed here", nil)
+			set("ADVICE-DEDUP-001", "PASS", "second delivery same InterventionID accepted at transport; durable suppression is #108 not claimed", nil)
 		}
 	} else {
 		set("ADVICE-DEDUP-001", "NOT_RUN", "no session", nil)

@@ -205,10 +205,14 @@ If the tool is denied, acknowledge and stop. Do not work around the denial.`,
 	case !fileAbsent:
 		set("HOOK-DENY-001", "FAIL", "denied file exists — host did not enforce deny; "+denyRes.Detail,
 			map[string]string{"tool": firstNonEmpty(denyRes.ToolName, toolName), "host": "not_enforced"})
-	case fileAbsent && hookForDeny:
-		// Hook fired and side effect absent: strongest harness-level claim without inventing enforced_deny from silence.
-		set("HOOK-DENY-001", "PASS", "hook invoked and deny-side-effect absent; tool="+firstNonEmpty(denyRes.ToolName, toolName)+"; "+denyRes.Detail,
-			map[string]string{"tool": firstNonEmpty(denyRes.ToolName, toolName), "host": string(adapter.HostOutcomeEnforcedDeny)})
+	case fileAbsent && hookForDeny && denyRes.ToolName != "":
+		// Host-side proof without claiming adapter HostOutcomeEnforcedDeny (that requires deny JSON/exit2).
+		// Vocabulary: side_effect_absent_with_pretool_invoke — inductive under REINFRAME_GROK_DENY_TOOLS.
+		set("HOOK-DENY-001", "PASS", "pretool invoke observed for tool="+denyRes.ToolName+" and deny-side-effect absent; "+denyRes.Detail,
+			map[string]string{"tool": denyRes.ToolName, "host": "side_effect_absent_with_pretool_invoke"})
+	case fileAbsent && hookForDeny && denyRes.ToolName == "":
+		set("HOOK-DENY-001", "INCONCLUSIVE", "hook log line seen but tool name empty on deny window; side-effect absent; "+denyRes.Detail,
+			map[string]string{"tool": toolName, "host": "unknown"})
 	case fileAbsent && !hookForDeny:
 		set("HOOK-DENY-001", "INCONCLUSIVE", "side-effect absent but hook invocation for deny tool not proven (agent may not have called tool): "+denyRes.Detail,
 			map[string]string{"tool": firstNonEmpty(denyRes.ToolName, toolName), "host": "unknown"})

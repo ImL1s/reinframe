@@ -7,6 +7,10 @@ func TestEvaluateDisposition_MandatoryMatrix(t *testing.T) {
 	passAll := map[string]ScenarioResult{
 		"HOOK-ALLOW-001":  {ID: "HOOK-ALLOW-001", Status: "PASS"},
 		"HOOK-DENY-001":   {ID: "HOOK-DENY-001", Status: "PASS"},
+		"HOOK-FAIL-001":   {ID: "HOOK-FAIL-001", Status: "PASS"},
+		"HOOK-FAIL-002":   {ID: "HOOK-FAIL-002", Status: "PASS"},
+		"HOOK-FAIL-003":   {ID: "HOOK-FAIL-003", Status: "PASS"},
+		"HOOK-FAIL-004":   {ID: "HOOK-FAIL-004", Status: "PASS"},
 		"ACP-INIT-001":    {ID: "ACP-INIT-001", Status: "PASS"},
 		"ACP-AUTH-001":    {ID: "ACP-AUTH-001", Status: "PASS"},
 		"ACP-SESSION-001": {ID: "ACP-SESSION-001", Status: "PASS"},
@@ -53,6 +57,22 @@ func TestEvaluateDisposition_MandatoryMatrix(t *testing.T) {
 	disp, _ = evaluateDisposition(failDeny)
 	if disp != "NO_GO" {
 		t.Fatalf("fail want NO_GO got %s", disp)
+	}
+
+	// Missing fail-open mandatory → NO_GO
+	noFail := copyScenarios(passAll)
+	delete(noFail, "HOOK-FAIL-001")
+	disp, reasons = evaluateDisposition(noFail)
+	if disp != "NO_GO" {
+		t.Fatalf("missing HOOK-FAIL-001 want NO_GO got %s %v", disp, reasons)
+	}
+
+	// INCONCLUSIVE fail-open → LIMITED_GO
+	failOpenInconclusive := copyScenarios(passAll)
+	failOpenInconclusive["HOOK-FAIL-003"] = ScenarioResult{ID: "HOOK-FAIL-003", Status: "INCONCLUSIVE"}
+	disp, reasons = evaluateDisposition(failOpenInconclusive)
+	if disp != "LIMITED_GO" {
+		t.Fatalf("fail-open INCONCLUSIVE want LIMITED_GO got %s %v", disp, reasons)
 	}
 }
 

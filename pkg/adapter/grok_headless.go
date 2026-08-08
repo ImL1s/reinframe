@@ -63,7 +63,7 @@ func NewGrokHeadlessObserveManifest() GrokHeadlessObserveManifest {
 		CapPause:          false,
 		ExplicitAck:       false,
 		HonestyNote: "headless streaming-json is observe-only; tool approvals/advice require ACP; " +
-			"never read/write ~/.grok/auth.json; live proof #167 needs #191 + auth env",
+			"never read/write ~/.grok/auth.json; live #167 evidence GO via cmd/groklive",
 	}
 }
 

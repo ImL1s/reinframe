@@ -60,7 +60,7 @@ Evaluation:
 | Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; **live #167** |
 | Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; **live #167** |
 | Live Codex hooks proof (#164) | 🔲 Open — blocked on interactive Codex + project trust |
-| Live Grok Build hooks+ACP proof (#167) | 🔲 Open — blocked on authenticated Grok CLI + trust |
+| Live Grok Build hooks+ACP proof (#167) | 🟡 PR evidence **GO** (darwin/Grok 1.0.0) — merge pending Superpowers/CI ([#193](https://github.com/ImL1s/reinframe/pull/193)) |
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |
 | Claude project-local install/doctor (#106/#117) | ✅ Installer/unit + exact ownership; **not** live smoke |
 | Typed ProposedAction (#115) | ✅ ToolName ≠ Command |

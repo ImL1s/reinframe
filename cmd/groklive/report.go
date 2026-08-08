@@ -1,0 +1,340 @@
+package main
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+)
+
+func runReport(args []string) {
+	fs := flag.NewFlagSet("report", flag.ExitOnError)
+	out := fs.String("evidence-out", "", "evidence directory")
+	_ = fs.Parse(args)
+	evDir := mustAbs(*out, "--evidence-out")
+	scenarios := loadScenarioMap(evDir)
+
+	disp, reasons := evaluateDisposition(scenarios)
+
+	// Soft privacy scan of evidence directory (best-effort; not a full audit).
+	privacy := scanPrivacy(evDir)
+
+	ver := "unknown"
+	verFull := ""
+	if b, err := os.ReadFile(filepath.Join(evDir, "preflight.json")); err == nil {
+		var pf map[string]any
+		if json.Unmarshal(b, &pf) == nil {
+			if v, ok := pf["version"].(string); ok && v != "" {
+				verFull = strings.TrimSpace(v)
+				ver = sanitizeVersion(v)
+			}
+			if usable, ok := pf["usable"].(bool); ok && !usable && disp != "NO_GO" {
+				disp = "MORE_DATA"
+				reasons = append(reasons, "preflight usable=false")
+			}
+		}
+	} else if disp == "GO" || disp == "LIMITED_GO" {
+		// Missing preflight provenance is not a false GO for live control.
+		reasons = append(reasons, "preflight.json missing")
+		if disp == "GO" {
+			disp = "LIMITED_GO"
+		}
+	}
+	osName := runtime.GOOS
+	day := time.Now().UTC().Format("2006-01-02")
+	base := fmt.Sprintf("issue-167-live-%s-%s-%s", sanitizeVersion(ver), osName, day)
+
+	ack := "transport"
+	if sr, ok := scenarios["ACP-SESSION-001"]; ok && sr.ACKLayer != "" {
+		ack = sr.ACKLayer
+	}
+
+	report := map[string]any{
+		"schema_version": "reinframe.grok_build_live_control.v1",
+		"provenance": map[string]any{
+			"issue":                 167,
+			"generated_at":          stamp(),
+			"goos":                  osName,
+			"goarch":                runtime.GOARCH,
+			"grok_version":          ver,
+			"grok_version_full":     verFull,
+			"reinframe_commit":      gitHEAD(),
+			"starting_main_sha":     "62889cb59916fa2dd412a2c5d511c7ac7c4b23c6",
+			"main_tip_note":         "evidence produced against live host using shipped #165/#166 APIs",
+			"harness":               "cmd/groklive",
+			"evidence_binding_note": "generated solely by cmd/groklive report; no post-hoc privacy rewrites",
+		},
+		"entry_gates": map[string]any{
+			"live_flag_required": true,
+			"auth_json_read":     false,
+			"credential_print":   false,
+		},
+		"trust_results":             pick(scenarios, "TRUST-001", "TRUST-STALE-001", "TRUST-RESTORE-001"),
+		"hook_results":              pick(scenarios, "HOOK-ALLOW-001", "HOOK-DENY-001", "HOOK-MAP-001", "HOOK-UNINSTALL-001"),
+		"hook_failure_semantics":    pick(scenarios, "HOOK-FAIL-001", "HOOK-FAIL-002", "HOOK-FAIL-003", "HOOK-FAIL-004"),
+		"static_permission_results": map[string]any{"status": "NOT_RUN", "detail": "optional fragment not required for GO"},
+		"acp_negotiation":           pick(scenarios, "ACP-INIT-001"),
+		"auth_boundary":             pick(scenarios, "ACP-AUTH-001"),
+		"session_results":           pick(scenarios, "ACP-SESSION-001", "ACP-OPTIONAL-001"),
+		"advice_results":            pick(scenarios, "ADVICE-DEDUP-001"),
+		"challenge_results":         pick(scenarios, "CHALLENGE-001"),
+		"ack_layers": map[string]any{
+			"strongest_proven": ack,
+			"explicit_claimed": false,
+			"note":             "JSON-RPC success is transport; session/update is session_visible; explicit never from transport alone",
+		},
+		"process_cleanup":      pick(scenarios, "ACP-CLEANUP-001"),
+		"capability_manifests": loadOptionalJSON(filepath.Join(evDir, "acp_manifest.json")),
+		"privacy_checks":       privacy,
+		"limitations":          reasons,
+		"scenarios":            scenarios,
+		"final_disposition":    disp,
+	}
+
+	jsonPath := filepath.Join(evDir, base+".json")
+	mdPath := filepath.Join(evDir, base+".md")
+	_ = writeJSON(jsonPath, report)
+	md := renderMD(report, disp, ack, ver, osName, reasons, scenarios)
+	_ = os.WriteFile(mdPath, []byte(md), 0o600)
+
+	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v1.schema.json")
+	if _, err := os.Stat(schemaPath); err != nil {
+		_ = writeJSON(schemaPath, minimalSchema())
+	}
+
+	printJSON(map[string]any{
+		"ok":           true,
+		"disposition":  disp,
+		"json":         jsonPath,
+		"md":           mdPath,
+		"reasons":      reasons,
+		"mandatory_ok": disp == "GO" || disp == "LIMITED_GO",
+	})
+	if disp == "NO_GO" {
+		os.Exit(1)
+	}
+}
+
+// evaluateDisposition ranks GO / LIMITED_GO / MORE_DATA / NO_GO from scenario map.
+// Mandatory scenarios must PASS for GO. INCONCLUSIVE on any mandatory → LIMITED_GO.
+// Missing/FAIL mandatory → NO_GO. ACP-AUTH-001 must PASS (hard auth boundary).
+// Fail-open (HOOK-FAIL-001..004) is mandatory for GO per #167.
+func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reasons []string) {
+	mandatory := []string{
+		"HOOK-ALLOW-001", "HOOK-DENY-001",
+		"HOOK-FAIL-001", "HOOK-FAIL-002", "HOOK-FAIL-003", "HOOK-FAIL-004",
+		"ACP-INIT-001", "ACP-AUTH-001", "ACP-SESSION-001", "ACP-CLEANUP-001",
+	}
+	disp = "GO"
+	reasons = []string{}
+	if len(scenarios) == 0 {
+		return "MORE_DATA", []string{"no scenarios recorded"}
+	}
+	for _, id := range mandatory {
+		sr, ok := scenarios[id]
+		if !ok || sr.Status == "NOT_RUN" || sr.Status == "" {
+			disp = "NO_GO"
+			reasons = append(reasons, id+" missing")
+			continue
+		}
+		if sr.Status == "FAIL" {
+			disp = "NO_GO"
+			reasons = append(reasons, id+" FAIL")
+		}
+		if sr.Status == "INCONCLUSIVE" {
+			if disp == "GO" {
+				disp = "LIMITED_GO"
+			}
+			if !containsStr(reasons, id+" INCONCLUSIVE") {
+				reasons = append(reasons, id+" INCONCLUSIVE")
+			}
+		}
+	}
+	if sr, ok := scenarios["ACP-AUTH-001"]; !ok || sr.Status != "PASS" {
+		disp = "NO_GO"
+		if !containsStr(reasons, "ACP-AUTH-001 not PASS") {
+			reasons = append(reasons, "ACP-AUTH-001 not PASS")
+		}
+	}
+	// Surface non-mandatory INCONCLUSIVE IDs for operators (do not demote GO alone).
+	for id, sr := range scenarios {
+		if sr.Status == "INCONCLUSIVE" && !containsStr(reasons, id+" INCONCLUSIVE") {
+			// only add if not already mandatory-handled
+			if !strings.HasPrefix(id, "HOOK-FAIL-") && id != "HOOK-ALLOW-001" && id != "HOOK-DENY-001" &&
+				!strings.HasPrefix(id, "ACP-") {
+				reasons = append(reasons, id+" INCONCLUSIVE")
+			}
+		}
+	}
+	return disp, reasons
+}
+
+func containsStr(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func scanPrivacy(evDir string) map[string]any {
+	// Best-effort scan. Honesty notes that say "never read auth.json" are not path leaks.
+	out := map[string]any{
+		"method":         "best_effort_scan",
+		"auth_json_read": false,
+		"auth_json_path_seen_in_honesty_notes_only": false,
+		"auth_json_path_leak_suspected":             false,
+		"token_fields_in_auth_envelope":             false,
+		"raw_thoughts_stored":                       false,
+		"secret_pattern_hits":                       0,
+	}
+	entries, err := os.ReadDir(evDir)
+	if err != nil {
+		out["error"] = err.Error()
+		return out
+	}
+	hits := 0
+	honestyOnly := false
+	leak := false
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(evDir, e.Name()))
+		if err != nil || len(b) > 1<<20 {
+			continue
+		}
+		s := string(b)
+		if strings.Contains(s, "auth.json") || strings.Contains(s, ".grok/auth") {
+			if strings.Contains(strings.ToLower(s), "never read") || strings.Contains(s, "honesty_note") ||
+				strings.Contains(s, "auth_json_read") {
+				honestyOnly = true
+			} else {
+				leak = true
+			}
+		}
+		if strings.Contains(s, `"token"`) && strings.Contains(s, "authenticate") &&
+			!strings.Contains(s, "no token") && !strings.Contains(s, "token field") {
+			out["token_fields_in_auth_envelope"] = true
+		}
+		for _, pat := range []string{"sk-", "xai-", "Bearer ", "eyJ"} {
+			if strings.Contains(s, pat) {
+				if strings.Contains(s, "[REDACTED]") && pat != "eyJ" {
+					continue
+				}
+				hits++
+			}
+		}
+	}
+	out["secret_pattern_hits"] = hits
+	out["auth_json_path_seen_in_honesty_notes_only"] = honestyOnly && !leak
+	out["auth_json_path_leak_suspected"] = leak
+	return out
+}
+
+func gitHEAD() string {
+	b, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func pick(m map[string]ScenarioResult, ids ...string) map[string]ScenarioResult {
+	out := map[string]ScenarioResult{}
+	for _, id := range ids {
+		if sr, ok := m[id]; ok {
+			out[id] = sr
+		}
+	}
+	return out
+}
+
+func loadOptionalJSON(path string) any {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var v any
+	if json.Unmarshal(b, &v) != nil {
+		return nil
+	}
+	return v
+}
+
+func sanitizeVersion(v string) string {
+	v = strings.TrimSpace(v)
+	// Keep only filename-safe characters for evidence basenames.
+	var b strings.Builder
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		case r == ' ' || r == '/' || r == '(' || r == ')' || r == '[' || r == ']':
+			b.WriteByte('-')
+		default:
+			// drop
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	for strings.Contains(out, "--") {
+		out = strings.ReplaceAll(out, "--", "-")
+	}
+	if len(out) > 48 {
+		out = out[:48]
+	}
+	if out == "" {
+		return "unknown"
+	}
+	return out
+}
+
+func renderMD(report map[string]any, disp, ack, ver, osName string, reasons []string, scenarios map[string]ScenarioResult) string {
+	var b strings.Builder
+	b.WriteString("# Grok Build live control evidence (#167)\n\n")
+	fmt.Fprintf(&b, "- **Disposition:** `%s`\n", disp)
+	fmt.Fprintf(&b, "- **Grok version:** %s\n", ver)
+	fmt.Fprintf(&b, "- **OS:** %s\n", osName)
+	fmt.Fprintf(&b, "- **Strongest ACK proven:** `%s`\n", ack)
+	b.WriteString("- **Auth.json read:** no\n")
+	b.WriteString("- **Explicit ACK claimed:** no\n\n")
+	b.WriteString("## Scenarios\n\n| ID | Status | Detail |\n|----|--------|--------|\n")
+	// Stable-ish order: mandatory first then rest via map iteration is fine for MD.
+	for id, sr := range scenarios {
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", id, sr.Status, strings.ReplaceAll(boundStr(sr.Detail, 80), "|", "/"))
+	}
+	if len(reasons) > 0 {
+		b.WriteString("\n## Limitations\n\n")
+		for _, r := range reasons {
+			fmt.Fprintf(&b, "- %s\n", r)
+		}
+	}
+	b.WriteString("\n## Non-claims\n\n")
+	b.WriteString("- No Level 2 / CapPause from hooks alone\n")
+	b.WriteString("- No cross-host ranking\n")
+	b.WriteString("- No credential material intentionally stored\n")
+	_ = report
+	return b.String()
+}
+
+func minimalSchema() map[string]any {
+	return map[string]any{
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"$id":                  "reinframe.grok_build_live_control.v1",
+		"title":                "Reinframe Grok Build live control evidence",
+		"type":                 "object",
+		"required":             []string{"schema_version", "final_disposition", "scenarios"},
+		"additionalProperties": true,
+		"properties": map[string]any{
+			"schema_version":    map[string]any{"type": "string"},
+			"final_disposition": map[string]any{"enum": []string{"GO", "LIMITED_GO", "MORE_DATA", "NO_GO"}},
+			"scenarios":         map[string]any{"type": "object"},
+		},
+	}
+}

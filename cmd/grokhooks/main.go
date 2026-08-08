@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
 )
@@ -74,8 +75,17 @@ func runPretool(r io.Reader, w io.Writer) {
 	req := adapter.HookRequestFromGrokHook(in, &pa)
 	pol := adapter.HookPolicy{FailOpen: true}
 	if deny := os.Getenv("REINFRAME_GROK_DENY_TOOLS"); deny != "" {
-		pol.DeniedTools = map[string]struct{}{deny: {}}
-		pol.FailOpen = false
+		// Comma-separated exact tool names (live hosts may advertise aliases).
+		pol.DeniedTools = map[string]struct{}{}
+		for _, n := range strings.Split(deny, ",") {
+			n = strings.TrimSpace(n)
+			if n != "" {
+				pol.DeniedTools[n] = struct{}{}
+			}
+		}
+		if len(pol.DeniedTools) > 0 {
+			pol.FailOpen = false
+		}
 	}
 	dec := adapter.EvaluateHook(context.Background(), req, pol)
 	resp := adapter.GrokPreToolResponseFromDecision(dec, os.Getenv("REINFRAME_CHALLENGE_ID"))

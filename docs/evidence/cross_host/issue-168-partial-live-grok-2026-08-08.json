@@ -1,0 +1,30 @@
+{
+  "schema_version": "reinframe.cross_host_eval_report.v1",
+  "lane": "cross_host_eval_partial_live",
+  "commit": "b30618c519f5d3d4e28810c8dbcb0bee5bc3ebdc",
+  "generated_at": "2026-08-08T05:50:11Z",
+  "disposition": "MORE-DATA",
+  "disposition_note": "Partial live: Grok #167 GO only. Missing Codex #164 and Claude #120. No ranking.",
+  "live_hosts_used": true,
+  "live_lanes": {
+    "present": [
+      "grok_build_live_167"
+    ],
+    "missing": [
+      "codex_live_164",
+      "claude_live_120"
+    ]
+  },
+  "live_pin": {
+    "host": "Grok Build",
+    "version": "grok 1.0.0 (3cd0d0cbcebe) [stable]",
+    "os": "darwin/arm64",
+    "evidence": "docs/evidence/grok_build/issue-167-live-grok-1.0.0-3cd0d0cbcebe-stable-darwin-2026-08-08.json",
+    "strongest_ack": "session_visible",
+    "hook_fail_open": true,
+    "source_disposition": "GO",
+    "sample_size": 1
+  },
+  "all_fake_ok": true,
+  "tunneling_ranking": "NOT_PERFORMED"
+}

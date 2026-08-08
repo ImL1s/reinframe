@@ -7,10 +7,9 @@ import (
 
 // Live Grok lane attachment for #168 (after #167 GO evidence).
 // Does not rank hosts. Disposition remains MORE-DATA until matched Codex/Claude live lanes exist.
-const (
-	HostLaneGrokLive167      HostLaneID = "grok_build_live_167"
-	CrossHostLanePartialLive            = "cross_host_eval_partial_live"
-)
+const HostLaneGrokLive167 HostLaneID = "grok_build_live_167"
+
+const CrossHostLanePartialLive = "cross_host_eval_partial_live"
 
 // LiveLanePin pins one live host profile without inventing multi-host rankings.
 type LiveLanePin struct {
@@ -95,8 +94,8 @@ func AttachLiveGrok167Lane(commit string, pin LiveLanePin) CrossHostEvalReport {
 			HostLane:        pin.HostLane,
 			HostProfile:     pin.Profile,
 			CapabilityNote:  "ACP challenge transport preserves ChallengeID; #131 authoritative",
-			ChallengeIDKept: true,
-			OK:              true,
+			ChallengeIDKept: pin.ACPSessionOK,
+			OK:              pin.ACPSessionOK,
 			ACK:             ackFromStrongest(pin.StrongestACK),
 			TunnelingScore:  0,
 			Note:            "from #167 CHALLENGE-001 + ACP-SESSION-001; explicit not claimed",

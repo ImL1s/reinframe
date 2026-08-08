@@ -51,25 +51,20 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	now := g.now()
 	mode := DefaultDeliveryMode(intervention.ActionType)
 	if intervention.DeliveryModeHint != "" {
 		mode = intervention.DeliveryModeHint
 	}
 	base := InterventionResult{
-		InterventionID:  intervention.InterventionID,
-		DeliveryMode:    mode,
-		DeliveredAt:     now,
-		HostFamily:      GrokLiveHostFamily,
-		HostVersion:     g.HostVersion,
-		Profile:         GrokLiveAdviceProfile,
-		SafeBoundary:    GrokSafeBoundaryNextInput,
-		TargetSessionID: g.TargetSessionID,
-		CapsDigest:      g.CapsDigest,
-		AckLayer:        ACKLayerNone,
-		ErrorClass:      ErrorClassNone,
+		InterventionID: intervention.InterventionID,
+		DeliveryMode:   mode,
+		DeliveredAt:    time.Now().UTC(),
+		HostFamily:     GrokLiveHostFamily,
+		Profile:        GrokLiveAdviceProfile,
+		SafeBoundary:   GrokSafeBoundaryNextInput,
+		AckLayer:       ACKLayerNone,
+		ErrorClass:     ErrorClassNone,
 	}
-
 	if g == nil || g.Client == nil {
 		base.Accepted = false
 		base.AckStatus = AckStatusUnsupported
@@ -77,6 +72,11 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		base.Message = "grok advice: client required"
 		return base, fmt.Errorf("grok advice: client required")
 	}
+	now := g.now()
+	base.DeliveredAt = now
+	base.HostVersion = g.HostVersion
+	base.TargetSessionID = g.TargetSessionID
+	base.CapsDigest = g.CapsDigest
 	if g.TargetSessionID == "" {
 		base.Accepted = false
 		base.AckStatus = AckStatusUnsupported

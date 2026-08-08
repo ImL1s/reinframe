@@ -116,7 +116,7 @@ func (l *DurableAdviceLedger) Append(tr DeliveryTransition) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	n, err := f.Write(line)
 	if err != nil {
 		return err

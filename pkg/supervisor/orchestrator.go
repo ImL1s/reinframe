@@ -128,8 +128,15 @@ func (o *Orchestrator) DeliverAtSafeBoundary(ctx context.Context, sessionID stri
 		if item.State == adapter.StateAcked {
 			o.clearLatch(sessionID, item.Intervention.InterventionID)
 		}
+		// Durable ledger suppress must not leave tools deferred forever.
+		if item.State == adapter.StateSuppressed {
+			o.clearLatch(sessionID, item.Intervention.InterventionID)
+		}
 		// Human escalation (observe-only) clears latch so hooks are not stuck forever.
 		if item.State == adapter.StateFailed && res.DeliveryMode == adapter.DeliveryModeHumanEscalation && err == nil {
+			o.clearLatch(sessionID, item.Intervention.InterventionID)
+		}
+		if item.State == adapter.StateUnsupported && res.AckStatus == adapter.AckStatusUnsupported && err == nil {
 			o.clearLatch(sessionID, item.Intervention.InterventionID)
 		}
 	}

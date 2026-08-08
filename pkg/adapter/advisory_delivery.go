@@ -201,16 +201,28 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 	return &out, res, err
 }
 
-// Acknowledge records an external ACK / reject / timeout for a DELIVERING item.
-// Only StateDelivering is accepted — ACK before Deliver is rejected (no pre-ack).
+// awaitingExplicitACK reports whether the item may still receive an explicit ACK.
+// TRANSPORT_ACCEPTED / SESSION_VISIBLE remain open for a stronger layer; DELIVERING too.
+func awaitingExplicitACK(st DeliveryState) bool {
+	switch st {
+	case StateDelivering, StateTransportAccepted, StateSessionVisible:
+		return true
+	default:
+		return false
+	}
+}
+
+// Acknowledge records an external ACK / reject / timeout for a delivery in flight.
+// Only DELIVERING / TRANSPORT_ACCEPTED / SESSION_VISIBLE accepted — ACK before Deliver is rejected.
 // status must be one of acked | rejected | timed_out.
+// Explicit ACK never upgrades transport-only evidence by itself unless status is acked from a pinned source.
 func (d *AdvisoryDelivery) Acknowledge(interventionID, status string) error {
 	item, ok := d.queue.Get(interventionID)
 	if !ok {
 		return fmt.Errorf("unknown intervention %q", interventionID)
 	}
-	if item.State != StateDelivering {
-		return fmt.Errorf("intervention %q not awaiting ack (state=%s; only DELIVERING accepted)", interventionID, item.State)
+	if !awaitingExplicitACK(item.State) {
+		return fmt.Errorf("intervention %q not awaiting ack (state=%s; only DELIVERING/TRANSPORT_ACCEPTED/SESSION_VISIBLE accepted)", interventionID, item.State)
 	}
 
 	now := time.Now().UTC()
@@ -227,9 +239,12 @@ func (d *AdvisoryDelivery) Acknowledge(interventionID, status string) error {
 	var state DeliveryState
 	switch status {
 	case AckStatusAcked:
+		// External explicit ACK from a pinned source — StateAcked remains the durable terminal.
+		// AckLayer is recorded as explicit; transport-only results never reach this branch.
 		state = StateAcked
 		res.Accepted = true
 		res.AckStatus = AckStatusAcked
+		res.AckLayer = ACKLayerExplicit
 		res.ErrorClass = ErrorClassNone
 		ackAt := now
 		res.AckAt = &ackAt
@@ -261,21 +276,35 @@ func (d *AdvisoryDelivery) Get(interventionID string) (*PendingItem, bool) {
 func mapResultToState(res InterventionResult, err error) DeliveryState {
 	switch res.AckStatus {
 	case AckStatusAcked:
+		if res.AckLayer == ACKLayerExplicit {
+			return StateExplicitACK
+		}
+		if res.AckLayer == ACKLayerBehavioral {
+			return StateBehavioralACK
+		}
 		return StateAcked
 	case AckStatusRejected:
 		return StateRejected
 	case AckStatusTimedOut:
 		return StateTimedOut
 	case AckStatusUnsupported:
-		return StateFailed
+		return StateUnsupported
 	case AckStatusPending:
 		if err != nil {
 			return StateFailed
 		}
-		return StateDelivering
+		// Honest intermediate states from host ACK layer (#108).
+		switch res.AckLayer {
+		case ACKLayerSessionVisible:
+			return StateSessionVisible
+		case ACKLayerTransport:
+			return StateTransportAccepted
+		default:
+			return StateDelivering
+		}
 	default:
 		if res.ErrorClass == ErrorClassUnsupportedCapability {
-			return StateFailed
+			return StateUnsupported
 		}
 		if res.ErrorClass == ErrorClassTimeout {
 			return StateTimedOut

@@ -24,11 +24,11 @@ const (
 
 // ErrorClass classifies Deliver failures without panicking.
 const (
-	ErrorClassNone                   = "none"
-	ErrorClassUnsupportedCapability  = "unsupported_capability"
-	ErrorClassTimeout                = "timeout"
-	ErrorClassAgentRejected          = "agent_rejected"
-	ErrorClassTransport              = "transport"
+	ErrorClassNone                  = "none"
+	ErrorClassUnsupportedCapability = "unsupported_capability"
+	ErrorClassTimeout               = "timeout"
+	ErrorClassAgentRejected         = "agent_rejected"
+	ErrorClassTransport             = "transport"
 )
 
 // InterventionResult is the structured outcome of InterventionActuator.Deliver.
@@ -41,20 +41,40 @@ type InterventionResult struct {
 	AckAt          *time.Time
 	ErrorClass     string
 	Message        string
+	// AckLayer is the strongest proven host ACK layer (#108/#167 honesty).
+	// transport | session_visible | explicit | behavioral | none — never invent explicit from transport.
+	AckLayer string
+	// HostFamily pins the live host (e.g. grok_build); never transfer proofs across hosts.
+	HostFamily string
+	// HostVersion is the full CLI/version string when known.
+	HostVersion string
+	// Profile is the closed capability profile id (e.g. reinframe.grok_build_acp.v1).
+	Profile string
+	// SafeBoundary is the delivery boundary (next_input, before_tool, …).
+	SafeBoundary string
+	// TargetSessionID is the host session identity used for delivery.
+	TargetSessionID string
+	// CapsDigest is a short hash/digest of negotiated capabilities when available.
+	CapsDigest string
 }
 
-// DeliveryState is the pending-advisory lifecycle state (#68).
+// DeliveryState is the pending-advisory lifecycle state (#68 + #108 extensions).
 type DeliveryState string
 
 const (
-	StatePending     DeliveryState = "PENDING"
-	StateDelivering  DeliveryState = "DELIVERING"
-	StateAcked       DeliveryState = "ACKED"
-	StateRejected    DeliveryState = "REJECTED"
-	StateTimedOut    DeliveryState = "TIMED_OUT"
-	StateExpired     DeliveryState = "EXPIRED"
-	StateSuppressed  DeliveryState = "SUPPRESSED"
-	StateFailed      DeliveryState = "FAILED"
+	StatePending           DeliveryState = "PENDING"
+	StateDelivering        DeliveryState = "DELIVERING"
+	StateTransportAccepted DeliveryState = "TRANSPORT_ACCEPTED"
+	StateSessionVisible    DeliveryState = "SESSION_VISIBLE"
+	StateExplicitACK       DeliveryState = "EXPLICIT_ACK"
+	StateBehavioralACK     DeliveryState = "BEHAVIORAL_ACK"
+	StateAcked             DeliveryState = "ACKED" // legacy alias for EXPLICIT/final acked
+	StateRejected          DeliveryState = "REJECTED"
+	StateTimedOut          DeliveryState = "TIMED_OUT"
+	StateExpired           DeliveryState = "EXPIRED"
+	StateSuppressed        DeliveryState = "SUPPRESSED"
+	StateFailed            DeliveryState = "FAILED"
+	StateUnsupported       DeliveryState = "UNSUPPORTED"
 )
 
 // CapAdviceDelivery is the capability name required for automated advisory inject.

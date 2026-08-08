@@ -298,21 +298,21 @@ func sanitizeVersion(v string) string {
 func renderMD(report map[string]any, disp, ack, ver, osName string, reasons []string, scenarios map[string]ScenarioResult) string {
 	var b strings.Builder
 	b.WriteString("# Grok Build live control evidence (#167)\n\n")
-	b.WriteString(fmt.Sprintf("- **Disposition:** `%s`\n", disp))
-	b.WriteString(fmt.Sprintf("- **Grok version:** %s\n", ver))
-	b.WriteString(fmt.Sprintf("- **OS:** %s\n", osName))
-	b.WriteString(fmt.Sprintf("- **Strongest ACK proven:** `%s`\n", ack))
+	fmt.Fprintf(&b, "- **Disposition:** `%s`\n", disp)
+	fmt.Fprintf(&b, "- **Grok version:** %s\n", ver)
+	fmt.Fprintf(&b, "- **OS:** %s\n", osName)
+	fmt.Fprintf(&b, "- **Strongest ACK proven:** `%s`\n", ack)
 	b.WriteString("- **Auth.json read:** no\n")
 	b.WriteString("- **Explicit ACK claimed:** no\n\n")
 	b.WriteString("## Scenarios\n\n| ID | Status | Detail |\n|----|--------|--------|\n")
 	// Stable-ish order: mandatory first then rest via map iteration is fine for MD.
 	for id, sr := range scenarios {
-		b.WriteString(fmt.Sprintf("| %s | %s | %s |\n", id, sr.Status, strings.ReplaceAll(boundStr(sr.Detail, 80), "|", "/")))
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", id, sr.Status, strings.ReplaceAll(boundStr(sr.Detail, 80), "|", "/"))
 	}
 	if len(reasons) > 0 {
 		b.WriteString("\n## Limitations\n\n")
 		for _, r := range reasons {
-			b.WriteString("- " + r + "\n")
+			fmt.Fprintf(&b, "- %s\n", r)
 		}
 	}
 	b.WriteString("\n## Non-claims\n\n")

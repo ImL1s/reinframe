@@ -150,19 +150,20 @@ func DefaultLiveGrok167Pin() LiveLanePin {
 	}
 }
 
-// ValidatePartialLiveReport allows LiveHostsUsed when disposition is MORE-DATA and no ranking scores.
+// ValidatePartialLiveReport requires MORE-DATA for any live-attached partial report
+// and forbids ranking scores / explicit ACK.
 func ValidatePartialLiveReport(r CrossHostEvalReport) error {
 	if r.SchemaVersion != CrossHostReportSchema {
 		return fmt.Errorf("schema")
 	}
-	if r.Disposition != "MORE-DATA" && r.Disposition != "LIMITED-GO" && r.Disposition != "NO-GO" {
-		return fmt.Errorf("disposition")
+	if r.Lane == CrossHostLanePartialLive && !r.LiveHostsUsed {
+		return fmt.Errorf("partial live lane requires live_hosts_used")
 	}
 	if r.LiveHostsUsed && r.Disposition != "MORE-DATA" {
-		// Partial single-host live attachment must not claim LIMITED-GO ranking readiness.
-		if r.Disposition == "LIMITED-GO" {
-			return fmt.Errorf("single-host live attachment must remain MORE-DATA until matched lanes exist")
-		}
+		return fmt.Errorf("partial live single-host attachment must be MORE-DATA, got %s", r.Disposition)
+	}
+	if r.Disposition != "MORE-DATA" {
+		return fmt.Errorf("disposition must be MORE-DATA for partial-live package, got %s", r.Disposition)
 	}
 	for _, row := range r.Rows {
 		if row.ACK.Explicit != 0 {

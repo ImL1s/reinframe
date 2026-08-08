@@ -54,3 +54,12 @@ func TestValidateCrossHostReport_StillForbidsLiveInFakeCI(t *testing.T) {
 		t.Fatal("CI fake validator must reject LiveHostsUsed")
 	}
 }
+
+func TestValidatePartialLiveReport_RejectsLimitedGO(t *testing.T) {
+	t.Parallel()
+	rep := evaluation.AttachLiveGrok167Lane("c", evaluation.DefaultLiveGrok167Pin())
+	rep.Disposition = "LIMITED-GO"
+	if err := evaluation.ValidatePartialLiveReport(rep); err == nil {
+		t.Fatal("expected error for LIMITED-GO")
+	}
+}

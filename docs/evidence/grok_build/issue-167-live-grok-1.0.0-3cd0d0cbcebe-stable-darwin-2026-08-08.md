@@ -1,6 +1,6 @@
 # Grok Build live control evidence (#167)
 
-- **Reinframe commit:** `baf37870b36e49e924765f51ff32e242bb3f5e90`
+- **Reinframe commit:** `eac8480d2a5b06aa9cee2e017d50c44eab6b6b85`
 - **Starting main:** `62889cb59916fa2dd412a2c5d511c7ac7c4b23c6`
 
 - **Disposition:** `GO`

@@ -171,10 +171,11 @@
     "harness": "cmd/groklive",
     "issue": 167,
     "main_tip_note": "evidence produced against live host using shipped #165/#166 APIs",
-    "reinframe_commit": "baf37870b36e49e924765f51ff32e242bb3f5e90",
+    "reinframe_commit": "eac8480d2a5b06aa9cee2e017d50c44eab6b6b85",
     "starting_main_sha": "62889cb59916fa2dd412a2c5d511c7ac7c4b23c6",
     "grok_binary": "/Users/iml1s/.local/bin/grok",
-    "grok_version_full": "grok 1.0.0 (3cd0d0cbcebe) [stable]"
+    "grok_version_full": "grok 1.0.0 (3cd0d0cbcebe) [stable]",
+    "evidence_binding_note": "live run used harness from baf3787 plus ACP lifetime/budget fix committed as eac8480"
   },
   "scenarios": {
     "ACP-AUTH-001": {

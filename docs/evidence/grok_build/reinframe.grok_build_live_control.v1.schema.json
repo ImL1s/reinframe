@@ -1,0 +1,28 @@
+{
+  "$id": "reinframe.grok_build_live_control.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "final_disposition": {
+      "enum": [
+        "GO",
+        "LIMITED_GO",
+        "MORE_DATA",
+        "NO_GO"
+      ]
+    },
+    "scenarios": {
+      "type": "object"
+    },
+    "schema_version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "final_disposition",
+    "scenarios"
+  ],
+  "title": "Reinframe Grok Build live control evidence",
+  "type": "object"
+}

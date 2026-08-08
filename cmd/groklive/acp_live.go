@@ -40,9 +40,15 @@ func runACP(args []string) {
 		scenarios[id] = sr
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	// Overall budget covers multi-minute live session/prompt turns.
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
+	// Per-RPC budgets so a slow prompt does not starve cleanup recording.
+	rpcCtx := func(sec int) (context.Context, context.CancelFunc) {
+		return context.WithTimeout(ctx, time.Duration(sec)*time.Second)
+	}
 
+	// Start must use the long-lived parent ctx: CommandContext kills the process when ctx ends.
 	client, err := adapter.StartGrokACPClient(ctx, adapter.GrokACPConfig{
 		Executable:     grok,
 		Args:           adapter.DefaultGrokACPArgs(),
@@ -59,7 +65,9 @@ func runACP(args []string) {
 	defer func() { _ = client.Close() }()
 
 	// ACP-INIT-001
-	initRes, err := client.Initialize(ctx, map[string]any{"name": "reinframe-groklive", "version": "0"})
+	initCtx, initCancel := rpcCtx(30)
+	initRes, err := client.Initialize(initCtx, map[string]any{"name": "reinframe-groklive", "version": "0"})
+	initCancel()
 	if err != nil {
 		set("ACP-INIT-001", "FAIL", err.Error(), nil)
 		_ = saveScenarioMap(evDir, scenarios)
@@ -103,33 +111,44 @@ func runACP(args []string) {
 			if strings.Contains(s, `"token"`) || strings.Contains(strings.ToLower(s), "api_key") ||
 				strings.Contains(s, `"code"`) || strings.Contains(strings.ToLower(s), "credential") {
 				set("ACP-AUTH-001", "FAIL", "auth envelope leaked credential fields: "+s, nil)
-			} else if err := client.Authenticate(ctx, method); err != nil {
-				msg := err.Error()
-				if strings.Contains(strings.ToLower(msg), "token") && len(msg) > 80 {
-					set("ACP-AUTH-001", "FAIL", "error may echo secrets (len check)", nil)
-				} else {
-					set("ACP-AUTH-001", "FAIL", "authenticate: "+boundStr(msg, 200), nil)
-				}
 			} else {
-				set("ACP-AUTH-001", "PASS", "delegated auth methodId="+method+" headless=true no token field", nil)
+				authCtx, authCancel := rpcCtx(45)
+				err := client.Authenticate(authCtx, method)
+				authCancel()
+				if err != nil {
+					msg := err.Error()
+					if strings.Contains(strings.ToLower(msg), "token") && len(msg) > 80 {
+						set("ACP-AUTH-001", "FAIL", "error may echo secrets (len check)", nil)
+					} else {
+						set("ACP-AUTH-001", "FAIL", "authenticate: "+boundStr(msg, 200), nil)
+					}
+				} else {
+					set("ACP-AUTH-001", "PASS", "delegated auth methodId="+method+" headless=true no token field", nil)
+				}
 			}
 		}
 	}
 
 	// ACP-SESSION-001 — PASS only with correlated session/update (session_visible).
 	// Transport-only prompt success is INCONCLUSIVE (mandatory update not proven).
-	sid, err := client.SessionNew(ctx, map[string]any{"cwd": proj})
+	// session/prompt waits for agent turn completion — allow several minutes.
+	newCtx, newCancel := rpcCtx(45)
+	sid, err := client.SessionNew(newCtx, map[string]any{"cwd": proj})
+	newCancel()
 	if err != nil || sid == "" {
 		set("ACP-SESSION-001", "FAIL", fmt.Sprintf("session/new err=%v sid=%q", err, sid), nil)
 	} else {
 		body := adapter.BuildAdvicePrompt("REQUEST_REPLAN",
-			"Re-evaluate the current approach against the stated acceptance criteria.",
+			"Re-evaluate the current approach against the stated acceptance criteria. Reply with one short sentence only.",
 			"issue167-live-advice-001", "")
-		if err := client.SessionPrompt(ctx, sid, body, "issue167-live-advice-001", ""); err != nil {
+		promptCtx, promptCancel := rpcCtx(180)
+		err := client.SessionPrompt(promptCtx, sid, body, "issue167-live-advice-001", "")
+		promptCancel()
+		if err != nil {
 			set("ACP-SESSION-001", "FAIL", "session/prompt: "+err.Error(), nil)
 		} else {
 			saw := false
-			deadline := time.After(45 * time.Second)
+			deadline := time.After(90 * time.Second)
 		waitLoop:
 			for {
 				select {
@@ -166,15 +185,21 @@ func runACP(args []string) {
 			}
 		}
 
-		// ACP-OPTIONAL-001 load/cancel
+		// ACP-OPTIONAL-001 load/cancel — short budget; absence/timeout is NOT_RUN/INCONCLUSIVE not FAIL.
 		if client.Negotiated().LoadSession {
-			if err := client.SessionLoad(ctx, sid, nil); err != nil {
+			loadCtx, loadCancel := rpcCtx(30)
+			err := client.SessionLoad(loadCtx, sid, nil)
+			loadCancel()
+			if err != nil {
 				set("ACP-OPTIONAL-001", "INCONCLUSIVE", "loadSession negotiated but failed: "+err.Error(), nil)
 			} else {
 				set("ACP-OPTIONAL-001", "PASS", "session/load ok", nil)
 			}
 		} else if client.Negotiated().Cancel {
-			if err := client.Cancel(ctx, sid); err != nil {
+			canCtx, canCancel := rpcCtx(30)
+			err := client.Cancel(canCtx, sid)
+			canCancel()
+			if err != nil {
 				set("ACP-OPTIONAL-001", "INCONCLUSIVE", "cancel negotiated but failed: "+err.Error(), nil)
 			} else {
 				set("ACP-OPTIONAL-001", "PASS", "session/cancel ok", nil)
@@ -188,9 +213,11 @@ func runACP(args []string) {
 	// Durable machine suppression is #108; here we only prove second transport attempt.
 	if sid != "" {
 		body2 := adapter.BuildAdvicePrompt("REQUEST_REPLAN",
-			"Re-evaluate the current approach against the stated acceptance criteria (duplicate InterventionID).",
+			"Duplicate InterventionID proof. Reply STOP only.",
 			"issue167-live-advice-001", "")
-		err2 := client.SessionPrompt(ctx, sid, body2, "issue167-live-advice-001", "")
+		dupCtx, dupCancel := rpcCtx(120)
+		err2 := client.SessionPrompt(dupCtx, sid, body2, "issue167-live-advice-001", "")
+		dupCancel()
 		if err2 != nil {
 			set("ADVICE-DEDUP-001", "PASS", "second delivery same InterventionID rejected/errored at transport: "+boundStr(err2.Error(), 120)+"; durable dedup machine is #108", nil)
 		} else {
@@ -202,16 +229,21 @@ func runACP(args []string) {
 
 	// CHALLENGE-001 — transport challenge fields in prompt; fail if prompt errors.
 	chBody := adapter.BuildAdvicePrompt("CHALLENGE",
-		"ChallengeID=issue167-ch-001 state=pending reason=scope_check claims=replan retry_budget=1",
+		"ChallengeID=issue167-ch-001 state=pending reason=scope_check claims=replan retry_budget=1. Reply STOP only.",
 		"issue167-live-advice-002", "issue167-ch-001")
 	if sid == "" {
 		set("CHALLENGE-001", "NOT_RUN", "no session", nil)
 	} else if !strings.Contains(chBody, "issue167-ch-001") {
 		set("CHALLENGE-001", "FAIL", "ChallengeID missing from outbound prompt body", nil)
-	} else if err := client.SessionPrompt(ctx, sid, chBody, "issue167-live-advice-002", "issue167-ch-001"); err != nil {
-		set("CHALLENGE-001", "FAIL", "session/prompt challenge: "+err.Error(), nil)
 	} else {
-		set("CHALLENGE-001", "PASS", "challenge text transported with ChallengeID preserved; #131 remains authoritative; no self-authorization claimed", nil)
+		chCtx, chCancel := rpcCtx(120)
+		err := client.SessionPrompt(chCtx, sid, chBody, "issue167-live-advice-002", "issue167-ch-001")
+		chCancel()
+		if err != nil {
+			set("CHALLENGE-001", "FAIL", "session/prompt challenge: "+err.Error(), nil)
+		} else {
+			set("CHALLENGE-001", "PASS", "challenge text transported with ChallengeID preserved; #131 remains authoritative; no self-authorization claimed", nil)
+		}
 	}
 
 	// ACP-CLEANUP-001 — Close + optional PID liveness check.

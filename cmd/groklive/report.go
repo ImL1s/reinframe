@@ -237,15 +237,29 @@ func loadOptionalJSON(path string) any {
 
 func sanitizeVersion(v string) string {
 	v = strings.TrimSpace(v)
-	v = strings.ReplaceAll(v, " ", "-")
-	v = strings.ReplaceAll(v, "/", "-")
-	if len(v) > 40 {
-		v = v[:40]
+	// Keep only filename-safe characters for evidence basenames.
+	var b strings.Builder
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		case r == ' ' || r == '/' || r == '(' || r == ')' || r == '[' || r == ']':
+			b.WriteByte('-')
+		default:
+			// drop
+		}
 	}
-	if v == "" {
+	out := strings.Trim(b.String(), "-")
+	for strings.Contains(out, "--") {
+		out = strings.ReplaceAll(out, "--", "-")
+	}
+	if len(out) > 48 {
+		out = out[:48]
+	}
+	if out == "" {
 		return "unknown"
 	}
-	return v
+	return out
 }
 
 func renderMD(report map[string]any, disp, ack, ver, osName string, reasons []string, scenarios map[string]ScenarioResult) string {

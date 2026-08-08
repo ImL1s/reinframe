@@ -21,7 +21,12 @@ import (
 
 // fakeACPServer answers initialize/session/new/session/prompt and emits session/update.
 // authenticate records the request params for assertion (no credential fields allowed).
+// sessionNewSink optionally records session/new params.
 func fakeACPServer(t *testing.T, clientWrites io.Reader, clientReads io.Writer, authSink *[]map[string]any) {
+	fakeACPServerOpts(t, clientWrites, clientReads, authSink, nil)
+}
+
+func fakeACPServerOpts(t *testing.T, clientWrites io.Reader, clientReads io.Writer, authSink, sessionNewSink *[]map[string]any) {
 	t.Helper()
 	sc := bufio.NewScanner(clientWrites)
 	for sc.Scan() {
@@ -52,6 +57,10 @@ func fakeACPServer(t *testing.T, clientWrites io.Reader, clientReads io.Writer, 
 			}
 			writeRPC(clientReads, idInt, map[string]any{"ok": true})
 		case "session/new":
+			params, _ := req["params"].(map[string]any)
+			if sessionNewSink != nil {
+				*sessionNewSink = append(*sessionNewSink, params)
+			}
 			writeRPC(clientReads, idInt, map[string]any{"sessionId": "sess-1"})
 		case "session/load":
 			writeRPC(clientReads, idInt, map[string]any{"ok": true})
@@ -635,4 +644,61 @@ func containsAll(s string, parts ...string) bool {
 		}
 	}
 	return true
+}
+
+func TestGrokACP_SessionNew_DefaultsMCPServers_DoesNotMutateCaller(t *testing.T) {
+	t.Parallel()
+	var sessionNews []map[string]any
+	serverR, clientW := io.Pipe()
+	clientR, serverW := io.Pipe()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fakeACPServerOpts(t, serverR, serverW, nil, &sessionNews)
+	}()
+	c := adapter.NewGrokACPClientForTest(clientW, clientR, adapter.GrokACPConfig{
+		StartupTimeout: 5 * time.Second,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := c.Initialize(ctx, map[string]any{"name": "t"}); err != nil {
+		t.Fatal(err)
+	}
+	caller := map[string]any{"cwd": "/tmp/proj"}
+	sid, err := c.SessionNew(ctx, caller)
+	if err != nil || sid != "sess-1" {
+		t.Fatalf("sid=%s err=%v", sid, err)
+	}
+	if _, has := caller["mcpServers"]; has {
+		t.Fatalf("caller map must not be mutated: %v", caller)
+	}
+	if len(sessionNews) != 1 {
+		t.Fatalf("session/new calls=%d", len(sessionNews))
+	}
+	ms, ok := sessionNews[0]["mcpServers"].([]any)
+	if !ok {
+		// JSON unmarshaling may produce []interface{} already as []any
+		raw, _ := json.Marshal(sessionNews[0]["mcpServers"])
+		if string(raw) != "[]" {
+			t.Fatalf("want empty mcpServers list on wire, got %T %v", sessionNews[0]["mcpServers"], sessionNews[0]["mcpServers"])
+		}
+	} else if len(ms) != 0 {
+		t.Fatalf("want empty mcpServers, got %v", ms)
+	}
+	// Explicit nil params
+	sid2, err := c.SessionNew(ctx, nil)
+	if err != nil || sid2 != "sess-1" {
+		t.Fatalf("nil params sid=%s err=%v", sid2, err)
+	}
+	if len(sessionNews) < 2 {
+		t.Fatal("expected second session/new")
+	}
+	if _, ok := sessionNews[1]["mcpServers"]; !ok {
+		t.Fatalf("nil params must still send mcpServers: %v", sessionNews[1])
+	}
+	_ = c.Close()
+	_ = clientW.Close()
+	_ = serverW.Close()
+	wg.Wait()
 }

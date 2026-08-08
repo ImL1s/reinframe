@@ -355,14 +355,21 @@ func looksLikeCredentialMarker(s string) bool {
 }
 
 // SessionNew creates a session; returns session id when present.
+// When mcpServers is omitted, an empty list is sent so live Grok Build agents
+// that require the field (protocol 1) still accept session/new.
+// Caller maps are never mutated: params are shallow-copied before defaults apply.
 func (c *GrokACPClient) SessionNew(ctx context.Context, params map[string]any) (string, error) {
 	if !c.initialized() {
 		return "", fmt.Errorf("grok acp: initialize required")
 	}
-	if params == nil {
-		params = map[string]any{}
+	p := map[string]any{}
+	for k, v := range params {
+		p[k] = v
 	}
-	raw, err := c.call(ctx, "session/new", params)
+	if _, ok := p["mcpServers"]; !ok {
+		p["mcpServers"] = []any{}
+	}
+	raw, err := c.call(ctx, "session/new", p)
 	if err != nil {
 		return "", err
 	}
@@ -504,7 +511,18 @@ func (c *GrokACPClient) noteAudit(msg string) {
 	c.audit = append(c.audit, boundRunes(msg, 120))
 }
 
+// ProcessPID returns the owned process PID when StartGrokACPClient launched one.
+// Zero means no owned process (e.g. NewGrokACPClientForTest) or process already reaped.
+func (c *GrokACPClient) ProcessPID() int {
+	if c == nil || c.cmd == nil || c.cmd.Process == nil {
+		return 0
+	}
+	return c.cmd.Process.Pid
+}
+
 // Close gracefully shuts down the client and owned process tree (graceful → force).
+// Success means shutdown was attempted; callers that need orphan proof should
+// capture ProcessPID before Close and verify the PID is not alive afterward.
 func (c *GrokACPClient) Close() error {
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil

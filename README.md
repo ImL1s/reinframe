@@ -121,7 +121,7 @@ AI coding agents risk "tunneling" through cognitive lock-in, repeated errors, pa
 4. **Control-plane contracts** *(available)* — HookGate, advisory delivery + ACK, FileActuator + fakes.
 5. **M2.0 detect → defer → deliver → ACK loop** *(library + tests)* — `pkg/supervisor`.
 6. **M2.1 effort calibration** *(library)* — intake, verification churn, before-tool over-SOP denial.
-7. **M2.2 host bridges** *(experimental / observation + Ready foundations)* — Codex JSONL offline+tail (observe-only); Claude PreTool bridge; FileActuator; **#163/#165/#166** Ready for hooks/ACP foundations (not live until #164/#167/#120).
+7. **M2.2 host bridges** *(experimental / observation + Ready foundations)* — Codex JSONL offline+tail (observe-only); Claude PreTool bridge; FileActuator; **#163/#165/#166** Ready; **#167 Grok live GO** (darwin); Codex/Claude live still #164/#120.
 8. **Action Alignment classifier** *(shadow only)* — raw severity is evidence; deterministic resolver owns `ALLOW | BLOCK`.
 9. **Appealable productivity block** *(host-neutral core available in #131; live host delivery planned in #139)* — one structured justification and one semantic retry; no self-permission.
 10. **Provider/cost control** *(#132 foundation available; native adapters/cache/evaluation in #134–#141)* — native adapters, provider-aware prefix caching, exact assessment memoization, and measured evaluation.
@@ -204,7 +204,8 @@ Available:
   cross-host offline eval framework (#168 MORE-DATA)
 
 Not claimed / not proven live:
-  live Codex hooks (#164) · live Grok hooks/ACP (#167) · live Claude (#120)
+  live Codex hooks (#164) · live Claude (#120)
+  (Grok live #167 GO on darwin — see Available / status table)
   global ~/.claude silent install · process-attach daemon
   live dual-host supervision · calibrated hard-gates · native CapPause from hooks
   advice agent receipt (#108) · Claude challenge delivery (#139)
@@ -301,7 +302,7 @@ Intervention escalation after detection is a **separate axis**. See `docs/resear
 
 Contributions are welcome. Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Host foundations #163/#165/#166 and offline #168 are on main. Residual is live environment: **#164**, **#167**, **#120** → **#108**.
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Host foundations #163/#165/#166, live Grok **#167 GO**, Grok consumer **#108**, and #168 MORE-DATA (partial live Grok) are on main. Residual live environment: **#164 Codex**, **#120 Claude** (and multi-host #168 match).
 2. Do not start #139 before #120. Do not claim live host control without #164/#167/#120 evidence. Do not claim measured savings or default exact-cache enablement without separate authorization.
 3. Preserve honesty boundaries: no false provider/cache/live-host/hard-gate/ACK claims. Classifier providers ≠ coding-host adapters.
 4. Run `go test -race ./...` before submitting PRs.

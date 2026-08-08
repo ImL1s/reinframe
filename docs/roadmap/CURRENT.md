@@ -22,22 +22,22 @@
 
 ## Residual open work
 
-### Environment / live evidence
+### Environment / live evidence (still open)
 
 | Issue | Blocker | Notes |
 |-------|---------|-------|
 | **#164** | Interactive Codex + project trust | Live hooks smoke |
-| **#167** | — | **Closed GO** — live hooks+ACP evidence on main |
 | **#120** | Interactive Claude | Live Claude smoke |
 | **#139** | #120 | Claude challenge delivery |
 | **#140 Claude host lane** | #139 | Manual evidence |
 
-### Product
+### Recently closed (Grok live campaign)
 
-| Issue | Blocker | Notes |
-|-------|---------|-------|
-| **#191** | — | Grok ACP official-contract / lifecycle hardening (auth, levels, argv, Win job tree) |
-| **#108** | — | **Closed (Grok-only)** — first live consumer; multi-host not claimed |
+| Issue | Notes |
+|-------|-------|
+| **#167** | **GO** — live hooks+ACP evidence on main (`cmd/groklive`) |
+| **#108** | **Grok-only** first live advice consumer; ACK ceiling `session_visible` |
+| **#191** | Grok ACP official-contract / lifecycle hardening on main |
 
 ### Evaluation
 

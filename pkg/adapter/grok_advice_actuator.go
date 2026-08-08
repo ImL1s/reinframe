@@ -139,7 +139,8 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		base.AckLayer = ACKLayerNone
 		return base, err
 	}
-	// Transport success is not explicit ACK.
+	// Transport success is not explicit ACK. Per-delivery layer starts at transport
+	// only — never reuse client-global LastACKLayer (stale session_visible inflation).
 	base.Accepted = true
 	base.AckStatus = AckStatusPending
 	base.AckLayer = ACKLayerTransport
@@ -147,35 +148,53 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 
 	wait := g.WaitUpdate
 	if wait <= 0 {
-		// Still return transport; optional update wait skipped.
 		return base, nil
 	}
-	deadline := time.After(wait)
-	for {
+	// Only updates received *after* this SessionPrompt may upgrade this delivery.
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return base, nil
+		}
 		select {
 		case <-ctx.Done():
-			// Transport already succeeded; context end does not revoke transport layer.
-			return base, nil
-		case <-deadline:
 			return base, nil
 		case u, ok := <-g.Client.Updates():
 			if !ok {
 				return base, nil
 			}
+			if !updateMatchesTargetSession(u, g.TargetSessionID) {
+				continue
+			}
 			kind, _ := MapSessionUpdateToSummary(u)
 			if kind == "" {
 				continue
 			}
+			// kind "unknown" still proves a post-prompt session/update envelope for this session.
 			g.Client.NoteSessionVisible()
 			base.AckLayer = ACKLayerSessionVisible
-			base.Message = "session/prompt + correlated session/update; strongest ACK=session_visible; explicit not claimed"
+			base.Message = "session/prompt + post-prompt correlated session/update; strongest ACK=session_visible; explicit not claimed"
 			return base, nil
 		case <-time.After(50 * time.Millisecond):
-			if g.Client.LastACKLayer() == ACKLayerSessionVisible {
-				base.AckLayer = ACKLayerSessionVisible
-				base.Message = "session_visible via client ACK layer; explicit not claimed"
-				return base, nil
-			}
+			// Do not poll LastACKLayer — that reuses prior deliveries' session_visible.
 		}
 	}
+	return base, nil
+}
+
+// updateMatchesTargetSession accepts updates that either omit sessionId or match target.
+func updateMatchesTargetSession(u map[string]any, target string) bool {
+	if target == "" {
+		return true
+	}
+	sid, _ := u["sessionId"].(string)
+	if sid == "" {
+		if p, _ := u["params"].(map[string]any); p != nil {
+			sid, _ = p["sessionId"].(string)
+		}
+	}
+	if sid == "" {
+		return true // host omitted session id — do not reject solely for that
+	}
+	return sid == target
 }

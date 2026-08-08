@@ -215,6 +215,6 @@ func TestDefaultDeliveryMode(t *testing.T) {
 
 // Compile-time interface checks.
 var (
-	_ adapter.EventSource           = (*adapter.FakeEventSource)(nil)
-	_ adapter.InterventionActuator  = (*adapter.FakeActuator)(nil)
+	_ adapter.EventSource          = (*adapter.FakeEventSource)(nil)
+	_ adapter.InterventionActuator = (*adapter.FakeActuator)(nil)
 )

@@ -68,11 +68,9 @@ func OpenDurableAdviceLedger(path string) (*DurableAdviceLedger, error) {
 		if tr.InterventionID == "" {
 			continue
 		}
-		// Terminal or already-delivered IDs suppress re-delivery after restart.
-		switch DeliveryState(tr.ToState) {
-		case StateTransportAccepted, StateSessionVisible, StateExplicitACK, StateBehavioralACK,
-			StateAcked, StateRejected, StateTimedOut, StateExpired, StateSuppressed,
-			StateFailed, StateUnsupported, StateDelivering:
+		// Only states that prove host accepted transport (or terminal no-retry) suppress redelivery.
+		// DELIVERING alone does not suppress — crash mid-flight should allow retry.
+		if isSuppressState(DeliveryState(tr.ToState)) {
 			l.seen[tr.InterventionID] = struct{}{}
 		}
 	}
@@ -124,10 +122,21 @@ func (l *DurableAdviceLedger) Append(tr DeliveryTransition) error {
 		return err
 	}
 	l.cursor += int64(n)
-	if tr.InterventionID != "" {
+	if tr.InterventionID != "" && isSuppressState(DeliveryState(tr.ToState)) {
 		l.seen[tr.InterventionID] = struct{}{}
 	}
 	return nil
+}
+
+func isSuppressState(st DeliveryState) bool {
+	switch st {
+	case StateTransportAccepted, StateSessionVisible, StateExplicitACK, StateBehavioralACK,
+		StateAcked, StateRejected, StateTimedOut, StateExpired, StateSuppressed,
+		StateFailed, StateUnsupported:
+		return true
+	default:
+		return false
+	}
 }
 
 // Cursor returns the durable byte offset (for tests / recovery diagnostics).

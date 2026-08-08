@@ -149,8 +149,20 @@ func (q *PendingQueue) UpdateState(interventionID string, state DeliveryState, r
 	return true
 }
 
-// PendingAdvisoryID returns the InterventionID of the first PENDING or DELIVERING
-// advisory for the session, if any (for HookPolicy.PendingAdvisoryInterventionID).
+// inFlightAdvisory is true while delivery still blocks tools awaiting stronger ACK.
+func inFlightAdvisory(st DeliveryState) bool {
+	switch st {
+	case StatePending, StateDelivering, StateTransportAccepted, StateSessionVisible:
+		return true
+	default:
+		return false
+	}
+}
+
+// PendingAdvisoryID returns the InterventionID of the first in-flight advisory for
+// the session (PENDING / DELIVERING / TRANSPORT_ACCEPTED / SESSION_VISIBLE).
+// Used for HookPolicy.PendingAdvisoryInterventionID so intermediate Grok ACK
+// layers still hold tool defer until explicit ACK or terminal state.
 func (q *PendingQueue) PendingAdvisoryID(sessionID string) string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -160,20 +172,20 @@ func (q *PendingQueue) PendingAdvisoryID(sessionID string) string {
 		if item == nil {
 			continue
 		}
-		if item.State == StatePending || item.State == StateDelivering {
-			if item.State == StatePending && !item.ExpiresAt.After(now) {
-				item.State = StateExpired
-				continue
-			}
+		if item.State == StatePending && !item.ExpiresAt.After(now) {
+			item.State = StateExpired
+			continue
+		}
+		if inFlightAdvisory(item.State) {
 			return item.Intervention.InterventionID
 		}
 	}
-	// Also scan byID for DELIVERING items removed from session order.
+	// Also scan byID for in-flight items removed from session order after NextPending.
 	for _, item := range q.byID {
 		if item.Intervention.SessionID != sessionID {
 			continue
 		}
-		if item.State == StateDelivering {
+		if inFlightAdvisory(item.State) && item.State != StatePending {
 			return item.Intervention.InterventionID
 		}
 	}

@@ -245,6 +245,140 @@ func TestAdvisoryDelivery_AcknowledgeFromSessionVisible(t *testing.T) {
 	}
 }
 
+func TestGrokACPActuator_SecondDeliverStaysTransportWithoutNewUpdates(t *testing.T) {
+	t.Parallel()
+	serverR, clientW := io.Pipe()
+	clientR, serverW := io.Pipe()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fakeACPServer(t, serverR, serverW, nil)
+	}()
+	c := adapter.NewGrokACPClientForTest(clientW, clientR, adapter.GrokACPConfig{
+		StartupTimeout: 5 * time.Second,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := c.Initialize(ctx, map[string]any{"name": "t"}); err != nil {
+		t.Fatal(err)
+	}
+	sid, err := c.SessionNew(ctx, map[string]any{"cwd": "/tmp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	act := &adapter.GrokACPActuator{
+		Client:          c,
+		TargetSessionID: sid,
+		WaitUpdate:      300 * time.Millisecond,
+	}
+	// First delivery may see session_visible from fake update.
+	res1, err := act.Deliver(ctx, protocol.Intervention{
+		InterventionID: "iv-a",
+		SessionID:      "rf",
+		ActionType:     "ZOOM_OUT_PROMPT",
+		AdvicePrompt:   "first",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.LastACKLayer() != adapter.ACKLayerSessionVisible && res1.AckLayer != adapter.ACKLayerSessionVisible {
+		// Still ok if only transport — client may not have upgraded.
+		t.Logf("first layer res=%s client=%s", res1.AckLayer, c.LastACKLayer())
+	}
+	// Second delivery with WaitUpdate=0 must stay transport even when client
+	// LastACKLayer is already session_visible from a prior delivery.
+	act.WaitUpdate = 0
+	res2, err := act.Deliver(ctx, protocol.Intervention{
+		InterventionID: "iv-b",
+		SessionID:      "rf",
+		ActionType:     "ZOOM_OUT_PROMPT",
+		AdvicePrompt:   "second",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.AckLayer != adapter.ACKLayerTransport {
+		t.Fatalf("second deliver must not reuse stale client LastACK; got %s (first was %s client=%s)", res2.AckLayer, res1.AckLayer, c.LastACKLayer())
+	}
+	_ = c.Close()
+	_ = clientW.Close()
+	_ = serverW.Close()
+	wg.Wait()
+}
+
+func TestAdvisoryDelivery_LedgerSuppressesDuplicate(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	led, err := adapter.OpenDurableAdviceLedger(filepath.Join(dir, "l.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	act := &adapter.FakeActuator{AutoAck: false}
+	del, err := adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{
+		Actuator:               act,
+		SupportsAdviceDelivery: true,
+		Ledger:                 led,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iv := protocol.Intervention{
+		InterventionID: "iv-led",
+		SessionID:      "s",
+		ActionType:     "ZOOM_OUT_PROMPT",
+		AdvicePrompt:   "once",
+	}
+	del.Enqueue(iv, time.Minute)
+	item, res, err := del.DeliverPending(context.Background(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.State != adapter.StateDelivering && item.State != adapter.StateTransportAccepted && item.State != adapter.StateSessionVisible {
+		// FakeActuator AutoAck false → pending → DELIVERING
+		if item.State != adapter.StateDelivering {
+			t.Fatalf("state=%s res=%+v", item.State, res)
+		}
+	}
+	if !led.AlreadyDelivered("iv-led") {
+		// Fake maps to DELIVERING which is NOT suppress state — force record transport-accepted
+		_ = led.RecordResult(adapter.StateDelivering, "s", adapter.InterventionResult{
+			InterventionID: "iv-led",
+			AckLayer:       adapter.ACKLayerTransport,
+			AckStatus:      adapter.AckStatusPending,
+		}, adapter.StateTransportAccepted)
+	}
+	// Re-enqueue same ID is suppressed by queue; use new enqueue after forget?
+	// AlreadyDelivered path: put another PENDING clone isn't possible (queue dedupe).
+	// Simulate restart: new queue + ledger reload.
+	led2, err := adapter.OpenDurableAdviceLedger(filepath.Join(dir, "l.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	del2, err := adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{
+		Actuator:               act,
+		SupportsAdviceDelivery: true,
+		Ledger:                 led2,
+		Queue:                  adapter.NewPendingQueue(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// New queue allows re-enqueue same InterventionID as "new" only if not in byID —
+	// new queue is empty so Enqueue succeeds; DeliverPending should suppress via ledger.
+	del2.Enqueue(iv, time.Minute)
+	item2, res2, err := del2.DeliverPending(context.Background(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item2.State != adapter.StateSuppressed {
+		t.Fatalf("want SUPPRESSED got %s res=%+v", item2.State, res2)
+	}
+	if act.CallCount() != 1 {
+		t.Fatalf("actuator calls=%d want 1 (ledger suppress)", act.CallCount())
+	}
+}
+
 func TestNopAlerterStillRefusedWhenUnsupported(t *testing.T) {
 	t.Parallel()
 	del, err := adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{

@@ -167,7 +167,7 @@
   },
   "provenance": {
     "evidence_binding_note": "generated solely by cmd/groklive report; no post-hoc privacy rewrites",
-    "generated_at": "2026-08-08T05:20:30Z",
+    "generated_at": "2026-08-08T05:25:57Z",
     "goarch": "arm64",
     "goos": "darwin",
     "grok_version": "grok-1.0.0-3cd0d0cbcebe-stable",
@@ -175,7 +175,7 @@
     "harness": "cmd/groklive",
     "issue": 167,
     "main_tip_note": "evidence produced against live host using shipped #165/#166 APIs",
-    "reinframe_commit": "15ac07720b40f757ca600da511e2f4cb2df4ac5d",
+    "reinframe_commit": "5376c823fabc75b4287db1f018ead8bb42075f0d",
     "starting_main_sha": "62889cb59916fa2dd412a2c5d511c7ac7c4b23c6"
   },
   "scenarios": {

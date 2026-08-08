@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-06) — host-control foundations **#163/#165/#166** (incl. residual **#180**) + offline **#168** framework on main  
+**Status:** current (2026-08-08) — Grok live control **#167 GO** + first advice consumer **#108** + **#168 MORE-DATA** partial live pin on main  
 **Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open.
 
 ## Implemented — narrow DoD, do not reopen for the same scope
@@ -18,7 +18,7 @@
 | Codex project-local hooks | **#163** | Foundation; live **#164** |
 | Grok Build native hooks | **#165** | Foundation; host fail-open; live **#167** |
 | Grok Build ACP stdio | **#166** + residual **#180**; hardening **#191** | Foundation on main; #191 fixes delegated-auth, canonical levels, official headless argv, Windows Job Object tree; live **#167** |
-| Cross-host eval framework | **#168** offline | Fake hosts only; disposition **MORE-DATA**; issue stays open for live match |
+| Cross-host eval framework | **#168** | Fake + **partial live Grok #167 pin**; disposition **MORE-DATA**; issue stays open (Codex/Claude live missing) |
 
 ## Residual open work
 
@@ -27,7 +27,7 @@
 | Issue | Blocker | Notes |
 |-------|---------|-------|
 | **#164** | Interactive Codex + project trust | Live hooks smoke |
-| **#167** | **#191** + Authenticated Grok CLI + trust | Live hooks + ACP |
+| **#167** | — | **Closed GO** — live hooks+ACP evidence on main |
 | **#120** | Interactive Claude | Live Claude smoke |
 | **#139** | #120 | Claude challenge delivery |
 | **#140 Claude host lane** | #139 | Manual evidence |
@@ -37,13 +37,13 @@
 | Issue | Blocker | Notes |
 |-------|---------|-------|
 | **#191** | — | Grok ACP official-contract / lifecycle hardening (auth, levels, argv, Win job tree) |
-| **#108** | First of #164 \| #167 \| #120 | Real multi-host advice + honest ACK |
+| **#108** | — | **Closed (Grok-only)** — first live consumer; multi-host not claimed |
 
 ### Evaluation
 
 | Issue | Blocker | Notes |
 |-------|---------|-------|
-| **#168** live match | #164/#167/#120 matched data | Framework exists; disposition MORE-DATA |
+| **#168** live match | #164/#120 matched data | Grok live pin present; disposition **MORE-DATA**; no ranking |
 
 ### Epic
 
@@ -53,13 +53,14 @@
 
 ## Explicit non-claims
 
-- No live Codex/Grok/Claude host proof until #164/#167/#120
+- Live Grok proof present (#167); no live Codex/Claude until #164/#120
 - No fail-closed Grok hook security (host fail-open)
 - CapToolGate ≠ CapPause / Level 2
 - JSON-RPC / file append / hook exit ≠ explicit agent ACK
 - xAI classifier ≠ Grok Build host
 - No dual-host production supervision; no hard-gate; no default cache enablement
-- No cross-host tunneling ranking without matched live evidence
+- No cross-host tunneling ranking without matched multi-host live evidence
+- No Level 2 / CapPause from hooks alone; transport ≠ explicit ACK
 
 ## Evaluation artifacts
 

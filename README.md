@@ -6,14 +6,14 @@
 
 Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go.
 
-**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, **Codex JSONL observe-only + project-local hooks foundation (#163)**, **Grok Build native hooks (#165) and ACP stdio foundation (#166)**, a FileActuator advice channel, a non-enforcing Action Alignment classifier, a host-neutral appealable `BLOCK` challenge core, offline benchmarks (#140/#141/#168 frameworks), and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** live host proof (#164/#167/#120), **not** a calibrated hard-gate, and **not** a measured multi-provider cache product.
+**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, **Codex JSONL observe-only + project-local hooks foundation (#163)**, **Grok Build native hooks (#165) + ACP stdio (#166/#191) with live control evidence (#167 GO, darwin/Grok 1.0.0)**, a **first live Grok advice consumer (#108)** with honest ACK ceiling `session_visible`, a FileActuator advice channel, offline benchmarks (#140/#141/#168 frameworks; #168 MORE-DATA with one live Grok pin), and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** Codex/Claude live proof (#164/#120), **not** a calibrated hard-gate, and **not** a multi-host tunneling ranking.
 
 ## Project Status
 
 > **Phase: M1 + M2 library + host-control foundations + shadow classifier + native classifier providers + exact cache + offline evaluation**  
 > **Implemented:** provider/cache campaign (#131–#141); host foundations [#163](https://github.com/ImL1s/reinframe/issues/163)/[#165](https://github.com/ImL1s/reinframe/issues/165)/[#166](https://github.com/ImL1s/reinframe/issues/166); offline [#168](https://github.com/ImL1s/reinframe/issues/168) framework (**MORE-DATA**).  
-> **Live/environment (blocked):** [#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#167](https://github.com/ImL1s/reinframe/issues/167) Grok · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
-> **Product:** first proven live host lane → [#108](https://github.com/ImL1s/reinframe/issues/108). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) open.  
+> **Live:** [#167](https://github.com/ImL1s/reinframe/issues/167) Grok hooks+ACP **GO** (darwin) · still blocked: [#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
+> **Product:** first live host consumer [#108](https://github.com/ImL1s/reinframe/issues/108) **Grok-only** (honest ACK). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) open.  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md).
 
 ### Current dependency shape
@@ -28,15 +28,16 @@ Shipped:
   #166 Grok Build ACP stdio foundation (transport/session_visible ACK)
   #168 offline cross-host eval framework (MORE-DATA)
 
-Live / environment (blocked):
-  #164 Codex live proof · #167 Grok live proof · #120 Claude live proof
+Live / environment:
+  #167 Grok live proof GO (darwin/Grok 1.0.0; host fail-open; session_visible ACK)
+  still blocked: #164 Codex · #120 Claude
 
 Product:
-  first proven live host lane (#164 | #167 | #120) → #108
+  #108 first live Grok advice consumer (ACK ceiling session_visible; multi-host not claimed)
   #120 → #139 → #140 Claude host lane
 
 Evaluation:
-  #168 framework shipped; live matched data still open
+  #168 MORE-DATA — live Grok pin present; missing matched Codex/Claude lanes; no ranking
 ```
 
 | Component | Status |
@@ -60,7 +61,7 @@ Evaluation:
 | Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; **live #167** |
 | Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; **live #167** |
 | Live Codex hooks proof (#164) | 🔲 Open — blocked on interactive Codex + project trust |
-| Live Grok Build hooks+ACP proof (#167) | 🟡 PR evidence **GO** (darwin/Grok 1.0.0) — merge pending Superpowers/CI ([#193](https://github.com/ImL1s/reinframe/pull/193)) |
+| Live Grok Build hooks+ACP proof (#167) | ✅ **GO** — live evidence darwin/`grok 1.0.0`; host fail-open measured; ACK `session_visible` (not explicit); `cmd/groklive` |
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |
 | Claude project-local install/doctor (#106/#117) | ✅ Installer/unit + exact ownership; **not** live smoke |
 | Typed ProposedAction (#115) | ✅ ToolName ≠ Command |
@@ -81,11 +82,11 @@ Evaluation:
 | Native xAI Responses adapter (#137 / PR #156) | ✅ Classifier only — **not** Grok Build host control |
 | Exact `RawAssessment` cache + singleflight (#138 / PR #157, fix #169/#172) | ✅ Process-local; default disabled; session partition; cancel-safe + panic-safe SF; Stage-2 never cached |
 | Live Claude ALLOW/BLOCK/context smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
-| Real multi-host advice consumer / ACK (#108) | 🔲 Open — blocked until first proven live host lane (#164 \| #167 \| #120) |
+| First live Grok advice consumer / ACK (#108) | ✅ Grok-only — `GrokACPActuator` + durable ledger; strongest ACK `session_visible`; multi-host not claimed |
 | Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; blocked by #120 |
 | Challenge evaluation (#140) Lane A/B | ✅ Offline deterministic + fake-native lanes (PR #159/#160); **Claude host lane open** (needs #139) |
 | Provider/cache evaluation (#141 / PR #161, modes fix #169) | ✅ Fake-CI suite; disposition **MORE-DATA**; no default cache enablement |
-| Cross-host tunneling evaluation (#168) | ✅ Offline fake framework (MORE-DATA); **live match open** until #164/#167/#120 |
+| Cross-host tunneling evaluation (#168) | ✅ Framework + **partial live Grok pin** (MORE-DATA); missing Codex/Claude live; **no ranking** |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Core invariants

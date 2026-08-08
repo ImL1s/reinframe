@@ -1,0 +1,42 @@
+{
+  "disposition": "MORE-DATA",
+  "disposition_note": "Partial live attachment: Grok Build live control (#167) disposition=GO, strongest_ACK=session_visible. Matched live lanes still missing: Codex (#164), Claude (#120). No host/model ranking; tunneling scores remain fixture-zero. Fail-open host behavior recorded for Grok hooks; ACK layers not collapsed.",
+  "full_report_path": "docs/evidence/cross_host/issue-168-partial-live-grok-2026-08-08.report.json",
+  "lane": "cross_host_eval_partial_live",
+  "live_hosts_used": true,
+  "live_lanes": {
+    "missing": [
+      "codex_live_164",
+      "claude_live_120"
+    ],
+    "present": [
+      "grok_build_live_167"
+    ]
+  },
+  "live_pin": {
+    "host_lane": "grok_build_live_167",
+    "host_product": "Grok Build",
+    "host_version": "grok 1.0.0 (3cd0d0cbcebe) [stable]",
+    "os": "darwin",
+    "arch": "arm64",
+    "profile": "reinframe.grok_build_hooks.2026-08-06.v1 + reinframe.grok_build_acp.v1",
+    "reinframe_commit": "8772f94348cf3ba617ff118db65a4c3aa010ace5",
+    "evidence_path": "docs/evidence/grok_build/issue-167-live-grok-1.0.0-3cd0d0cbcebe-stable-darwin-2026-08-08.json",
+    "source_disposition": "GO",
+    "strongest_ack": "session_visible",
+    "hook_fail_open_proven": true,
+    "allow_deny_ok": true,
+    "acp_session_ok": true,
+    "sample_size": 1,
+    "limitations": [
+      "single OS sample (darwin/arm64)",
+      "sample size n=1 session set",
+      "no matched Codex live lane (#164 open)",
+      "no matched Claude live lane (#120 open)",
+      "no tunneling ranking"
+    ]
+  },
+  "row_count": 20,
+  "schema_version": "reinframe.cross_host_partial_live_summary.v1",
+  "tunneling_ranking": "NOT_PERFORMED"
+}

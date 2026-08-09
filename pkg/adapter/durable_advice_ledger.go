@@ -100,15 +100,11 @@ func OpenDurableAdviceLedger(path string) (*DurableAdviceLedger, error) {
 }
 
 func (l *DurableAdviceLedger) ingestJSONL(b []byte) error {
-	// Torn tail: non-empty file without trailing newline on last non-empty byte → incomplete write.
+	// Append protocol always writes JSON + '\n'. A non-empty file without a
+	// trailing newline is not safe to reopen for O_APPEND (next write glues lines).
+	// Fail closed even when the last record would otherwise parse.
 	if len(b) > 0 && b[len(b)-1] != '\n' {
-		lines := splitLines(b)
-		if len(lines) > 0 && len(lines[len(lines)-1]) > 0 {
-			var tr DeliveryTransition
-			if json.Unmarshal(lines[len(lines)-1], &tr) != nil {
-				return fmt.Errorf("%w: torn final line", ErrLedgerCorrupt)
-			}
-		}
+		return fmt.Errorf("%w: missing trailing newline (torn or incomplete append protocol)", ErrLedgerCorrupt)
 	}
 	for _, line := range splitLines(b) {
 		if len(line) == 0 {
@@ -181,7 +177,8 @@ func suppressMarkerTempName(key string) string {
 	return suppressMarkerFilename(key) + ".tmp"
 }
 
-// parseAndValidateMarkerBody validates marker bytes and returns the bound key.
+// parseAndValidateMarkerBody validates marker bytes and returns the bound key
+// in current JSON-array encoding. Does not migrate legacy pipe markers.
 func parseAndValidateMarkerBody(name, body string) (string, error) {
 	if len(body) == 0 || len(body) > maxSuppressMarkerBytes {
 		return "", fmt.Errorf("%w: marker size", ErrLedgerMarkerInvalid)
@@ -205,6 +202,68 @@ func parseAndValidateMarkerBody(name, body string) (string, error) {
 		return "", err
 	}
 	return key, nil
+}
+
+// tryParseLegacyPipeKey accepts only the pre-#212 body form intervention|session|host|fingerprint
+// when there are exactly three unescaped pipe separators (four components). Fingerprints that
+// themselves contain '|' yield Count != 3 and must fail closed for operator reconciliation.
+func tryParseLegacyPipeKey(raw string) (parts [4]string, ok bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.Count(raw, "|") != 3 {
+		return parts, false
+	}
+	p := strings.SplitN(raw, "|", 4)
+	if len(p) != 4 || p[0] == "" {
+		return parts, false
+	}
+	copy(parts[:], p)
+	return parts, true
+}
+
+// migrateLegacyPipeMarker rewrites a validated old-format marker into JSON-array form.
+// Caller must have verified name == hash(legacy body). Returns the new canonical key.
+func migrateLegacyPipeMarker(dir, legacyFull, legacyBody string, parts [4]string) (string, error) {
+	newKey := dedupeKey(parts[0], parts[1], parts[2], parts[3])
+	final := filepath.Join(dir, suppressMarkerFilename(newKey))
+	tmp := filepath.Join(dir, suppressMarkerTempName(newKey))
+	if err := os.WriteFile(tmp, []byte(newKey+"\n"), 0o600); err != nil {
+		return "", fmt.Errorf("%w: write migrated marker: %v", ErrLedgerRecoveryIncomplete, err)
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("%w: promote migrated marker: %v", ErrLedgerRecoveryIncomplete, err)
+	}
+	// Remove legacy only after new marker is durable.
+	if err := os.Remove(legacyFull); err != nil && !os.IsNotExist(err) {
+		// New marker exists; legacy left behind is redundant but open can proceed.
+		// Prefer fail-closed only if remove fails and paths collide — rare.
+		_ = err
+	}
+	return newKey, nil
+}
+
+// loadMarkerFile validates a .key (or promotes/migrates) and returns the bound key.
+func loadMarkerFile(dir, name, full string, body []byte) (string, error) {
+	// Prefer current JSON-array encoding.
+	if key, err := parseAndValidateMarkerBody(name, string(body)); err == nil {
+		return key, nil
+	}
+	// Legacy pipe-delimited body from #207–#211 (exactly three separators).
+	raw := strings.TrimSpace(string(body))
+	base := name
+	if strings.HasSuffix(name, ".tmp") {
+		base = strings.TrimSuffix(name, ".tmp")
+	}
+	// Legacy filename is hash of the raw pipe body.
+	if base != suppressMarkerFilename(raw) {
+		return "", fmt.Errorf("%w: marker not current encoding and not migratable legacy", ErrLedgerMarkerInvalid)
+	}
+	parts, ok := tryParseLegacyPipeKey(raw)
+	if !ok {
+		// Ambiguous pipe count (e.g. fingerprint contained '|') — operator must reconcile.
+		return "", fmt.Errorf("%w: legacy marker not uniquely pipe-delimited (operator reconcile)", ErrLedgerMarkerInvalid)
+	}
+	return migrateLegacyPipeMarker(dir, full, raw, parts)
 }
 
 // loadAmbiguousMarkersUnlocked reads sidecar suppress keys into seen.
@@ -247,15 +306,22 @@ func (l *DurableAdviceLedger) loadAmbiguousMarkersUnlocked() error {
 			if rerr != nil {
 				return fmt.Errorf("%w: temp marker %s: %v", ErrLedgerRecoveryIncomplete, name, rerr)
 			}
-			key, perr := parseAndValidateMarkerBody(name, string(b))
+			// Temp may be current JSON or (rare) legacy — loadMarkerFile handles both.
+			// If already current encoding, promote via rename to final name.
+			if key, err := parseAndValidateMarkerBody(name, string(b)); err == nil {
+				final := filepath.Join(dir, suppressMarkerFilename(key))
+				if err := os.Rename(full, final); err != nil {
+					return fmt.Errorf("%w: promote temp marker: %v", ErrLedgerRecoveryIncomplete, err)
+				}
+				l.seen[key] = struct{}{}
+				continue
+			}
+			key, perr := loadMarkerFile(dir, name, full, b)
 			if perr != nil {
 				return fmt.Errorf("%w: temp marker %s: %v", ErrLedgerRecoveryIncomplete, name, perr)
 			}
-			// Complete atomic promote: rename temp → final .key
-			final := filepath.Join(dir, suppressMarkerFilename(key))
-			if err := os.Rename(full, final); err != nil {
-				return fmt.Errorf("%w: promote temp marker: %v", ErrLedgerRecoveryIncomplete, err)
-			}
+			// loadMarkerFile may have written final .key; ensure temp is gone.
+			_ = os.Remove(full)
 			l.seen[key] = struct{}{}
 			continue
 		}
@@ -276,7 +342,7 @@ func (l *DurableAdviceLedger) loadAmbiguousMarkersUnlocked() error {
 		if rerr != nil {
 			return fmt.Errorf("%w: marker %s: %v", ErrLedgerRecoveryIncomplete, name, rerr)
 		}
-		key, perr := parseAndValidateMarkerBody(name, string(b))
+		key, perr := loadMarkerFile(dir, name, full, b)
 		if perr != nil {
 			return perr
 		}

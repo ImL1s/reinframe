@@ -48,6 +48,92 @@ func TestEvaluateDisposition_V2_FullGO(t *testing.T) {
 	}
 }
 
+// TestLiveGOQualification_PrivacyAndPreflight gates GO on live qualification facts.
+func TestLiveGOQualification_PrivacyAndPreflight(t *testing.T) {
+	t.Parallel()
+	cleanPrivacy := map[string]any{
+		"method":                    "best_effort_scan",
+		"auth_json_read":            false,
+		"auth_json_path_leak_suspected": false,
+		"token_fields_in_auth_envelope": false,
+		"raw_thoughts_stored":       false,
+		"secret_pattern_hits":       0,
+	}
+	caps := map[string]any{"protocol_version": 1, "auth_methods": []any{}}
+
+	// Clean path keeps GO.
+	got, msgs := liveGOQualification("GO", cleanPrivacy, caps, true, true, true, "1.0.0", "abc123")
+	if got != "GO" {
+		t.Fatalf("clean want GO got %s msgs=%v", got, msgs)
+	}
+
+	// Malformed / missing preflight.
+	got, _ = liveGOQualification("GO", cleanPrivacy, caps, true, false, false, "1.0.0", "abc")
+	if got != "NO_GO" {
+		t.Fatalf("invalid preflight want NO_GO got %s", got)
+	}
+
+	// Secret hits.
+	dirty := map[string]any{}
+	for k, v := range cleanPrivacy {
+		dirty[k] = v
+	}
+	dirty["secret_pattern_hits"] = 2
+	got, _ = liveGOQualification("GO", dirty, caps, true, true, true, "1.0.0", "abc")
+	if got != "NO_GO" {
+		t.Fatalf("secret hits want NO_GO got %s", got)
+	}
+
+	// Missing capability manifest.
+	got, _ = liveGOQualification("GO", cleanPrivacy, nil, true, true, true, "1.0.0", "abc")
+	if got != "NO_GO" {
+		t.Fatalf("missing caps want NO_GO got %s", got)
+	}
+
+	// LIMITED_GO not demoted by liveGOQualification (only GO).
+	got, _ = liveGOQualification("LIMITED_GO", dirty, nil, false, false, false, "unknown", "")
+	if got != "LIMITED_GO" {
+		t.Fatalf("LIMITED_GO should pass through got %s", got)
+	}
+}
+
+// TestEmbeddedSchema_MatchesDocsArtifact prevents embed/docs drift.
+func TestEmbeddedSchema_MatchesDocsArtifact(t *testing.T) {
+	t.Parallel()
+	path, err := committedV2SchemaFSPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emb := EmbeddedV2SchemaJSON()
+	if string(docs) != string(emb) {
+		t.Fatalf("embedded schema drifts from docs artifact (%d vs %d bytes)", len(emb), len(docs))
+	}
+	// Must compile via load path (embedded).
+	if err := validateReportAgainstCommittedSchema(map[string]any{
+		"schema_version": LiveControlSchemaV2,
+		"provenance": map[string]any{
+			"issue": 167, "generated_at": "t", "goos": "darwin", "harness": "cmd/groklive",
+		},
+		"entry_gates": map[string]any{
+			"live_flag_required": true, "auth_json_read": false, "credential_print": false,
+		},
+		"scenarios": map[string]any{
+			"HOOK-ALLOW-001": map[string]any{"id": "HOOK-ALLOW-001", "status": "PASS"},
+		},
+		"ack_layers":        map[string]any{"strongest_proven": "transport", "explicit_claimed": false},
+		"privacy_checks":    map[string]any{"method": "best_effort_scan"},
+		"limitations":       []string{},
+		"scenario_registry": []string{"HOOK-ALLOW-001"},
+		"final_disposition": "MORE_DATA",
+	}); err != nil {
+		t.Fatalf("valid minimal report against embed: %v", err)
+	}
+}
+
 func TestEvaluateDisposition_V2_HistoricalMatrixNotGO(t *testing.T) {
 	t.Parallel()
 	// Shape of historical #167 v1 evidence: core PASS but weak correlation + missing trust/static.

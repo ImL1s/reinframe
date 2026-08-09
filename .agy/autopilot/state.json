@@ -1,0 +1,18 @@
+{
+  "mode": "autopilot",
+  "active": true,
+  "current_phase": "ultragoal",
+  "phase_cycle": ["deep-interview", "ralplan", "ultragoal", "code-review", "ultraqa"],
+  "iteration": 1,
+  "goal": "Close post-#212/#213 residuals: legacy marker migrate, v2 GO privacy/preflight/capability gates, Grok pre-cancel not_sent, JSONL trailing-newline fail-closed, embedded committed schema. Ship PR, CI green, resolve review threads. Public claims stay MORE_DATA / no false GO.",
+  "handoffs": {
+    "deepInterview": ".agy/specs/2026-08-09-residuals-marker-go-gate.md",
+    "ralplan": ".agy/plans/2026-08-09-residuals-marker-go-gate.md",
+    "ultragoal": "in_progress",
+    "codeReview": ".agy/reviews/2026-08-09-residuals-marker-go-gate.md",
+    "ultraqa": ".agy/qa/2026-08-09-residuals-marker-go-gate.md"
+  },
+  "return_to_ralplan_reason": null,
+  "base_main": "26790396a08aabe239b4a7727e0c459d6eea04c8",
+  "branch": "fix/residuals-marker-migrate-go-gate-embed"
+}

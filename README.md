@@ -6,14 +6,14 @@
 
 Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go.
 
-**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, **Codex JSONL observe-only + project-local hooks foundation (#163)**, **Grok Build native hooks (#165) + ACP stdio (#166/#191) with live control evidence (#167 GO, darwin/Grok 1.0.0)**, a **first live Grok advice consumer (#108)** with honest ACK ceiling `session_visible`, a FileActuator advice channel, offline benchmarks (#140/#141/#168 frameworks; #168 MORE-DATA with one live Grok pin), and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** Codex/Claude live proof (#164/#120), **not** a calibrated hard-gate, and **not** a multi-host tunneling ranking.
+**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, **Codex JSONL observe-only + project-local hooks foundation (#163)**, **Grok Build native hooks (#165) + ACP stdio (#166/#191)** with a **historical live run** against darwin/`grok 1.0.0` (hooks + ACP paths observed; public disposition under [#199](https://github.com/ImL1s/reinframe/issues/199) requalification — **MORE_DATA**, not unconditional GO), a **merged #108 Grok advice-consumer foundation** (actuator + ledger; live end-to-end product proof open in [#200](https://github.com/ImL1s/reinframe/issues/200)), offline benchmarks (#140/#141/#168; #168 MORE-DATA), and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** Codex/Claude live proof (#164/#120), **not** a calibrated hard-gate, **not** exactly-once delivery, and **not** multi-host ranking.
 
 ## Project Status
 
 > **Phase: M1 + M2 library + host-control foundations + shadow classifier + native classifier providers + exact cache + offline evaluation**  
 > **Implemented:** provider/cache campaign (#131–#141); host foundations [#163](https://github.com/ImL1s/reinframe/issues/163)/[#165](https://github.com/ImL1s/reinframe/issues/165)/[#166](https://github.com/ImL1s/reinframe/issues/166); offline [#168](https://github.com/ImL1s/reinframe/issues/168) framework (**MORE-DATA**).  
-> **Live:** [#167](https://github.com/ImL1s/reinframe/issues/167) Grok hooks+ACP **GO** (darwin) · still blocked: [#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
-> **Product:** first live host consumer [#108](https://github.com/ImL1s/reinframe/issues/108) **Grok-only** (honest ACK). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) open.  
+> **Live:** historical Grok run exists ([#167](https://github.com/ImL1s/reinframe/issues/167) evidence); **requalification [#199](https://github.com/ImL1s/reinframe/issues/199)** → treat as **MORE_DATA** (not unconditional GO). Still blocked: [#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
+> **Product:** [#108](https://github.com/ImL1s/reinframe/issues/108) foundation merged; **live E2E / source-bound ACK / restart-safe durability** open in [#200](https://github.com/ImL1s/reinframe/issues/200). Governance [#201](https://github.com/ImL1s/reinframe/issues/201). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) open.  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md).
 
 ### Current dependency shape
@@ -25,19 +25,20 @@ Shipped:
   Codex JSONL offline/tail observation (observe-only L0)
   #163 Codex project-local hooks foundation
   #165 Grok Build native hooks foundation (host fail-open)
-  #166 Grok Build ACP stdio foundation (transport/session_visible ACK)
+  #166 Grok Build ACP stdio foundation (transport ACK; session/update observation ≠ source-correlated session_visible)
   #168 offline cross-host eval framework (MORE-DATA)
 
 Live / environment:
-  #167 Grok live proof GO (darwin/Grok 1.0.0; host fail-open; session_visible ACK)
+  #167 historical live Grok run (darwin/Grok 1.0.0) — public disposition MORE_DATA pending #199
   still blocked: #164 Codex · #120 Claude
 
 Product:
-  #108 first live Grok advice consumer (ACK ceiling session_visible; multi-host not claimed)
+  #108 Grok advice-consumer foundation (actuator+ledger); E2E product proof open in #200
   #120 → #139 → #140 Claude host lane
+  #201 governance downgrade (this wording)
 
 Evaluation:
-  #168 MORE-DATA — live Grok pin present; missing matched Codex/Claude lanes; no ranking
+  #168 MORE-DATA — historical Grok pin only; missing matched Codex/Claude; no ranking
 ```
 
 | Component | Status |
@@ -58,10 +59,10 @@ Evaluation:
 | TaskSubmitted intake mappers (#84) | ✅ Fixture/host mappers (no protocol host type names) |
 | Codex EventSource offline + near-live tail (#95/#107/#118) | ✅ Observe-only L0; collision-safe source identity |
 | Codex project-local hooks control (#163) | ✅ Foundation — project-local hooks.json install/doctor + PreTool/Permission mapping; **live proof #164** |
-| Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; **live #167** |
-| Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; **live #167** |
+| Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; historical live #167 (MORE_DATA/#199) |
+| Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; historical live #167 (MORE_DATA/#199) |
 | Live Codex hooks proof (#164) | 🔲 Open — blocked on interactive Codex + project trust |
-| Live Grok Build hooks+ACP proof (#167) | ✅ **GO** — live evidence darwin/`grok 1.0.0`; host fail-open measured; ACK `session_visible` (not explicit); `cmd/groklive` |
+| Live Grok Build hooks+ACP proof (#167) | 🟡 **Historical live run** (darwin/`grok 1.0.0`); public disposition **MORE_DATA** pending [#199](https://github.com/ImL1s/reinframe/issues/199) closed-schema requalification; transport proven; source-correlated `session_visible` / explicit not claimed |
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |
 | Claude project-local install/doctor (#106/#117) | ✅ Installer/unit + exact ownership; **not** live smoke |
 | Typed ProposedAction (#115) | ✅ ToolName ≠ Command |
@@ -82,7 +83,7 @@ Evaluation:
 | Native xAI Responses adapter (#137 / PR #156) | ✅ Classifier only — **not** Grok Build host control |
 | Exact `RawAssessment` cache + singleflight (#138 / PR #157, fix #169/#172) | ✅ Process-local; default disabled; session partition; cancel-safe + panic-safe SF; Stage-2 never cached |
 | Live Claude ALLOW/BLOCK/context smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
-| First live Grok advice consumer / ACK (#108) | ✅ Grok-only — `GrokACPActuator` + durable ledger; strongest ACK `session_visible`; multi-host not claimed |
+| Grok advice consumer foundation (#108) | 🟡 Foundation merged (`GrokACPActuator` + ledger); live E2E / source-bound ACK / restart-safe durability open in [#200](https://github.com/ImL1s/reinframe/issues/200); exactly-once not claimed |
 | Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; blocked by #120 |
 | Challenge evaluation (#140) Lane A/B | ✅ Offline deterministic + fake-native lanes (PR #159/#160); **Claude host lane open** (needs #139) |
 | Provider/cache evaluation (#141 / PR #161, modes fix #169) | ✅ Fake-CI suite; disposition **MORE-DATA**; no default cache enablement |
@@ -121,7 +122,7 @@ AI coding agents risk "tunneling" through cognitive lock-in, repeated errors, pa
 4. **Control-plane contracts** *(available)* — HookGate, advisory delivery + ACK, FileActuator + fakes.
 5. **M2.0 detect → defer → deliver → ACK loop** *(library + tests)* — `pkg/supervisor`.
 6. **M2.1 effort calibration** *(library)* — intake, verification churn, before-tool over-SOP denial.
-7. **M2.2 host bridges** *(experimental / observation + Ready foundations)* — Codex JSONL offline+tail (observe-only); Claude PreTool bridge; FileActuator; **#163/#165/#166** Ready; **#167 Grok live GO** (darwin); Codex/Claude live still #164/#120.
+7. **M2.2 host bridges** *(experimental / observation + Ready foundations)* — Codex JSONL offline+tail (observe-only); Claude PreTool bridge; FileActuator; **#163/#165/#166** Ready; **#167 historical live evidence** (requalify #199); Codex/Claude live still #164/#120.
 8. **Action Alignment classifier** *(shadow only)* — raw severity is evidence; deterministic resolver owns `ALLOW | BLOCK`.
 9. **Appealable productivity block** *(host-neutral core available in #131; live host delivery planned in #139)* — one structured justification and one semantic retry; no self-permission.
 10. **Provider/cost control** *(#132 foundation available; native adapters/cache/evaluation in #134–#141)* — native adapters, provider-aware prefix caching, exact assessment memoization, and measured evaluation.
@@ -193,8 +194,8 @@ Available:
   Detectors → Policy → Orchestrator → HookGate / queue / FileActuator|Fake
   Codex JSONL offline + tail EventSource (observe-only L0)
   Codex project-local hooks foundation (#163; live #164)
-  Grok Build native hooks foundation (#165; host fail-open; live #167)
-  Grok Build ACP stdio foundation (#166; transport/session_visible ACK; live #167)
+  Grok Build native hooks foundation (#165; host fail-open; historical live #167 / MORE_DATA #199)
+  Grok Build ACP stdio foundation (#166; transport ACK; session/update observation ≠ source-correlated session_visible; historical live #167 / MORE_DATA #199)
   Claude PreTool fixture/CLI bridge + project-local installer/unit validation
   ProposedAction, shadow classifier (Enforced=false), offline benchmark runner
   host-neutral appealable BLOCK challenge core with one-shot semantic retry
@@ -205,7 +206,7 @@ Available:
 
 Not claimed / not proven live:
   live Codex hooks (#164) · live Claude (#120)
-  (Grok live #167 GO on darwin — see Available / status table)
+  (Grok #167 historical live run on darwin — MORE_DATA pending #199)
   global ~/.claude silent install · process-attach daemon
   live dual-host supervision · calibrated hard-gates · native CapPause from hooks
   advice agent receipt (#108) · Claude challenge delivery (#139)
@@ -302,8 +303,8 @@ Intervention escalation after detection is a **separate axis**. See `docs/resear
 
 Contributions are welcome. Please:
 
-1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Host foundations #163/#165/#166, live Grok **#167 GO**, Grok consumer **#108**, and #168 MORE-DATA (partial live Grok) are on main. Residual live environment: **#164 Codex**, **#120 Claude** (and multi-host #168 match).
-2. Do not start #139 before #120. Do not claim live host control without #164/#167/#120 evidence. Do not claim measured savings or default exact-cache enablement without separate authorization.
+1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Host foundations #163/#165/#166 on main; Grok historical live evidence (#167) under **#199** requalification; #108 foundation under **#200**; governance **#201**. Residual live: **#164 Codex**, **#120 Claude**. #168 stays **MORE_DATA** (no ranking).
+2. Do not start #139 before #120. Do not claim live host control without #164 / requalified #167 (#199) / #120 evidence. Do not claim measured savings or default exact-cache enablement without separate authorization.
 3. Preserve honesty boundaries: no false provider/cache/live-host/hard-gate/ACK claims. Classifier providers ≠ coding-host adapters.
 4. Run `go test -race ./...` before submitting PRs.
 5. Project-standard PRs require multi-platform CI and independent AI review before merge.

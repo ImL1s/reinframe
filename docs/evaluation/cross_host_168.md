@@ -12,7 +12,7 @@
 **MORE-DATA** (unchanged after single live host)
 
 - Fake Codex hooks / Grok hooks / Grok ACP / Claude PreTool fixtures remain.
-- **Live Grok lane present** after #167 GO evidence (`grok 1.0.0` darwin, hooks allow/deny/fail-open, ACP `session_visible`).
+- **Historical Grok live pin present** after #167 live run (public MORE_DATA pending #199) (`grok 1.0.0` darwin, hooks allow/deny/fail-open, ACP `session_visible`).
 - Matched live lanes still missing: **#164 Codex**, **#120 Claude**.
 - **No host/model ranking**; tunneling scores stay zero.
 - ACK layers kept separate; never invent explicit ACK.
@@ -21,7 +21,7 @@
 ## Live pin (Grok #167)
 
 - Evidence: `docs/evidence/grok_build/issue-167-live-grok-1.0.0-3cd0d0cbcebe-stable-darwin-2026-08-08.json`
-- Strongest ACK: `session_visible`
+- Strongest ACK observation: post-prompt session/update (not source-correlated product claim)
 - Sample size: n=1 OS (darwin/arm64)
 - API: `evaluation.AttachLiveGrok167Lane` / `DefaultLiveGrok167Pin`
 

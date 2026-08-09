@@ -56,6 +56,10 @@ type InterventionResult struct {
 	TargetSessionID string
 	// CapsDigest is a short hash/digest of negotiated capabilities when available.
 	CapsDigest string
+	// DeliveryBoundary is the actuator-declared host-acceptance boundary (#208).
+	// When non-empty it is authoritative for durable-fail suppress decisions:
+	// not_sent | send_attempted_unknown | transport_accepted | session_visible.
+	DeliveryBoundary string
 }
 
 // DeliveryState is the pending-advisory lifecycle state (#68 + #108 extensions).

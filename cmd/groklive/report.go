@@ -46,8 +46,11 @@ func runReport(args []string) {
 		var pf map[string]any
 		if json.Unmarshal(b, &pf) != nil {
 			reasons = append(reasons, "preflight.json malformed")
-			floor = demoteFloor(floor, "NO_GO")
-			reasons = append(reasons, "malformed preflight forbids GO/LIMITED_GO")
+			// Only demote qualifying dispositions; MORE_DATA stays MORE_DATA.
+			if floor == "GO" || floor == "LIMITED_GO" {
+				floor = demoteFloor(floor, "NO_GO")
+				reasons = append(reasons, "malformed preflight forbids GO/LIMITED_GO")
+			}
 		} else {
 			preflightValid = true
 			if v, ok := pf["version"].(string); ok && v != "" {
@@ -56,20 +59,22 @@ func runReport(args []string) {
 			}
 			if usable, ok := pf["usable"].(bool); ok {
 				preflightUsable = usable
-				if !usable {
+				if !usable && (floor == "GO" || floor == "LIMITED_GO") {
 					floor = demoteFloor(floor, "NO_GO")
 					reasons = append(reasons, "preflight usable=false forbids GO/LIMITED_GO")
 				}
-			} else {
+			} else if floor == "GO" || floor == "LIMITED_GO" {
 				floor = demoteFloor(floor, "NO_GO")
 				reasons = append(reasons, "preflight missing usable forbids GO/LIMITED_GO")
 			}
 		}
 	} else {
-		// Missing preflight is a qualification failure for both GO and LIMITED_GO.
-		reasons = append(reasons, "preflight.json missing")
-		floor = demoteFloor(floor, "NO_GO")
-		reasons = append(reasons, "missing preflight forbids GO/LIMITED_GO")
+		// Missing preflight forbids GO/LIMITED_GO only; incomplete MORE_DATA remains MORE_DATA.
+		if floor == "GO" || floor == "LIMITED_GO" {
+			reasons = append(reasons, "preflight.json missing")
+			floor = demoteFloor(floor, "NO_GO")
+			reasons = append(reasons, "missing preflight forbids GO/LIMITED_GO")
+		}
 	}
 
 	osName := runtime.GOOS
@@ -92,7 +97,7 @@ func runReport(args []string) {
 	disp = demoteFloor(floor, disp)
 
 	// Live qualification for GO and LIMITED_GO alike (#215).
-	if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, commit, commitSrc); demote != disp {
+	if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, commit, commitSrc, dirty); demote != disp {
 		disp = demote
 		reasons = append(reasons, msgs...)
 	}
@@ -155,7 +160,7 @@ func runReport(args []string) {
 		disp = demoteFloor(floor, disp2)
 		reasons = append(reasons, reasons2...)
 		reasons = append(reasons, verrs...)
-		if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, commit, commitSrc); demote != disp {
+		if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, commit, commitSrc, dirty); demote != disp {
 			disp = demote
 			reasons = append(reasons, msgs...)
 		}
@@ -225,7 +230,7 @@ func demoteFloor(floor, candidate string) string {
 }
 
 // liveQualification applies hard live-qualification gates for GO and LIMITED_GO (#215).
-func liveQualification(disp string, privacy map[string]any, caps any, scenarios map[string]ScenarioResult, preflightPresent, preflightValid, preflightUsable bool, ver, commit, commitSrc string) (string, []string) {
+func liveQualification(disp string, privacy map[string]any, caps any, scenarios map[string]ScenarioResult, preflightPresent, preflightValid, preflightUsable bool, ver, commit, commitSrc string, dirty bool) (string, []string) {
 	if disp != "GO" && disp != "LIMITED_GO" {
 		return disp, nil
 	}
@@ -241,6 +246,9 @@ func liveQualification(disp string, privacy map[string]any, caps any, scenarios 
 	}
 	if commit == "" || commitSrc == "unknown" {
 		msgs = append(msgs, "qualification requires binary-bound reinframe_commit")
+	}
+	if dirty {
+		msgs = append(msgs, "qualification forbids dirty (modified) binary worktree")
 	}
 	// Privacy complete-or-fail
 	if privacy == nil {

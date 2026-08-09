@@ -300,13 +300,17 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 					if err == nil {
 						err = fmt.Errorf("%w: ledger=%v marker=%v", ErrDurableWriteFailed, lerr, serr)
 					} else {
-						err = fmt.Errorf("%w: %v; durable_write_failed ledger=%v marker=%v", err, ErrDurableWriteFailed, lerr, serr)
+						err = fmt.Errorf("%w: %v: ledger=%v marker=%v", ErrDurableWriteFailed, err, lerr, serr)
 					}
 					return &out, res, err
 				}
 			}
+			// Always surface ErrDurableWriteFailed even when Deliver also failed
+			// (e.g. Grok SessionPrompt error + poisoned ledger).
 			if err == nil {
 				err = fmt.Errorf("%w: %v", ErrDurableWriteFailed, lerr)
+			} else {
+				err = fmt.Errorf("%w: %v: %v", ErrDurableWriteFailed, err, lerr)
 			}
 			return &out, res, err
 		}

@@ -130,10 +130,11 @@ func (l *DurableAdviceLedger) ingestJSONL(b []byte) error {
 }
 
 // validateTransitionSemantic rejects parseable-but-invalid records that would
-// silently erase suppress knowledge (unknown schema/state, empty identity).
+// silently erase suppress knowledge (missing/unknown schema/state, empty identity).
+// Schema must be exactly reinframe.advice_delivery.v1 — empty/omitted is corrupt on ingest.
 func validateTransitionSemantic(tr DeliveryTransition) error {
-	if tr.Schema != "" && tr.Schema != adviceLedgerSchemaV1 {
-		return fmt.Errorf("%w: unknown schema %q", ErrLedgerCorrupt, tr.Schema)
+	if tr.Schema != adviceLedgerSchemaV1 {
+		return fmt.Errorf("%w: missing or unknown schema %q", ErrLedgerCorrupt, tr.Schema)
 	}
 	if tr.ToState == "" {
 		return fmt.Errorf("%w: empty to_state", ErrLedgerCorrupt)

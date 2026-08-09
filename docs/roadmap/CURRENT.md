@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-08) — Grok live control **#167 GO** + first advice consumer **#108** + **#168 MORE-DATA** partial live pin on main  
+**Status:** current (2026-08-09) — Grok **historical live evidence** (#167) under **#199** requalification (public **MORE_DATA**); **#108** foundation only (**#200** open); **#168 MORE-DATA**; governance **#201**  
 **Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open.
 
 ## Implemented — narrow DoD, do not reopen for the same scope
@@ -18,7 +18,7 @@
 | Codex project-local hooks | **#163** | Foundation; live **#164** |
 | Grok Build native hooks | **#165** | Foundation; host fail-open; live **#167** |
 | Grok Build ACP stdio | **#166** + residual **#180**; hardening **#191** | Foundation on main; #191 fixes delegated-auth, canonical levels, official headless argv, Windows Job Object tree; live **#167** |
-| Cross-host eval framework | **#168** | Fake + **partial live Grok #167 pin**; disposition **MORE-DATA**; issue stays open (Codex/Claude live missing) |
+| Cross-host eval framework | **#168** | Fake + historical Grok pin; disposition **MORE-DATA**; no ranking; open until matched Codex/Claude live |
 
 ## Residual open work
 
@@ -31,13 +31,14 @@
 | **#139** | #120 | Claude challenge delivery |
 | **#140 Claude host lane** | #139 | Manual evidence |
 
-### Recently closed (Grok live campaign)
+### Recently merged (Grok campaign) — claims bounded by residual issues
 
 | Issue | Notes |
 |-------|-------|
-| **#167** | **GO** — live hooks+ACP evidence on main (`cmd/groklive`) |
-| **#108** | **Grok-only** first live advice consumer; ACK ceiling `session_visible` |
+| **#167** / PR #193 | Historical live harness + v1 evidence on main; **unconditional GO withdrawn** pending **#199** |
+| **#108** / PR #194 | Foundation consumer/ledger on main; **live product complete withdrawn** pending **#200** |
 | **#191** | Grok ACP official-contract / lifecycle hardening on main |
+| **#201** | Immediate public-status downgrade (this wording) |
 
 ### Evaluation
 
@@ -53,7 +54,7 @@
 
 ## Explicit non-claims
 
-- Live Grok proof present (#167); no live Codex/Claude until #164/#120
+- Historical Grok live run present (#167 v1); public disposition MORE_DATA until #199; no live Codex/Claude until #164/#120
 - No fail-closed Grok hook security (host fail-open)
 - CapToolGate ≠ CapPause / Level 2
 - JSON-RPC / file append / hook exit ≠ explicit agent ACK
@@ -61,6 +62,8 @@
 - No dual-host production supervision; no hard-gate; no default cache enablement
 - No cross-host tunneling ranking without matched multi-host live evidence
 - No Level 2 / CapPause from hooks alone; transport ≠ explicit ACK
+- No source-correlated session_visible or explicit ACK without #199/#200
+- No exactly-once delivery claim
 
 ## Evaluation artifacts
 

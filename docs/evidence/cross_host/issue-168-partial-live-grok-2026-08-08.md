@@ -10,3 +10,5 @@
 - **Hook fail-open:** proven live
 
 Do not publish host quality rankings from this package.
+
+**Governance (2026-08-09):** Grok pin remains historical under #199 requalification; public Grok disposition is MORE_DATA (#201). #108 live E2E product proof is open in #200.

@@ -77,7 +77,9 @@ grok --no-auto-update -p <PROMPT> --output-format streaming-json
 - Never read/write/log `~/.grok/auth.json`
 - No CapPause / Level 2 unless canonical evaluator says so from full mask
 - Hooks remain #165; composition is optional
-- Live proof **#167 GO** (darwin/`grok 1.0.0`); harness `cmd/groklive`; first consumer **#108** (ACK session_visible)
+- Historical live run under **#167** (darwin/`grok 1.0.0`, harness `cmd/groklive`); public disposition **MORE_DATA** pending **#199** requalification
+- **#108** foundation consumer merged; live E2E / source-bound ACK open in **#200**
+- Transport proven; source-correlated `session_visible` and explicit ACK **not** claimed for current Grok profile
 
 ## Process safety
 

@@ -64,6 +64,12 @@
         },
         "schema_note": {
           "type": "string"
+        },
+        "reinframe_dirty": {
+          "type": "boolean"
+        },
+        "reinframe_commit_src": {
+          "type": "string"
         }
       }
     },
@@ -139,7 +145,31 @@
     "process_cleanup": {
       "$ref": "#/$defs/scenario_map"
     },
-    "capability_manifests": {},
+    "capability_manifests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pre_handshake",
+        "post_handshake",
+        "auth_methods",
+        "caps_digest"
+      ],
+      "properties": {
+        "pre_handshake": {
+          "type": "object"
+        },
+        "post_handshake": {
+          "type": "object"
+        },
+        "auth_methods": {
+          "type": "array"
+        },
+        "caps_digest": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "privacy_checks": {
       "type": "object",
       "additionalProperties": false,
@@ -167,6 +197,27 @@
         },
         "error": {
           "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "files_seen": {
+          "type": "integer"
+        },
+        "files_scanned": {
+          "type": "integer"
+        },
+        "files_skipped": {
+          "type": "integer"
+        },
+        "bytes_scanned": {
+          "type": "integer"
+        },
+        "failure_classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },

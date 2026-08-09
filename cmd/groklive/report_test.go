@@ -48,52 +48,179 @@ func TestEvaluateDisposition_V2_FullGO(t *testing.T) {
 	}
 }
 
-// TestLiveGOQualification_PrivacyAndPreflight gates GO on live qualification facts.
-func TestLiveGOQualification_PrivacyAndPreflight(t *testing.T) {
-	t.Parallel()
-	cleanPrivacy := map[string]any{
-		"method":                    "best_effort_scan",
-		"auth_json_read":            false,
-		"auth_json_path_leak_suspected": false,
-		"token_fields_in_auth_envelope": false,
-		"raw_thoughts_stored":       false,
-		"secret_pattern_hits":       0,
+func cleanPrivacyScan() map[string]any {
+	return map[string]any{
+		"method":                                    "complete_or_fail_flat_scan",
+		"complete":                                  true,
+		"files_seen":                                2,
+		"files_scanned":                             2,
+		"files_skipped":                             0,
+		"bytes_scanned":                             100,
+		"auth_json_read":                            false,
+		"auth_json_path_leak_suspected":             false,
+		"token_fields_in_auth_envelope":             false,
+		"raw_thoughts_stored":                       false,
+		"secret_pattern_hits":                       0,
+		"failure_classes":                           []string{},
 	}
-	caps := map[string]any{"protocol_version": 1, "auth_methods": []any{}}
+}
 
-	// Clean path keeps GO.
-	got, msgs := liveGOQualification("GO", cleanPrivacy, caps, true, true, true, "1.0.0", "abc123")
+func validCaps() map[string]any {
+	return map[string]any{
+		"pre_handshake":  map[string]any{"protocolVersion": 1},
+		"post_handshake": map[string]any{"agentName": "grok"},
+		"auth_methods":   []any{map[string]any{"id": "delegated"}},
+		"caps_digest":    "abc",
+	}
+}
+
+// TestLiveQualification_PrivacyAndPreflight gates GO and LIMITED_GO (#215).
+func TestLiveQualification_PrivacyAndPreflight(t *testing.T) {
+	t.Parallel()
+	sc := fullGOScenarios()
+	priv := cleanPrivacyScan()
+	caps := validCaps()
+
+	got, msgs := liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", "deadbeef", "vcs")
 	if got != "GO" {
 		t.Fatalf("clean want GO got %s msgs=%v", got, msgs)
 	}
 
-	// Malformed / missing preflight.
-	got, _ = liveGOQualification("GO", cleanPrivacy, caps, true, false, false, "1.0.0", "abc")
+	// LIMITED_GO also gated.
+	got, _ = liveQualification("LIMITED_GO", priv, caps, sc, true, false, false, "1.0.0", "deadbeef", "vcs")
 	if got != "NO_GO" {
-		t.Fatalf("invalid preflight want NO_GO got %s", got)
+		t.Fatalf("invalid preflight on LIMITED_GO want NO_GO got %s", got)
 	}
 
-	// Secret hits.
-	dirty := map[string]any{}
-	for k, v := range cleanPrivacy {
-		dirty[k] = v
-	}
-	dirty["secret_pattern_hits"] = 2
-	got, _ = liveGOQualification("GO", dirty, caps, true, true, true, "1.0.0", "abc")
+	// Incomplete privacy.
+	inc := cleanPrivacyScan()
+	inc["complete"] = false
+	inc["files_skipped"] = 1
+	got, _ = liveQualification("GO", inc, caps, sc, true, true, true, "1.0.0", "deadbeef", "vcs")
 	if got != "NO_GO" {
-		t.Fatalf("secret hits want NO_GO got %s", got)
+		t.Fatalf("incomplete privacy want NO_GO got %s", got)
 	}
 
-	// Missing capability manifest.
-	got, _ = liveGOQualification("GO", cleanPrivacy, nil, true, true, true, "1.0.0", "abc")
+	// Scalar caps rejected.
+	got, _ = liveQualification("GO", priv, "", sc, true, true, true, "1.0.0", "deadbeef", "vcs")
 	if got != "NO_GO" {
-		t.Fatalf("missing caps want NO_GO got %s", got)
+		t.Fatalf("scalar caps want NO_GO got %s", got)
 	}
 
-	// LIMITED_GO not demoted by liveGOQualification (only GO).
-	got, _ = liveGOQualification("LIMITED_GO", dirty, nil, false, false, false, "unknown", "")
-	if got != "LIMITED_GO" {
-		t.Fatalf("LIMITED_GO should pass through got %s", got)
+	// Ambient commit unknown source rejected.
+	got, _ = liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", "deadbeef", "unknown")
+	if got != "NO_GO" {
+		t.Fatalf("unknown commit src want NO_GO got %s", got)
+	}
+}
+
+func TestDemoteFloor_NeverPromotes(t *testing.T) {
+	t.Parallel()
+	if demoteFloor("NO_GO", "LIMITED_GO") != "NO_GO" {
+		t.Fatal("must not promote NO_GO to LIMITED_GO")
+	}
+	if demoteFloor("MORE_DATA", "GO") != "MORE_DATA" {
+		t.Fatal("must not promote MORE_DATA to GO")
+	}
+	if demoteFloor("GO", "LIMITED_GO") != "LIMITED_GO" {
+		t.Fatal("must demote GO to LIMITED_GO")
+	}
+}
+
+func TestScanPrivacy_NestedDirIncomplete(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.json"), []byte(`{"ok":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := scanPrivacy(dir)
+	if p["complete"] == true {
+		t.Fatalf("nested dir must make complete=false: %+v", p)
+	}
+}
+
+func TestScanPrivacy_OversizedIncomplete(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	big := make([]byte, maxPrivacyFileBytes+1)
+	for i := range big {
+		big[i] = 'x'
+	}
+	if err := os.WriteFile(filepath.Join(dir, "big.bin"), big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := scanPrivacy(dir)
+	if p["complete"] == true {
+		t.Fatalf("oversized must make complete=false: %+v", p)
+	}
+}
+
+func TestValidateCapabilityManifest_RejectsArbitrary(t *testing.T) {
+	t.Parallel()
+	sc := fullGOScenarios()
+	if err := validateCapabilityManifest(map[string]any{"x": 1}, sc); err == nil {
+		t.Fatal("arbitrary object must fail")
+	}
+	if err := validateCapabilityManifest(false, sc); err == nil {
+		t.Fatal("scalar must fail")
+	}
+	if err := validateCapabilityManifest(validCaps(), sc); err != nil {
+		t.Fatalf("valid caps: %v", err)
+	}
+}
+
+func TestGitHEAD_IsEmptyNotAmbient(t *testing.T) {
+	t.Parallel()
+	// gitHEAD must not expose ambient CWD HEAD for qualification.
+	if gitHEAD() != "" {
+		t.Fatalf("gitHEAD must be empty for binary-bound provenance; got %q", gitHEAD())
+	}
+	rev, _, src := reinframeBuildIdentity()
+	// In tests, VCS info may be present when built with -buildvcs.
+	if src == "unknown" && rev != "" {
+		t.Fatal("unknown source must not invent revision")
+	}
+}
+
+// TestMonotonicFloor_StaticPermRecomputeCannotPromote models the #214 bug:
+// preflight demotion then STATIC-PERM recompute must not revive LIMITED_GO.
+func TestMonotonicFloor_StaticPermRecomputeCannotPromote(t *testing.T) {
+	t.Parallel()
+	// Historical weak matrix → LIMITED_GO or MORE_DATA from scenarios alone.
+	hist := map[string]ScenarioResult{
+		"HOOK-ALLOW-001":  {ID: "HOOK-ALLOW-001", Status: "PASS"},
+		"HOOK-DENY-001":   {ID: "HOOK-DENY-001", Status: "PASS", DenyDirectProof: false},
+		"HOOK-FAIL-001":   {ID: "HOOK-FAIL-001", Status: "PASS", FailOpenInvoked: false, HostOutcome: "host_fail_open"},
+		"HOOK-FAIL-002":   {ID: "HOOK-FAIL-002", Status: "PASS", FailOpenInvoked: false, HostOutcome: "host_fail_open"},
+		"HOOK-FAIL-003":   {ID: "HOOK-FAIL-003", Status: "PASS", FailOpenInvoked: false, HostOutcome: "host_fail_open"},
+		"HOOK-FAIL-004":   {ID: "HOOK-FAIL-004", Status: "PASS", FailOpenInvoked: false, HostOutcome: "host_fail_open"},
+		"ACP-INIT-001":    {ID: "ACP-INIT-001", Status: "PASS"},
+		"ACP-AUTH-001":    {ID: "ACP-AUTH-001", Status: "PASS"},
+		"ACP-SESSION-001": {ID: "ACP-SESSION-001", Status: "PASS", SessionCorrelated: false, ACKLayer: "session_visible"},
+		"ACP-CLEANUP-001": {ID: "ACP-CLEANUP-001", Status: "PASS"},
+	}
+	// Simulate: first evaluate, then preflight missing demotes to NO_GO
+	disp, _ := evaluateDisposition(hist)
+	floor := demoteFloor(disp, "NO_GO") // missing preflight
+	// Then STATIC-PERM insert + re-evaluate (old bug path)
+	hist["STATIC-PERM-001"] = ScenarioResult{ID: "STATIC-PERM-001", Status: "NOT_RUN"}
+	disp2, _ := evaluateDisposition(hist)
+	// Without floor, disp2 might be LIMITED_GO; with floor must stay NO_GO
+	final := demoteFloor(floor, disp2)
+	if final == "LIMITED_GO" || final == "GO" {
+		t.Fatalf("must not re-promote to %s after preflight floor NO_GO", final)
+	}
+	// liveQualification also blocks LIMITED_GO without valid preflight
+	got, _ := liveQualification(disp2, cleanPrivacyScan(), validCaps(), hist, false, false, false, "unknown", "", "unknown")
+	if got == "LIMITED_GO" || got == "GO" {
+		t.Fatalf("qualification must demote LIMITED_GO/GO without preflight; got %s", got)
+	}
+	// mandatory_ok would be false for NO_GO
+	if final != "NO_GO" && got != "NO_GO" {
+		t.Fatalf("expected NO_GO path floor=%s qual=%s", final, got)
 	}
 }
 

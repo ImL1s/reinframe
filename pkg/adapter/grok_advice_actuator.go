@@ -137,10 +137,11 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 	}
 	prompt := BuildAdvicePrompt(kind, body, intervention.InterventionID, "")
 	if err := ctx.Err(); err != nil {
+		// Pre-SessionPrompt cancel: host never saw the prompt (#208 residual).
 		base.Accepted = false
 		base.AckStatus = AckStatusTimedOut
 		base.ErrorClass = ErrorClassTimeout
-		base.DeliveryBoundary = BoundarySendAttemptedUnknown
+		base.DeliveryBoundary = BoundaryNotSent
 		base.Message = "context done before deliver"
 		return base, err
 	}

@@ -26,27 +26,53 @@ func runReport(args []string) {
 
 	ver := "unknown"
 	verFull := ""
+	preflightPresent := false
+	preflightValid := false
+	preflightUsable := false
 	if b, err := os.ReadFile(filepath.Join(evDir, "preflight.json")); err == nil {
+		preflightPresent = true
 		var pf map[string]any
-		if json.Unmarshal(b, &pf) == nil {
+		if json.Unmarshal(b, &pf) != nil {
+			// Malformed preflight must not leave GO standing.
+			reasons = append(reasons, "preflight.json malformed")
+			if disp == "GO" || disp == "LIMITED_GO" {
+				disp = "NO_GO"
+				reasons = append(reasons, "malformed preflight forbids GO/LIMITED_GO")
+			}
+		} else {
+			preflightValid = true
 			if v, ok := pf["version"].(string); ok && v != "" {
 				verFull = strings.TrimSpace(v)
 				ver = sanitizeVersion(v)
 			}
-			if usable, ok := pf["usable"].(bool); ok && !usable && disp != "NO_GO" {
-				disp = "MORE_DATA"
-				reasons = append(reasons, "preflight usable=false")
+			if usable, ok := pf["usable"].(bool); ok {
+				preflightUsable = usable
+				if !usable && disp != "NO_GO" {
+					if disp == "GO" {
+						disp = "NO_GO"
+						reasons = append(reasons, "preflight usable=false forbids GO")
+					} else {
+						disp = "MORE_DATA"
+						reasons = append(reasons, "preflight usable=false")
+					}
+				}
+			} else if disp == "GO" {
+				disp = "NO_GO"
+				reasons = append(reasons, "preflight missing usable forbids GO")
 			}
 		}
 	} else if disp == "GO" || disp == "LIMITED_GO" {
-		// Missing preflight provenance is not a false GO for live control.
 		reasons = append(reasons, "preflight.json missing")
 		if disp == "GO" {
-			disp = "LIMITED_GO"
+			disp = "NO_GO"
+			reasons = append(reasons, "missing preflight forbids GO")
+		} else {
+			disp = "MORE_DATA"
 		}
 	}
 	osName := runtime.GOOS
 	day := time.Now().UTC().Format("2006-01-02")
+	head := gitHEAD()
 
 	ack := "transport"
 	if sr, ok := scenarios["ACP-SESSION-001"]; ok && sr.ACKLayer != "" {
@@ -69,6 +95,14 @@ func runReport(args []string) {
 		sessCorr = sr.SessionCorrelated && sr.ACKLayer == "session_visible"
 	}
 
+	caps := loadOptionalJSON(filepath.Join(evDir, "acp_manifest.json"))
+
+	// Live GO qualification: privacy + provenance + capability hard gates.
+	if demote, msgs := liveGOQualification(disp, privacy, caps, preflightPresent, preflightValid, preflightUsable, ver, head); demote != disp {
+		disp = demote
+		reasons = append(reasons, msgs...)
+	}
+
 	report := map[string]any{
 		"schema_version": LiveControlSchemaV2,
 		"provenance": map[string]any{
@@ -78,7 +112,7 @@ func runReport(args []string) {
 			"goarch":                runtime.GOARCH,
 			"grok_version":          ver,
 			"grok_version_full":     verFull,
-			"reinframe_commit":      gitHEAD(),
+			"reinframe_commit":      head,
 			"starting_main_sha":     "62889cb59916fa2dd412a2c5d511c7ac7c4b23c6",
 			"main_tip_note":         "evidence produced against live host using shipped #165/#166 APIs; v2 gates (#199)",
 			"harness":               "cmd/groklive",
@@ -106,7 +140,7 @@ func runReport(args []string) {
 			"note":              "JSON-RPC success is transport; session_visible only when SessionCorrelated; explicit never from transport alone",
 		},
 		"process_cleanup":      pick(scenarios, "ACP-CLEANUP-001"),
-		"capability_manifests": loadOptionalJSON(filepath.Join(evDir, "acp_manifest.json")),
+		"capability_manifests": caps,
 		"privacy_checks":       privacy,
 		"limitations":          reasons,
 		"scenarios":            scenarios,
@@ -118,6 +152,11 @@ func runReport(args []string) {
 		disp2, reasons2 := evaluateDisposition(scenarios)
 		disp = disp2
 		reasons = append(reasons2, verrs...)
+		// Re-apply live GO qualification after recompute.
+		if demote, msgs := liveGOQualification(disp, privacy, caps, preflightPresent, preflightValid, preflightUsable, ver, head); demote != disp {
+			disp = demote
+			reasons = append(reasons, msgs...)
+		}
 		report["final_disposition"] = disp
 		report["limitations"] = reasons
 		if disp == "GO" || disp == "LIMITED_GO" {
@@ -130,7 +169,6 @@ func runReport(args []string) {
 	}
 
 	// Fail-closed committed schema gate before disk write (#209 residual).
-	// Convert scenarios to plain maps for JSON schema (struct tags).
 	if err := validateReportAgainstCommittedSchema(report); err != nil {
 		reasons = append(reasons, "committed_schema: "+err.Error())
 		if disp == "GO" || disp == "LIMITED_GO" {
@@ -162,8 +200,9 @@ func runReport(args []string) {
 		fail(err)
 	}
 
+	// Emit the same embedded committed schema bytes (no dynamic rebuild drift).
 	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v2.schema.json")
-	_ = writeJSON(schemaPath, closedSchemaV2())
+	_ = os.WriteFile(schemaPath, EmbeddedV2SchemaJSON(), 0o600)
 
 	printJSON(map[string]any{
 		"ok":           true,
@@ -175,6 +214,72 @@ func runReport(args []string) {
 	})
 	if disp == "NO_GO" {
 		os.Exit(1)
+	}
+}
+
+// liveGOQualification applies hard live-qualification gates for GO disposition.
+// Returns possibly demoted disposition and reason messages.
+func liveGOQualification(disp string, privacy map[string]any, caps any, preflightPresent, preflightValid, preflightUsable bool, ver, head string) (string, []string) {
+	if disp != "GO" {
+		return disp, nil
+	}
+	var msgs []string
+	// Provenance
+	if !preflightPresent || !preflightValid {
+		msgs = append(msgs, "GO requires valid preflight.json")
+	}
+	if !preflightUsable {
+		msgs = append(msgs, "GO requires preflight.usable=true")
+	}
+	if ver == "" || ver == "unknown" {
+		msgs = append(msgs, "GO requires non-empty grok_version")
+	}
+	if head == "" {
+		msgs = append(msgs, "GO requires reinframe_commit (git HEAD)")
+	}
+	// Privacy hard fails
+	if privacy == nil {
+		msgs = append(msgs, "GO requires completed privacy scan")
+	} else {
+		if v, ok := privacy["secret_pattern_hits"].(int); ok && v > 0 {
+			msgs = append(msgs, "GO requires secret_pattern_hits==0")
+		} else if vf, ok := privacy["secret_pattern_hits"].(float64); ok && vf > 0 {
+			msgs = append(msgs, "GO requires secret_pattern_hits==0")
+		}
+		if b, ok := privacy["auth_json_path_leak_suspected"].(bool); ok && b {
+			msgs = append(msgs, "GO forbids auth_json_path_leak_suspected")
+		}
+		if b, ok := privacy["token_fields_in_auth_envelope"].(bool); ok && b {
+			msgs = append(msgs, "GO forbids token_fields_in_auth_envelope")
+		}
+		if b, ok := privacy["raw_thoughts_stored"].(bool); ok && b {
+			msgs = append(msgs, "GO forbids raw_thoughts_stored")
+		}
+		if _, ok := privacy["error"]; ok {
+			msgs = append(msgs, "GO requires privacy scan without error")
+		}
+	}
+	// Capability manifest present and non-empty for GO.
+	if !capabilityManifestPresent(caps) {
+		msgs = append(msgs, "GO requires capability_manifests present")
+	}
+	if len(msgs) > 0 {
+		return "NO_GO", msgs
+	}
+	return disp, nil
+}
+
+func capabilityManifestPresent(caps any) bool {
+	if caps == nil {
+		return false
+	}
+	switch c := caps.(type) {
+	case map[string]any:
+		return len(c) > 0
+	case []any:
+		return len(c) > 0
+	default:
+		return true
 	}
 }
 

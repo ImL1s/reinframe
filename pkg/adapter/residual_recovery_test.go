@@ -109,6 +109,49 @@ func TestOpen_JSONL_UnknownSchema_FailClosed(t *testing.T) {
 	}
 }
 
+// TestOpen_JSONL_EmptyOrMissingSchema_FailClosed: empty/omitted schema cannot
+// silently load suppress knowledge (AC3 / skeptic residual after #212).
+func TestOpen_JSONL_EmptyOrMissingSchema_FailClosed(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"empty", "omitted"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "advice.jsonl")
+			rec := map[string]any{
+				"intervention_id": "iv-suppress",
+				"session_id":      "sess-s",
+				"to_state":        "TRANSPORT_ACCEPTED",
+				"host_family":     "h",
+				"fingerprint":     "fp",
+			}
+			if name == "empty" {
+				rec["schema"] = ""
+			}
+			// omitted: no schema key at all
+			line, err := json.Marshal(rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, append(line, '\n'), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			led, err := adapter.OpenDurableAdviceLedger(path)
+			if err == nil {
+				// Must not open successfully with suppress knowledge from schemaless line.
+				if led != nil && led.AlreadyDeliveredKey("iv-suppress", "sess-s", "h", "fp") {
+					t.Fatal("empty/omitted schema must not restore suppress key")
+				}
+				t.Fatal("expected Open fail-closed on empty/omitted schema")
+			}
+			if !errors.Is(err, adapter.ErrLedgerCorrupt) {
+				t.Fatalf("want ErrLedgerCorrupt got %v", err)
+			}
+		})
+	}
+}
+
 // TestOpen_JSONL_SuppressMissingSession_FailClosed.
 func TestOpen_JSONL_SuppressMissingSession_FailClosed(t *testing.T) {
 	t.Parallel()

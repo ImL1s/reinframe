@@ -81,13 +81,13 @@ func TestLiveQualification_PrivacyAndPreflight(t *testing.T) {
 	priv := cleanPrivacyScan()
 	caps := validCaps()
 
-	got, msgs := liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", "deadbeef", "vcs")
+	got, msgs := liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", "deadbeef", "vcs", false)
 	if got != "GO" {
 		t.Fatalf("clean want GO got %s msgs=%v", got, msgs)
 	}
 
 	// LIMITED_GO also gated.
-	got, _ = liveQualification("LIMITED_GO", priv, caps, sc, true, false, false, "1.0.0", "deadbeef", "vcs")
+	got, _ = liveQualification("LIMITED_GO", priv, caps, sc, true, false, false, "1.0.0", "deadbeef", "vcs", false)
 	if got != "NO_GO" {
 		t.Fatalf("invalid preflight on LIMITED_GO want NO_GO got %s", got)
 	}
@@ -96,21 +96,27 @@ func TestLiveQualification_PrivacyAndPreflight(t *testing.T) {
 	inc := cleanPrivacyScan()
 	inc["complete"] = false
 	inc["files_skipped"] = 1
-	got, _ = liveQualification("GO", inc, caps, sc, true, true, true, "1.0.0", "deadbeef", "vcs")
+	got, _ = liveQualification("GO", inc, caps, sc, true, true, true, "1.0.0", "deadbeef", "vcs", false)
 	if got != "NO_GO" {
 		t.Fatalf("incomplete privacy want NO_GO got %s", got)
 	}
 
 	// Scalar caps rejected.
-	got, _ = liveQualification("GO", priv, "", sc, true, true, true, "1.0.0", "deadbeef", "vcs")
+	got, _ = liveQualification("GO", priv, "", sc, true, true, true, "1.0.0", "deadbeef", "vcs", false)
 	if got != "NO_GO" {
 		t.Fatalf("scalar caps want NO_GO got %s", got)
 	}
 
 	// Ambient commit unknown source rejected.
-	got, _ = liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", "deadbeef", "unknown")
+	got, _ = liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", "deadbeef", "unknown", false)
 	if got != "NO_GO" {
 		t.Fatalf("unknown commit src want NO_GO got %s", got)
+	}
+
+	// Dirty binary rejected.
+	got, _ = liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", "deadbeef", "vcs", true)
+	if got != "NO_GO" {
+		t.Fatalf("dirty binary want NO_GO got %s", got)
 	}
 }
 
@@ -214,7 +220,7 @@ func TestMonotonicFloor_StaticPermRecomputeCannotPromote(t *testing.T) {
 		t.Fatalf("must not re-promote to %s after preflight floor NO_GO", final)
 	}
 	// liveQualification also blocks LIMITED_GO without valid preflight
-	got, _ := liveQualification(disp2, cleanPrivacyScan(), validCaps(), hist, false, false, false, "unknown", "", "unknown")
+	got, _ := liveQualification(disp2, cleanPrivacyScan(), validCaps(), hist, false, false, false, "unknown", "", "unknown", false)
 	if got == "LIMITED_GO" || got == "GO" {
 		t.Fatalf("qualification must demote LIMITED_GO/GO without preflight; got %s", got)
 	}

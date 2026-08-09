@@ -6,13 +6,13 @@
 
 Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go.
 
-**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, **Codex JSONL observe-only + project-local hooks foundation (#163)**, **Grok Build native hooks (#165) + ACP stdio (#166/#191)** with a **historical live run** against darwin/`grok 1.0.0` (hooks + ACP paths observed; public disposition under [#199](https://github.com/ImL1s/reinframe/issues/199) requalification — **MORE_DATA**, not unconditional GO), a **merged #108 Grok advice-consumer foundation** (actuator + ledger; live end-to-end product proof open in [#200](https://github.com/ImL1s/reinframe/issues/200)), offline benchmarks (#140/#141/#168; #168 MORE-DATA), and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** Codex/Claude live proof (#164/#120), **not** a calibrated hard-gate, **not** exactly-once delivery, and **not** multi-host ranking.
+**Today:** Reinframe contains a tested control-plane library, deterministic anti-tunnel detectors, an experimental Claude PreTool bridge, **Codex JSONL observe-only + project-local hooks foundation (#163)**, **Grok Build native hooks (#165) + ACP stdio (#166/#191)** with a **historical live run** against darwin/`grok 1.0.0` (hooks + ACP paths observed; public disposition **MORE_DATA** — closed v2 gates landed in [#199](https://github.com/ImL1s/reinframe/issues/199)/[#204](https://github.com/ImL1s/reinframe/pull/204); no new live v2 GO without correlation proofs), a **#108 foundation** with source-bound ACK/durability hardening ([#200](https://github.com/ImL1s/reinframe/issues/200)/#204); live E2E composition not claimed, offline benchmarks (#140/#141/#168; #168 MORE-DATA), and clean-only managed-worktree checkpoint/rollback. It is **not** dual-host production supervision, **not** Codex/Claude live proof (#164/#120), **not** a calibrated hard-gate, **not** exactly-once delivery, and **not** multi-host ranking.
 
 ## Project Status
 
 > **Phase: M1 + M2 library + host-control foundations + shadow classifier + native classifier providers + exact cache + offline evaluation**  
 > **Implemented:** provider/cache campaign (#131–#141); host foundations [#163](https://github.com/ImL1s/reinframe/issues/163)/[#165](https://github.com/ImL1s/reinframe/issues/165)/[#166](https://github.com/ImL1s/reinframe/issues/166); offline [#168](https://github.com/ImL1s/reinframe/issues/168) framework (**MORE-DATA**).  
-> **Live:** historical Grok run exists ([#167](https://github.com/ImL1s/reinframe/issues/167) evidence); **requalification [#199](https://github.com/ImL1s/reinframe/issues/199)** → treat as **MORE_DATA** (not unconditional GO). Still blocked: [#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
+> **Live:** historical Grok run exists ([#167](https://github.com/ImL1s/reinframe/issues/167) evidence); **#199 v2 gates closed** → public **MORE_DATA** until a new live v2 report proves full matrix. Still blocked: [#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
 > **Product:** [#108](https://github.com/ImL1s/reinframe/issues/108) foundation merged; **live E2E / source-bound ACK / restart-safe durability** open in [#200](https://github.com/ImL1s/reinframe/issues/200). Governance [#201](https://github.com/ImL1s/reinframe/issues/201). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) open.  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md).
 
@@ -62,7 +62,7 @@ Evaluation:
 | Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; historical live #167 (MORE_DATA/#199) |
 | Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; historical live #167 (MORE_DATA/#199) |
 | Live Codex hooks proof (#164) | 🔲 Open — blocked on interactive Codex + project trust |
-| Live Grok Build hooks+ACP proof (#167) | 🟡 **Historical live run** (darwin/`grok 1.0.0`); public disposition **MORE_DATA** pending [#199](https://github.com/ImL1s/reinframe/issues/199) closed-schema requalification; transport proven; source-correlated `session_visible` / explicit not claimed |
+| Live Grok Build hooks+ACP proof (#167) | 🟡 **Historical live run** (darwin/`grok 1.0.0`); public disposition **MORE_DATA**; **#199 v2 gates on main** (full matrix/correlation required for GO); no new live v2 GO artifact yet |
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |
 | Claude project-local install/doctor (#106/#117) | ✅ Installer/unit + exact ownership; **not** live smoke |
 | Typed ProposedAction (#115) | ✅ ToolName ≠ Command |
@@ -83,7 +83,7 @@ Evaluation:
 | Native xAI Responses adapter (#137 / PR #156) | ✅ Classifier only — **not** Grok Build host control |
 | Exact `RawAssessment` cache + singleflight (#138 / PR #157, fix #169/#172) | ✅ Process-local; default disabled; session partition; cancel-safe + panic-safe SF; Stage-2 never cached |
 | Live Claude ALLOW/BLOCK/context smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
-| Grok advice consumer foundation (#108) | 🟡 Foundation merged (`GrokACPActuator` + ledger); live E2E / source-bound ACK / restart-safe durability open in [#200](https://github.com/ImL1s/reinframe/issues/200); exactly-once not claimed |
+| Grok advice consumer foundation (#108) | 🟡 Foundation + **#200** source-bound ACK / AMBIGUOUS durable failure on main; live E2E composition and exactly-once **not claimed** |
 | Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; blocked by #120 |
 | Challenge evaluation (#140) Lane A/B | ✅ Offline deterministic + fake-native lanes (PR #159/#160); **Claude host lane open** (needs #139) |
 | Provider/cache evaluation (#141 / PR #161, modes fix #169) | ✅ Fake-CI suite; disposition **MORE-DATA**; no default cache enablement |

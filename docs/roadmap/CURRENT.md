@@ -22,6 +22,17 @@
 
 ## Residual open work
 
+
+### Evidence / delivery residuals (active)
+
+| Issue | Notes |
+|-------|-------|
+| **#201** | Public claim downgrade (docs) |
+| **#199** | Requalify #167 closed-schema GO gates; public MORE_DATA until closed |
+| **#200** | Source-bound ACK + durable delivery + live #108 E2E composition |
+
+Dependency order: **#201 → #199 → #200 → re-sync README/Epic/#168**.
+
 ### Environment / live evidence (still open)
 
 | Issue | Blocker | Notes |

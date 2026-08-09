@@ -25,7 +25,7 @@ Shipped:
   Codex JSONL offline/tail observation (observe-only L0)
   #163 Codex project-local hooks foundation
   #165 Grok Build native hooks foundation (host fail-open)
-  #166 Grok Build ACP stdio foundation (transport/session_visible ACK)
+  #166 Grok Build ACP stdio foundation (transport ACK; session/update observation ≠ source-correlated session_visible)
   #168 offline cross-host eval framework (MORE-DATA)
 
 Live / environment:
@@ -59,8 +59,8 @@ Evaluation:
 | TaskSubmitted intake mappers (#84) | ✅ Fixture/host mappers (no protocol host type names) |
 | Codex EventSource offline + near-live tail (#95/#107/#118) | ✅ Observe-only L0; collision-safe source identity |
 | Codex project-local hooks control (#163) | ✅ Foundation — project-local hooks.json install/doctor + PreTool/Permission mapping; **live proof #164** |
-| Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; **live #167** |
-| Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; **live #167** |
+| Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; historical live #167 (MORE_DATA/#199) |
+| Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; historical live #167 (MORE_DATA/#199) |
 | Live Codex hooks proof (#164) | 🔲 Open — blocked on interactive Codex + project trust |
 | Live Grok Build hooks+ACP proof (#167) | 🟡 **Historical live run** (darwin/`grok 1.0.0`); public disposition **MORE_DATA** pending [#199](https://github.com/ImL1s/reinframe/issues/199) closed-schema requalification; transport proven; source-correlated `session_visible` / explicit not claimed |
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |
@@ -194,8 +194,8 @@ Available:
   Detectors → Policy → Orchestrator → HookGate / queue / FileActuator|Fake
   Codex JSONL offline + tail EventSource (observe-only L0)
   Codex project-local hooks foundation (#163; live #164)
-  Grok Build native hooks foundation (#165; host fail-open; live #167)
-  Grok Build ACP stdio foundation (#166; transport/session_visible ACK; live #167)
+  Grok Build native hooks foundation (#165; host fail-open; historical live #167 / MORE_DATA #199)
+  Grok Build ACP stdio foundation (#166; transport ACK; session/update observation ≠ source-correlated session_visible; historical live #167 / MORE_DATA #199)
   Claude PreTool fixture/CLI bridge + project-local installer/unit validation
   ProposedAction, shadow classifier (Enforced=false), offline benchmark runner
   host-neutral appealable BLOCK challenge core with one-shot semantic retry
@@ -304,7 +304,7 @@ Intervention escalation after detection is a **separate axis**. See `docs/resear
 Contributions are welcome. Please:
 
 1. Check the [Issue tracker](https://github.com/ImL1s/reinframe/issues) and [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md). Host foundations #163/#165/#166 on main; Grok historical live evidence (#167) under **#199** requalification; #108 foundation under **#200**; governance **#201**. Residual live: **#164 Codex**, **#120 Claude**. #168 stays **MORE_DATA** (no ranking).
-2. Do not start #139 before #120. Do not claim live host control without #164/#167/#120 evidence. Do not claim measured savings or default exact-cache enablement without separate authorization.
+2. Do not start #139 before #120. Do not claim live host control without #164 / requalified #167 (#199) / #120 evidence. Do not claim measured savings or default exact-cache enablement without separate authorization.
 3. Preserve honesty boundaries: no false provider/cache/live-host/hard-gate/ACK claims. Classifier providers ≠ coding-host adapters.
 4. Run `go test -race ./...` before submitting PRs.
 5. Project-standard PRs require multi-platform CI and independent AI review before merge.

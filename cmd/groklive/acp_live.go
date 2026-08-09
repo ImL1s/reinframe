@@ -147,7 +147,10 @@ func runACP(args []string) {
 		if err != nil {
 			set("ACP-SESSION-001", "FAIL", "session/prompt: "+err.Error(), nil)
 		} else {
+			// Source-correlated session_visible only from post-prompt updates that
+			// match the target session. Never reuse client-global LastACKLayer.
 			saw := false
+			sessionMatched := false
 			deadline := time.After(90 * time.Second)
 		waitLoop:
 			for {
@@ -158,31 +161,39 @@ func runACP(args []string) {
 					if !ok {
 						break waitLoop
 					}
+					if !updateSessionMatches(u, sid) {
+						continue
+					}
 					kind, _ := adapter.MapSessionUpdateToSummary(u)
-					if kind != "" {
-						saw = true
-						client.NoteSessionVisible()
-						break waitLoop
+					if kind == "" {
+						continue
 					}
+					saw = true
+					sessionMatched = true
+					client.NoteSessionVisible()
+					break waitLoop
 				case <-time.After(200 * time.Millisecond):
-					if client.LastACKLayer() == adapter.ACKLayerSessionVisible {
-						saw = true
-						break waitLoop
-					}
+					// Do not poll LastACKLayer (stale upgrade risk).
 				}
 			}
-			ack := client.LastACKLayer()
-			if saw {
-				if ack == adapter.ACKLayerExplicit {
-					set("ACP-SESSION-001", "FAIL", "must not claim explicit ACK from transport alone", map[string]string{"ack": ack})
-				} else {
-					set("ACP-SESSION-001", "PASS", "session/new+prompt+correlated update", map[string]string{"ack": adapter.ACKLayerSessionVisible})
-				}
-			} else if ack == adapter.ACKLayerTransport {
-				set("ACP-SESSION-001", "INCONCLUSIVE", "prompt transport OK; session/update not observed within timeout — strongest ACK remains transport", map[string]string{"ack": ack})
+			sr := ScenarioResult{
+				ID:              "ACP-SESSION-001",
+				At:              stamp(),
+				InterventionID:  "issue167-live-advice-001",
+				TargetSessionID: sid,
+			}
+			if saw && sessionMatched {
+				sr.Status = "PASS"
+				sr.ACKLayer = adapter.ACKLayerSessionVisible
+				sr.SessionCorrelated = true
+				sr.Detail = "session/new+prompt+post-prompt session-matched update; source-correlated session_visible"
 			} else {
-				set("ACP-SESSION-001", "FAIL", fmt.Sprintf("saw_update=%v ack=%s", saw, ack), map[string]string{"ack": ack})
+				sr.Status = "INCONCLUSIVE"
+				sr.ACKLayer = adapter.ACKLayerTransport
+				sr.SessionCorrelated = false
+				sr.Detail = "prompt transport OK; no session-matched post-prompt update — ACK remains transport"
 			}
+			scenarios["ACP-SESSION-001"] = sr
 		}
 
 		// ACP-OPTIONAL-001 load/cancel — short budget; absence/timeout is NOT_RUN/INCONCLUSIVE not FAIL.
@@ -209,10 +220,9 @@ func runACP(args []string) {
 		}
 	}
 
-	// ADVICE-DEDUP-001 — second delivery with same InterventionID.
-	// PASS only when second SessionPrompt returns nil (transport accepted a second attempt).
-	// Transport error → INCONCLUSIVE (host may have rejected; durable #108 machine not claimed).
-	// Durable InterventionID suppression is #108 only.
+	// ADVICE-DEDUP-001 — durable/business suppression of duplicate InterventionID.
+	// Host accepting a second SessionPrompt does NOT prove suppression (#200 owns durable machine).
+	// Harness records DedupSuppressed=false unless a real suppress path is observed.
 	if sid != "" {
 		body2 := adapter.BuildAdvicePrompt("REQUEST_REPLAN",
 			"Duplicate InterventionID proof. Reply STOP only.",
@@ -220,11 +230,21 @@ func runACP(args []string) {
 		dupCtx, dupCancel := rpcCtx(120)
 		err2 := client.SessionPrompt(dupCtx, sid, body2, "issue167-live-advice-001", "")
 		dupCancel()
-		if err2 != nil {
-			set("ADVICE-DEDUP-001", "INCONCLUSIVE", "second delivery same InterventionID transport error: "+boundStr(err2.Error(), 120)+"; durable dedup is #108", nil)
-		} else {
-			set("ADVICE-DEDUP-001", "PASS", "second delivery same InterventionID accepted at transport; durable suppression is #108 not claimed", nil)
+		sr := ScenarioResult{
+			ID:             "ADVICE-DEDUP-001",
+			At:             stamp(),
+			InterventionID: "issue167-live-advice-001",
+			// Without a durable consumer ledger in this harness, we cannot claim suppression.
+			DedupSuppressed: false,
 		}
+		if err2 != nil {
+			sr.Status = "INCONCLUSIVE"
+			sr.Detail = "second delivery error: " + boundStr(err2.Error(), 120) + "; not durable suppress proof"
+		} else {
+			sr.Status = "INCONCLUSIVE"
+			sr.Detail = "second delivery accepted at transport; durable/business InterventionID suppression not proven in harness (#200)"
+		}
+		scenarios["ADVICE-DEDUP-001"] = sr
 	} else {
 		set("ADVICE-DEDUP-001", "NOT_RUN", "no session", nil)
 	}
@@ -267,6 +287,24 @@ func runACP(args []string) {
 		"caps_digest":    neg.CapsDigest,
 	})
 	fmt.Println(`{"ok":true,"action":"acp","scenarios":` + fmt.Sprintf("%d", len(scenarios)) + `}`)
+}
+
+// updateSessionMatches requires a sessionId when present and equal to target.
+// Updates that omit sessionId are not treated as source-correlated (#199).
+func updateSessionMatches(u map[string]any, target string) bool {
+	if target == "" {
+		return false
+	}
+	sid, _ := u["sessionId"].(string)
+	if sid == "" {
+		if p, _ := u["params"].(map[string]any); p != nil {
+			sid, _ = p["sessionId"].(string)
+		}
+	}
+	if sid == "" {
+		return false
+	}
+	return sid == target
 }
 
 // processAlive reports whether pid accepts signal 0 (Unix). On unsupported platforms

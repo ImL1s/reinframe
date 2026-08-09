@@ -54,8 +54,24 @@ func runReport(args []string) {
 		ack = sr.ACKLayer
 	}
 
+	// Ensure STATIC-PERM-001 is present for registry completeness.
+	if _, ok := scenarios["STATIC-PERM-001"]; !ok {
+		scenarios["STATIC-PERM-001"] = ScenarioResult{
+			ID:     "STATIC-PERM-001",
+			Status: "NOT_RUN",
+			Detail: "optional Reinframe-owned static permission fragment not exercised",
+			At:     stamp(),
+		}
+		disp, reasons = evaluateDisposition(scenarios)
+	}
+
+	sessCorr := false
+	if sr, ok := scenarios["ACP-SESSION-001"]; ok {
+		sessCorr = sr.SessionCorrelated && sr.ACKLayer == "session_visible"
+	}
+
 	report := map[string]any{
-		"schema_version": "reinframe.grok_build_live_control.v1",
+		"schema_version": LiveControlSchemaV2,
 		"provenance": map[string]any{
 			"issue":                 167,
 			"generated_at":          stamp(),
@@ -65,9 +81,10 @@ func runReport(args []string) {
 			"grok_version_full":     verFull,
 			"reinframe_commit":      gitHEAD(),
 			"starting_main_sha":     "62889cb59916fa2dd412a2c5d511c7ac7c4b23c6",
-			"main_tip_note":         "evidence produced against live host using shipped #165/#166 APIs",
+			"main_tip_note":         "evidence produced against live host using shipped #165/#166 APIs; v2 gates (#199)",
 			"harness":               "cmd/groklive",
 			"evidence_binding_note": "generated solely by cmd/groklive report; no post-hoc privacy rewrites",
+			"schema_note":           "v2 closed disposition matrix; historical v1 evidence is immutable under HISTORICAL_v1.md",
 		},
 		"entry_gates": map[string]any{
 			"live_flag_required": true,
@@ -77,35 +94,53 @@ func runReport(args []string) {
 		"trust_results":             pick(scenarios, "TRUST-001", "TRUST-STALE-001", "TRUST-RESTORE-001"),
 		"hook_results":              pick(scenarios, "HOOK-ALLOW-001", "HOOK-DENY-001", "HOOK-MAP-001", "HOOK-UNINSTALL-001"),
 		"hook_failure_semantics":    pick(scenarios, "HOOK-FAIL-001", "HOOK-FAIL-002", "HOOK-FAIL-003", "HOOK-FAIL-004"),
-		"static_permission_results": map[string]any{"status": "NOT_RUN", "detail": "optional fragment not required for GO"},
+		"static_permission_results": pick(scenarios, "STATIC-PERM-001"),
 		"acp_negotiation":           pick(scenarios, "ACP-INIT-001"),
 		"auth_boundary":             pick(scenarios, "ACP-AUTH-001"),
 		"session_results":           pick(scenarios, "ACP-SESSION-001", "ACP-OPTIONAL-001"),
 		"advice_results":            pick(scenarios, "ADVICE-DEDUP-001"),
 		"challenge_results":         pick(scenarios, "CHALLENGE-001"),
 		"ack_layers": map[string]any{
-			"strongest_proven": ack,
-			"explicit_claimed": false,
-			"note":             "JSON-RPC success is transport; session/update is session_visible; explicit never from transport alone",
+			"strongest_proven":  ack,
+			"explicit_claimed":  false,
+			"source_correlated": sessCorr,
+			"note":              "JSON-RPC success is transport; session_visible only when SessionCorrelated; explicit never from transport alone",
 		},
 		"process_cleanup":      pick(scenarios, "ACP-CLEANUP-001"),
 		"capability_manifests": loadOptionalJSON(filepath.Join(evDir, "acp_manifest.json")),
 		"privacy_checks":       privacy,
 		"limitations":          reasons,
 		"scenarios":            scenarios,
+		"scenario_registry":    append([]string{}, goMandatoryIDs...),
 		"final_disposition":    disp,
 	}
+	if verrs := validateReportV2Basics(report, scenarios); len(verrs) > 0 {
+		// Fail closed: refuse to emit GO if self-check fails.
+		if disp == "GO" {
+			disp = "NO_GO"
+			reasons = append(reasons, verrs...)
+			report["final_disposition"] = disp
+			report["limitations"] = reasons
+		} else {
+			reasons = append(reasons, verrs...)
+			report["limitations"] = reasons
+		}
+	}
 
+	// Prefer v2 basename; keep OS/date pin.
+	base = fmt.Sprintf("issue-167-live-v2-%s-%s-%s", sanitizeVersion(ver), osName, day)
 	jsonPath := filepath.Join(evDir, base+".json")
 	mdPath := filepath.Join(evDir, base+".md")
-	_ = writeJSON(jsonPath, report)
-	md := renderMD(report, disp, ack, ver, osName, reasons, scenarios)
-	_ = os.WriteFile(mdPath, []byte(md), 0o600)
-
-	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v1.schema.json")
-	if _, err := os.Stat(schemaPath); err != nil {
-		_ = writeJSON(schemaPath, minimalSchema())
+	if err := writeJSON(jsonPath, report); err != nil {
+		fail(err)
 	}
+	md := renderMD(report, disp, ack, ver, osName, reasons, scenarios)
+	if err := os.WriteFile(mdPath, []byte(md), 0o600); err != nil {
+		fail(err)
+	}
+
+	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v2.schema.json")
+	_ = writeJSON(schemaPath, closedSchemaV2())
 
 	printJSON(map[string]any{
 		"ok":           true,
@@ -118,60 +153,6 @@ func runReport(args []string) {
 	if disp == "NO_GO" {
 		os.Exit(1)
 	}
-}
-
-// evaluateDisposition ranks GO / LIMITED_GO / MORE_DATA / NO_GO from scenario map.
-// Mandatory scenarios must PASS for GO. INCONCLUSIVE on any mandatory → LIMITED_GO.
-// Missing/FAIL mandatory → NO_GO. ACP-AUTH-001 must PASS (hard auth boundary).
-// Fail-open (HOOK-FAIL-001..004) is mandatory for GO per #167.
-func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reasons []string) {
-	mandatory := []string{
-		"HOOK-ALLOW-001", "HOOK-DENY-001",
-		"HOOK-FAIL-001", "HOOK-FAIL-002", "HOOK-FAIL-003", "HOOK-FAIL-004",
-		"ACP-INIT-001", "ACP-AUTH-001", "ACP-SESSION-001", "ACP-CLEANUP-001",
-	}
-	disp = "GO"
-	reasons = []string{}
-	if len(scenarios) == 0 {
-		return "MORE_DATA", []string{"no scenarios recorded"}
-	}
-	for _, id := range mandatory {
-		sr, ok := scenarios[id]
-		if !ok || sr.Status == "NOT_RUN" || sr.Status == "" {
-			disp = "NO_GO"
-			reasons = append(reasons, id+" missing")
-			continue
-		}
-		if sr.Status == "FAIL" {
-			disp = "NO_GO"
-			reasons = append(reasons, id+" FAIL")
-		}
-		if sr.Status == "INCONCLUSIVE" {
-			if disp == "GO" {
-				disp = "LIMITED_GO"
-			}
-			if !containsStr(reasons, id+" INCONCLUSIVE") {
-				reasons = append(reasons, id+" INCONCLUSIVE")
-			}
-		}
-	}
-	if sr, ok := scenarios["ACP-AUTH-001"]; !ok || sr.Status != "PASS" {
-		disp = "NO_GO"
-		if !containsStr(reasons, "ACP-AUTH-001 not PASS") {
-			reasons = append(reasons, "ACP-AUTH-001 not PASS")
-		}
-	}
-	// Surface non-mandatory INCONCLUSIVE IDs for operators (do not demote GO alone).
-	for id, sr := range scenarios {
-		if sr.Status == "INCONCLUSIVE" && !containsStr(reasons, id+" INCONCLUSIVE") {
-			// only add if not already mandatory-handled
-			if !strings.HasPrefix(id, "HOOK-FAIL-") && id != "HOOK-ALLOW-001" && id != "HOOK-DENY-001" &&
-				!strings.HasPrefix(id, "ACP-") {
-				reasons = append(reasons, id+" INCONCLUSIVE")
-			}
-		}
-	}
-	return disp, reasons
 }
 
 func containsStr(ss []string, want string) bool {
@@ -323,11 +304,12 @@ func renderMD(report map[string]any, disp, ack, ver, osName string, reasons []st
 	return b.String()
 }
 
+// minimalSchema kept for tools that still look for v1 path; v1 is historical only.
 func minimalSchema() map[string]any {
 	return map[string]any{
 		"$schema":              "https://json-schema.org/draft/2020-12/schema",
-		"$id":                  "reinframe.grok_build_live_control.v1",
-		"title":                "Reinframe Grok Build live control evidence",
+		"$id":                  LiveControlSchemaV1,
+		"title":                "Reinframe Grok Build live control evidence (historical v1)",
 		"type":                 "object",
 		"required":             []string{"schema_version", "final_disposition", "scenarios"},
 		"additionalProperties": true,
@@ -336,5 +318,6 @@ func minimalSchema() map[string]any {
 			"final_disposition": map[string]any{"enum": []string{"GO", "LIMITED_GO", "MORE_DATA", "NO_GO"}},
 			"scenarios":         map[string]any{"type": "object"},
 		},
+		"description": "Historical only. Use reinframe.grok_build_live_control.v2 for new reports (#199).",
 	}
 }

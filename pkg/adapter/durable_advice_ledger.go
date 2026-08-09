@@ -1,10 +1,13 @@
 package adapter
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -59,31 +62,106 @@ func OpenDurableAdviceLedger(path string) (*DurableAdviceLedger, error) {
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return l, nil
+		// Missing JSONL is fine (first run). Path-as-directory (poisoned write path)
+		// still loads sidecar suppress markers so restart does not silently redeliver.
+		if !os.IsNotExist(err) {
+			if fi, se := os.Lstat(path); se != nil || !fi.IsDir() {
+				return nil, err
+			}
 		}
-		return nil, err
+	} else {
+		l.cursor = int64(len(b))
+		for _, line := range splitLines(b) {
+			if len(line) == 0 {
+				continue
+			}
+			var tr DeliveryTransition
+			if json.Unmarshal(line, &tr) != nil {
+				continue
+			}
+			if tr.InterventionID == "" {
+				continue
+			}
+			// Only states that prove host accepted transport (or terminal no-retry) suppress redelivery.
+			// DELIVERING alone does not suppress — crash mid-flight should allow retry.
+			if isSuppressState(DeliveryState(tr.ToState)) {
+				// Session/host/action-bound key (fingerprint = action identity).
+				l.seen[dedupeKey(tr.InterventionID, tr.SessionID, tr.HostFamily, tr.Fingerprint)] = struct{}{}
+			}
+		}
 	}
-	l.cursor = int64(len(b))
-	for _, line := range splitLines(b) {
-		if len(line) == 0 {
-			continue
-		}
-		var tr DeliveryTransition
-		if json.Unmarshal(line, &tr) != nil {
-			continue
-		}
-		if tr.InterventionID == "" {
-			continue
-		}
-		// Only states that prove host accepted transport (or terminal no-retry) suppress redelivery.
-		// DELIVERING alone does not suppress — crash mid-flight should allow retry.
-		if isSuppressState(DeliveryState(tr.ToState)) {
-			// Session/host/action-bound key (fingerprint = action identity).
-			l.seen[dedupeKey(tr.InterventionID, tr.SessionID, tr.HostFamily, tr.Fingerprint)] = struct{}{}
-		}
-	}
+	// Load sidecar ambiguous suppress markers (host accepted; JSONL commit failed).
+	_ = l.loadAmbiguousMarkersUnlocked()
 	return l, nil
+}
+
+// suppressSidecarDir is a sibling of the JSONL path used when Append cannot commit
+// after host acceptance. Must not share a poisoned parent with the main file when
+// the main path itself is the failure mode (e.g. path is a directory).
+func (l *DurableAdviceLedger) suppressSidecarDir() string {
+	return l.Path + ".suppress"
+}
+
+func suppressMarkerFilename(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:16]) + ".key"
+}
+
+// loadAmbiguousMarkersUnlocked reads sidecar suppress keys into seen.
+// Open is single-threaded before the ledger is returned to callers.
+func (l *DurableAdviceLedger) loadAmbiguousMarkersUnlocked() error {
+	dir := l.suppressSidecarDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".key") {
+			continue
+		}
+		b, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
+		if rerr != nil {
+			continue
+		}
+		key := strings.TrimSpace(string(b))
+		if key != "" {
+			l.seen[key] = struct{}{}
+		}
+	}
+	return nil
+}
+
+// MarkAmbiguousSuppress records a bound suppress key when the JSONL path cannot be
+// written after the host may have accepted delivery. Survives process restart via sidecar.
+func (l *DurableAdviceLedger) MarkAmbiguousSuppress(interventionID, sessionID, hostFamily, fingerprint string) error {
+	if l == nil {
+		return fmt.Errorf("nil ledger")
+	}
+	if interventionID == "" {
+		return fmt.Errorf("intervention id required")
+	}
+	key := dedupeKey(interventionID, sessionID, hostFamily, fingerprint)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.seen[key] = struct{}{}
+	dir := l.suppressSidecarDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, suppressMarkerFilename(key))
+	// Atomic-ish: write temp then rename within same dir.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(key+"\n"), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // AlreadyDelivered reports whether InterventionID has a durable delivery transition.

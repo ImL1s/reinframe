@@ -13,7 +13,7 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 > **Phase: M1 + M2 library + host-control foundations + shadow classifier + native classifier providers + exact cache + offline evaluation**  
 > **Implemented:** provider/cache campaign (#131–#141); host foundations [#163](https://github.com/ImL1s/reinframe/issues/163)/[#165](https://github.com/ImL1s/reinframe/issues/165)/[#166](https://github.com/ImL1s/reinframe/issues/166); offline [#168](https://github.com/ImL1s/reinframe/issues/168) framework (**MORE-DATA**).  
 > **Live:** historical Grok run exists ([#167](https://github.com/ImL1s/reinframe/issues/167) evidence); **#199 v2 gates closed** → public **MORE_DATA** until a new live v2 report proves full matrix. Still blocked: [#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
-> **Product:** [#108](https://github.com/ImL1s/reinframe/issues/108) foundation merged; **live E2E / source-bound ACK / restart-safe durability** open in [#200](https://github.com/ImL1s/reinframe/issues/200). Governance [#201](https://github.com/ImL1s/reinframe/issues/201). Epic [#80](https://github.com/ImL1s/reinframe/issues/80) open.  
+> **Product:** [#108](https://github.com/ImL1s/reinframe/issues/108) foundation merged; **#200** source-bound ACK + durable honesty **closed on main** — live E2E composition **not claimed**. Governance [#201](https://github.com/ImL1s/reinframe/issues/201) closed. Epic [#80](https://github.com/ImL1s/reinframe/issues/80) open.  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md).
 
 ### Current dependency shape
@@ -29,13 +29,13 @@ Shipped:
   #168 offline cross-host eval framework (MORE-DATA)
 
 Live / environment:
-  #167 historical live Grok run (darwin/Grok 1.0.0) — public disposition MORE_DATA pending #199
+  #167 historical live Grok run (darwin/Grok 1.0.0) — public disposition MORE_DATA until a new live v2 GO artifact
   still blocked: #164 Codex · #120 Claude
 
 Product:
-  #108 Grok advice-consumer foundation (actuator+ledger); E2E product proof open in #200
+  #108 Grok advice-consumer foundation (actuator+ledger); #200 ACK/durability closed; live E2E composition not claimed
   #120 → #139 → #140 Claude host lane
-  #201 governance downgrade (this wording)
+  #201 governance downgrade closed
 
 Evaluation:
   #168 MORE-DATA — historical Grok pin only; missing matched Codex/Claude; no ranking
@@ -206,7 +206,7 @@ Available:
 
 Not claimed / not proven live:
   live Codex hooks (#164) · live Claude (#120)
-  (Grok #167 historical live run on darwin — MORE_DATA pending #199)
+  (Grok #167 historical live run on darwin — MORE_DATA until new live v2 GO artifact)
   global ~/.claude silent install · process-attach daemon
   live dual-host supervision · calibrated hard-gates · native CapPause from hooks
   advice agent receipt (#108) · Claude challenge delivery (#139)

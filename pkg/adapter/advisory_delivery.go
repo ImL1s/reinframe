@@ -265,15 +265,36 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 	if d.ledger != nil {
 		fp := item.Intervention.Fingerprint
 		if lerr := d.ledger.RecordResultWithSource(StateDelivering, sessionID, res, state, "", "", "", fp); lerr != nil {
-			// Host may have accepted; durable commit failed — AMBIGUOUS, never auto-redeliver.
+			boundary := ClassifyDeliveryBoundary(res, err)
 			res.Message = strings.TrimSpace(res.Message + "; durable_write_failed")
-			res.ErrorClass = ErrorClassTransport
+			// Preserve host ErrorClass when definitive not-sent; only overlay transport on ambiguous path.
 			out := *item
+			out.Result = &res
+
+			if !ShouldAmbiguousSuppress(boundary) {
+				// Pre-send / definitive not-sent: keep original state, no suppress marker (#208).
+				// Intervention remains retryable after durability is repaired.
+				if res.ErrorClass == ErrorClassNone {
+					res.ErrorClass = ErrorClassTransport
+				}
+				out.State = state
+				out.Result = &res
+				d.queue.UpdateState(item.Intervention.InterventionID, state, &res)
+				// Always surface ErrDurableWriteFailed so callers can detect durability failure.
+				if err == nil {
+					err = fmt.Errorf("%w: %v", ErrDurableWriteFailed, lerr)
+				} else {
+					err = fmt.Errorf("%w: %v: %v", ErrDurableWriteFailed, err, lerr)
+				}
+				return &out, res, err
+			}
+
+			// Host acceptance possible/unknown: AMBIGUOUS + restart-safe suppress.
+			res.ErrorClass = ErrorClassTransport
 			out.State = StateAmbiguous
 			out.Result = &res
 			d.queue.UpdateState(item.Intervention.InterventionID, StateAmbiguous, &res)
-			// Prefer JSONL AMBIGUOUS line; if path is still broken, write sidecar suppress marker
-			// so process restart cannot silently redeliver the same bound key.
+			// Prefer JSONL AMBIGUOUS line; if path is still broken, write sidecar suppress marker.
 			if merr := d.ledger.RecordResultWithSource(StateDelivering, sessionID, res, StateAmbiguous, "", "", "", fp); merr != nil {
 				if serr := d.ledger.MarkAmbiguousSuppress(item.Intervention.InterventionID, sessionID, res.HostFamily, fp); serr != nil {
 					if err == nil {

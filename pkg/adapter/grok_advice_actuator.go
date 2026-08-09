@@ -96,7 +96,8 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		if want != "" && want != g.TargetSessionID {
 			base.Accepted = false
 			base.AckStatus = AckStatusRejected
-			base.ErrorClass = ErrorClassTransport
+			// Local pre-send validation — not a host transport attempt (#208).
+			base.ErrorClass = ErrorClassUnsupportedCapability
 			base.Message = "session/host mismatch: intervention pin does not match TargetSessionID"
 			return base, fmt.Errorf("grok advice: session mismatch")
 		}
@@ -104,7 +105,7 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 	if intervention.AdvicePrompt == "" && intervention.ActionType == "" {
 		base.Accepted = false
 		base.AckStatus = AckStatusRejected
-		base.ErrorClass = ErrorClassTransport
+		base.ErrorClass = ErrorClassUnsupportedCapability
 		base.Message = "empty advice"
 		return base, fmt.Errorf("grok advice: empty intervention")
 	}
@@ -123,7 +124,8 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		if strings.Contains(low, bad) {
 			base.Accepted = false
 			base.AckStatus = AckStatusRejected
-			base.ErrorClass = ErrorClassTransport
+			// Local privacy gate before SessionPrompt (#208 not_sent).
+			base.ErrorClass = ErrorClassUnsupportedCapability
 			base.Message = "refusing private-reasoning-shaped advice body"
 			return base, fmt.Errorf("grok advice: privacy reject")
 		}

@@ -13,6 +13,8 @@ Unit/integration tests drive the **shipped** APIs:
 | Host-accepted + ledger fail | `ErrDurableWriteFailed` + `StateAmbiguous`; sidecar suppress marker for restart |
 | Ambiguous restart (process-sim) | Unit: re-open ledger + new queue → `StateSuppressed` (no second Deliver) |
 | Ledger without `DedupeHostFamily` | Fail-closed at `NewAdvisoryDelivery` (Grok actuator infers `grok_build`) |
+| Pre-send not_sent + ledger fail (#208) | No suppress marker; retryable after durability repair |
+| Suppress recovery incomplete (#208) | Open fails closed (no usable ledger with partial `seen`) |
 | Live E2E composition | **Not claimed** |
 
 ## What is still not claimed

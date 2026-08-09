@@ -16,37 +16,263 @@
     "scenario_registry"
   ],
   "properties": {
-    "schema_version": { "const": "reinframe.grok_build_live_control.v2" },
-    "provenance": { "type": "object" },
-    "entry_gates": { "type": "object" },
-    "trust_results": { "type": "object" },
-    "hook_results": { "type": "object" },
-    "hook_failure_semantics": { "type": "object" },
-    "static_permission_results": { "type": "object" },
-    "acp_negotiation": { "type": "object" },
-    "auth_boundary": { "type": "object" },
-    "session_results": { "type": "object" },
-    "advice_results": { "type": "object" },
-    "challenge_results": { "type": "object" },
+    "schema_version": {
+      "const": "reinframe.grok_build_live_control.v2"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issue",
+        "generated_at",
+        "goos",
+        "harness"
+      ],
+      "properties": {
+        "issue": {
+          "type": "integer"
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "goos": {
+          "type": "string"
+        },
+        "goarch": {
+          "type": "string"
+        },
+        "grok_version": {
+          "type": "string"
+        },
+        "grok_version_full": {
+          "type": "string"
+        },
+        "reinframe_commit": {
+          "type": "string"
+        },
+        "starting_main_sha": {
+          "type": "string"
+        },
+        "main_tip_note": {
+          "type": "string"
+        },
+        "harness": {
+          "type": "string"
+        },
+        "evidence_binding_note": {
+          "type": "string"
+        },
+        "schema_note": {
+          "type": "string"
+        }
+      }
+    },
+    "entry_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "live_flag_required",
+        "auth_json_read",
+        "credential_print"
+      ],
+      "properties": {
+        "live_flag_required": {
+          "type": "boolean"
+        },
+        "auth_json_read": {
+          "type": "boolean"
+        },
+        "credential_print": {
+          "type": "boolean"
+        }
+      }
+    },
+    "trust_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "hook_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "hook_failure_semantics": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "static_permission_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "acp_negotiation": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "auth_boundary": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "session_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "advice_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "challenge_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
     "ack_layers": {
       "type": "object",
-      "required": ["strongest_proven", "explicit_claimed"],
+      "additionalProperties": false,
+      "required": [
+        "strongest_proven",
+        "explicit_claimed"
+      ],
       "properties": {
-        "strongest_proven": { "type": "string" },
-        "explicit_claimed": { "const": false },
-        "source_correlated": { "type": "boolean" },
-        "note": { "type": "string" }
-      },
-      "additionalProperties": true
+        "strongest_proven": {
+          "type": "string"
+        },
+        "explicit_claimed": {
+          "const": false
+        },
+        "source_correlated": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
     },
-    "process_cleanup": { "type": "object" },
+    "process_cleanup": {
+      "$ref": "#/$defs/scenario_map"
+    },
     "capability_manifests": {},
-    "privacy_checks": { "type": "object" },
-    "limitations": { "type": "array", "items": { "type": "string" } },
-    "scenarios": { "type": "object" },
-    "scenario_registry": { "type": "array", "items": { "type": "string" } },
-    "final_disposition": { "enum": ["GO", "LIMITED_GO", "MORE_DATA", "NO_GO"] },
-    "scenario_status_enum": { "enum": ["PASS", "FAIL", "NOT_RUN", "INCONCLUSIVE"] }
+    "privacy_checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "auth_json_read": {
+          "type": "boolean"
+        },
+        "auth_json_path_seen_in_honesty_notes_only": {
+          "type": "boolean"
+        },
+        "auth_json_path_leak_suspected": {
+          "type": "boolean"
+        },
+        "token_fields_in_auth_envelope": {
+          "type": "boolean"
+        },
+        "raw_thoughts_stored": {
+          "type": "boolean"
+        },
+        "secret_pattern_hits": {
+          "type": "integer"
+        },
+        "error": {
+          "type": "string"
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scenarios": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "scenario_registry": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "final_disposition": {
+      "enum": [
+        "GO",
+        "LIMITED_GO",
+        "MORE_DATA",
+        "NO_GO"
+      ]
+    },
+    "scenario_status_enum": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "NOT_RUN",
+        "INCONCLUSIVE"
+      ]
+    }
   },
-  "description": "Closed v2 live-control evidence (#199). Historical v1 remains under HISTORICAL_v1.md."
+  "$defs": {
+    "scenario_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "NOT_RUN",
+            "INCONCLUSIVE"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "tool_name": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "ack_layer": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "host_outcome": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "at": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "deny_direct_proof": {
+          "type": "boolean"
+        },
+        "fail_open_invoked": {
+          "type": "boolean"
+        },
+        "session_correlated": {
+          "type": "boolean"
+        },
+        "intervention_id": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "target_session_id": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "dedup_suppressed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "scenario_map": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/scenario_result"
+      }
+    }
+  },
+  "description": "Closed v2 live-control evidence (#199/#209). Nested objects closed; scenario status enum enforced. Historical v1 remains under HISTORICAL_v1.md."
 }

@@ -28,10 +28,12 @@
 | Issue | Notes |
 |-------|-------|
 | **#201** | **CLOSED** — public claim downgrade |
-| **#199** | **CLOSED** — v2 gates/schema; public MORE_DATA without new live v2 GO |
-| **#200** | **CLOSED** — source-bound ACK + durable honesty; live E2E composition not claimed |
+| **#199** | **CLOSED** — v2 gates first version; follow-up **#209** fully closed schema/evaluator |
+| **#200** | **CLOSED** — source-bound ACK + durable foundation; follow-up **#208** fail-closed sidecar |
+| **#208** | Fail-closed ambiguous sidecar recovery / not_sent vs suppress |
+| **#209** | Truly closed v2 schema + unknown-status NO_GO |
 
- residual order completed: **#201 → #199 → #200**.
+Completed honesty order: **#201 → #199 → #200 → #205–#207**. Active P1: **#208, #209**.
 
 ### Environment / live evidence (still open)
 

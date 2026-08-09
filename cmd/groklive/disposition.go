@@ -243,6 +243,25 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 	if report["schema_version"] != LiveControlSchemaV2 {
 		errs = append(errs, "schema_version must be v2")
 	}
+	// Reject unknown top-level keys (closed schema).
+	allowed := map[string]struct{}{
+		"schema_version": {}, "provenance": {}, "entry_gates": {}, "trust_results": {},
+		"hook_results": {}, "hook_failure_semantics": {}, "static_permission_results": {},
+		"acp_negotiation": {}, "auth_boundary": {}, "session_results": {}, "advice_results": {},
+		"challenge_results": {}, "ack_layers": {}, "process_cleanup": {}, "capability_manifests": {},
+		"privacy_checks": {}, "limitations": {}, "scenarios": {}, "scenario_registry": {},
+		"final_disposition": {}, "scenario_status_enum": {},
+	}
+	for k := range report {
+		if _, ok := allowed[k]; !ok {
+			errs = append(errs, "unknown top-level field: "+k)
+		}
+	}
+	for _, req := range []string{"schema_version", "provenance", "entry_gates", "scenarios", "ack_layers", "privacy_checks", "limitations", "final_disposition", "scenario_registry"} {
+		if _, ok := report[req]; !ok {
+			errs = append(errs, "missing required field: "+req)
+		}
+	}
 	disp, _ := report["final_disposition"].(string)
 	if disp != "GO" && disp != "LIMITED_GO" && disp != "MORE_DATA" && disp != "NO_GO" {
 		errs = append(errs, "invalid final_disposition")
@@ -265,6 +284,11 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 		}
 		if sr, ok := scenarios["ACP-SESSION-001"]; !ok || !sr.SessionCorrelated {
 			errs = append(errs, "GO requires ACP-SESSION session_correlated")
+		}
+		for _, id := range []string{"HOOK-FAIL-001", "HOOK-FAIL-002", "HOOK-FAIL-003", "HOOK-FAIL-004"} {
+			if sr, ok := scenarios[id]; !ok || !sr.FailOpenInvoked {
+				errs = append(errs, "GO requires "+id+" fail_open_invoked")
+			}
 		}
 	}
 	return errs

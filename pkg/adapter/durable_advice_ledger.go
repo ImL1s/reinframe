@@ -38,6 +38,10 @@ type DeliveryTransition struct {
 	TargetSession  string    `json:"target_session_id,omitempty"`
 	CapsDigest     string    `json:"caps_digest,omitempty"`
 	Message        string    `json:"message,omitempty"`
+	SourceKind     string    `json:"source_kind,omitempty"`
+	SourceEventID  string    `json:"source_event_id,omitempty"`
+	CorrelationID  string    `json:"correlation_id,omitempty"`
+	Fingerprint    string    `json:"fingerprint,omitempty"`
 }
 
 // OpenDurableAdviceLedger loads existing IDs from path (if present) for restart dedupe.
@@ -170,8 +174,9 @@ func (l *DurableAdviceLedger) Append(tr DeliveryTransition) error {
 func isSuppressState(st DeliveryState) bool {
 	switch st {
 	case StateTransportAccepted, StateSessionVisible, StateExplicitACK, StateBehavioralACK,
-		StateAcked, StateRejected, StateTimedOut, StateExpired, StateSuppressed:
-		// Intentionally exclude StateFailed / StateUnsupported so transient failures can retry.
+		StateAcked, StateRejected, StateTimedOut, StateExpired, StateSuppressed,
+		StateAmbiguous: // host may have accepted; never auto-redeliver
+		// Intentionally exclude StateFailed / StateUnsupported so transient pre-send failures can retry.
 		return true
 	default:
 		return false
@@ -201,6 +206,29 @@ func (l *DurableAdviceLedger) RecordResult(from DeliveryState, sessionID string,
 		TargetSession:  res.TargetSessionID,
 		CapsDigest:     res.CapsDigest,
 		Message:        boundRunes(res.Message, 240),
+	})
+}
+
+// RecordResultWithSource appends with source-bound ACK identity (#200).
+func (l *DurableAdviceLedger) RecordResultWithSource(from DeliveryState, sessionID string, res InterventionResult, to DeliveryState, srcKind, srcEvent, corr, fingerprint string) error {
+	return l.Append(DeliveryTransition{
+		InterventionID: res.InterventionID,
+		SessionID:      sessionID,
+		FromState:      string(from),
+		ToState:        string(to),
+		AckLayer:       res.AckLayer,
+		AckStatus:      res.AckStatus,
+		HostFamily:     res.HostFamily,
+		HostVersion:    res.HostVersion,
+		Profile:        res.Profile,
+		SafeBoundary:   res.SafeBoundary,
+		TargetSession:  res.TargetSessionID,
+		CapsDigest:     res.CapsDigest,
+		Message:        boundRunes(res.Message, 240),
+		SourceKind:     srcKind,
+		SourceEventID:  srcEvent,
+		CorrelationID:  corr,
+		Fingerprint:    fingerprint,
 	})
 }
 

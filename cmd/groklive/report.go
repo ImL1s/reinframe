@@ -115,14 +115,17 @@ func runReport(args []string) {
 		"final_disposition":    disp,
 	}
 	if verrs := validateReportV2Basics(report, scenarios); len(verrs) > 0 {
-		// Fail closed: refuse to emit GO if self-check fails.
+		// Always recompute disposition from scenarios on mismatch (#199).
+		disp2, reasons2 := evaluateDisposition(scenarios)
+		disp = disp2
+		reasons = append(reasons2, verrs...)
+		report["final_disposition"] = disp
+		report["limitations"] = reasons
 		if disp == "GO" {
+			// Extra belt: never emit GO with validation errors.
 			disp = "NO_GO"
-			reasons = append(reasons, verrs...)
+			reasons = append(reasons, "validation errors forbid GO")
 			report["final_disposition"] = disp
-			report["limitations"] = reasons
-		} else {
-			reasons = append(reasons, verrs...)
 			report["limitations"] = reasons
 		}
 	}

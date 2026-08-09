@@ -75,6 +75,9 @@ const (
 	StateSuppressed        DeliveryState = "SUPPRESSED"
 	StateFailed            DeliveryState = "FAILED"
 	StateUnsupported       DeliveryState = "UNSUPPORTED"
+	// StateAmbiguous: host may have accepted but durable commit failed (#200).
+	// Must not auto-redeliver.
+	StateAmbiguous DeliveryState = "AMBIGUOUS"
 )
 
 // CapAdviceDelivery is the capability name required for automated advisory inject.

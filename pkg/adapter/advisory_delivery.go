@@ -231,13 +231,15 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 	d.queue.UpdateState(item.Intervention.InterventionID, state, &res)
 	if d.ledger != nil {
 		if lerr := d.ledger.RecordResult(StateDelivering, sessionID, res, state); lerr != nil {
-			// Host may have accepted; durable commit failed — surface ambiguous state.
+			// Host may have accepted; durable commit failed — AMBIGUOUS, never auto-redeliver.
 			res.Message = strings.TrimSpace(res.Message + "; durable_write_failed")
 			res.ErrorClass = ErrorClassTransport
 			out := *item
-			out.State = StateFailed
+			out.State = StateAmbiguous
 			out.Result = &res
-			d.queue.UpdateState(item.Intervention.InterventionID, StateFailed, &res)
+			d.queue.UpdateState(item.Intervention.InterventionID, StateAmbiguous, &res)
+			// Best-effort record ambiguous so restart suppresses redelivery.
+			_ = d.ledger.RecordResult(StateDelivering, sessionID, res, StateAmbiguous)
 			if err == nil {
 				err = fmt.Errorf("%w: %v", ErrDurableWriteFailed, lerr)
 			}
@@ -370,12 +372,15 @@ func (d *AdvisoryDelivery) AcknowledgeSource(req AcknowledgeRequest) error {
 		return fmt.Errorf("invalid ack status %q", req.Status)
 	}
 
-	d.queue.UpdateState(req.InterventionID, state, &res)
+	// Durable first, then memory — avoid advanced in-memory state without log (#200).
 	if d.ledger != nil {
-		if err := d.ledger.RecordResult(item.State, item.Intervention.SessionID, res, state); err != nil {
+		fp := item.Intervention.Fingerprint
+		if err := d.ledger.RecordResultWithSource(item.State, item.Intervention.SessionID, res, state,
+			req.SourceKind, req.SourceEventID, req.CorrelationID, fp); err != nil {
 			return fmt.Errorf("%w: %v", ErrDurableWriteFailed, err)
 		}
 	}
+	d.queue.UpdateState(req.InterventionID, state, &res)
 	return nil
 }
 

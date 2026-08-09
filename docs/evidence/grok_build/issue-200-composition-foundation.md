@@ -6,12 +6,12 @@ Unit/integration tests drive the **shipped** APIs:
 
 | Path | Proof |
 |------|--------|
-| Bare `Acknowledge(id, "acked")` | Returns `ErrBareAcknowledgeExplicit` — cannot mint explicit |
-| `AcknowledgeSource` with Grok profile + `AckLayer=explicit` | Returns `ErrExplicitACKNotSupported` |
-| `AcknowledgeSource` with `session_visible` | Durable ledger append + state SESSION_VISIBLE |
-| Ledger write failure after host deliver | Surfaces `ErrDurableWriteFailed` (no silent success) |
-| Symlink ledger path | `OpenDurableAdviceLedger` rejects |
-| FAILED state | Not permanent suppress (retry allowed) |
+| Bare `Acknowledge(id, "acked")` | Unit: `ErrBareAcknowledgeExplicit` |
+| `AcknowledgeSource` + Grok + explicit | Unit: `ErrExplicitACKNotSupported` |
+| Symlink ledger path | Unit: open rejects |
+| `AcknowledgeSource` session_visible + ledger | Code path + API tests (source fields on transition) |
+| Host-accepted + ledger fail | Code returns `ErrDurableWriteFailed` and `StateAmbiguous` (suppresses redelivery) |
+| Live E2E composition | **Not claimed** |
 
 ## What is still not claimed
 

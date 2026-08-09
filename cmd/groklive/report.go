@@ -137,13 +137,16 @@ func runReport(args []string) {
 			"source_correlated": sessCorr,
 			"note":              "JSON-RPC success is transport; session_visible only when SessionCorrelated; explicit never from transport alone",
 		},
-		"process_cleanup":      pick(scenarios, "ACP-CLEANUP-001"),
-		"capability_manifests": caps,
-		"privacy_checks":       privacy,
+		"process_cleanup": pick(scenarios, "ACP-CLEANUP-001"),
+		"privacy_checks":  privacy,
 		"limitations":          reasons,
 		"scenarios":            scenarios,
-		"scenario_registry":    append([]string{}, goMandatoryIDs...),
-		"final_disposition":    disp,
+		"scenario_registry": append([]string{}, goMandatoryIDs...),
+		"final_disposition": disp,
+	}
+	// Omit capability_manifests when absent so JSON null does not fail schema (#215 follow-up).
+	if caps != nil {
+		report["capability_manifests"] = caps
 	}
 
 	if verrs := validateReportV2Basics(report, scenarios); len(verrs) > 0 {

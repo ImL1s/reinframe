@@ -46,7 +46,7 @@
 
 | Issue | Notes |
 |-------|-------|
-| **#167** / PR #193 | Historical live harness + v1 evidence on main; **unconditional GO withdrawn** pending **#199** |
+| **#167** / PR #193 | Historical live harness + v1 evidence on main; **unconditional GO withdrawn**; **#199** v2 gates closed (MORE_DATA until new live v2 report) |
 | **#108** / PR #194 | Foundation consumer/ledger on main; **live product complete withdrawn** pending **#200** |
 | **#191** | Grok ACP official-contract / lifecycle hardening on main |
 | **#201** | Immediate public-status downgrade (this wording) |

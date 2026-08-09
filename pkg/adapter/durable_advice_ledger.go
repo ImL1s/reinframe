@@ -79,8 +79,8 @@ func OpenDurableAdviceLedger(path string) (*DurableAdviceLedger, error) {
 		// Only states that prove host accepted transport (or terminal no-retry) suppress redelivery.
 		// DELIVERING alone does not suppress — crash mid-flight should allow retry.
 		if isSuppressState(DeliveryState(tr.ToState)) {
-			l.seen[tr.InterventionID] = struct{}{}
-			l.seen[dedupeKey(tr.InterventionID, tr.SessionID, tr.HostFamily, "")] = struct{}{}
+			// Session/host/action-bound key (fingerprint = action identity).
+			l.seen[dedupeKey(tr.InterventionID, tr.SessionID, tr.HostFamily, tr.Fingerprint)] = struct{}{}
 		}
 	}
 	return l, nil
@@ -93,17 +93,14 @@ func (l *DurableAdviceLedger) AlreadyDelivered(interventionID string) bool {
 }
 
 // AlreadyDeliveredKey checks a bound dedupe key (intervention|session|host|fingerprint).
+// Fingerprint is the action identity; empty fingerprint is a distinct key from non-empty.
 func (l *DurableAdviceLedger) AlreadyDeliveredKey(interventionID, sessionID, hostFamily, fingerprint string) bool {
-	if l == nil {
+	if l == nil || interventionID == "" {
 		return false
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if _, ok := l.seen[dedupeKey(interventionID, sessionID, hostFamily, fingerprint)]; ok {
-		return true
-	}
-	// Backward compatible: bare intervention id.
-	_, ok := l.seen[interventionID]
+	_, ok := l.seen[dedupeKey(interventionID, sessionID, hostFamily, fingerprint)]
 	return ok
 }
 
@@ -163,10 +160,9 @@ func (l *DurableAdviceLedger) Append(tr DeliveryTransition) error {
 	}
 	l.cursor += int64(n)
 	if tr.InterventionID != "" && isSuppressState(DeliveryState(tr.ToState)) {
-		// FAILED/UNSUPPORTED are NOT permanent suppress — allow policy retry (#200).
-		key := dedupeKey(tr.InterventionID, tr.SessionID, tr.HostFamily, "")
+		// Bind intervention + session + host + action fingerprint (not bare ID alone).
+		key := dedupeKey(tr.InterventionID, tr.SessionID, tr.HostFamily, tr.Fingerprint)
 		l.seen[key] = struct{}{}
-		l.seen[tr.InterventionID] = struct{}{}
 	}
 	return nil
 }
@@ -191,22 +187,9 @@ func (l *DurableAdviceLedger) Cursor() int64 {
 }
 
 // RecordResult appends a transition from a delivery result snapshot.
+// Fingerprint should be set on res via RecordResultWithSource when action-bound dedupe is required.
 func (l *DurableAdviceLedger) RecordResult(from DeliveryState, sessionID string, res InterventionResult, to DeliveryState) error {
-	return l.Append(DeliveryTransition{
-		InterventionID: res.InterventionID,
-		SessionID:      sessionID,
-		FromState:      string(from),
-		ToState:        string(to),
-		AckLayer:       res.AckLayer,
-		AckStatus:      res.AckStatus,
-		HostFamily:     res.HostFamily,
-		HostVersion:    res.HostVersion,
-		Profile:        res.Profile,
-		SafeBoundary:   res.SafeBoundary,
-		TargetSession:  res.TargetSessionID,
-		CapsDigest:     res.CapsDigest,
-		Message:        boundRunes(res.Message, 240),
-	})
+	return l.RecordResultWithSource(from, sessionID, res, to, "", "", "", "")
 }
 
 // RecordResultWithSource appends with source-bound ACK identity (#200).

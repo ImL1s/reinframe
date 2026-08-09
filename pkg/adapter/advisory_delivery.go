@@ -92,6 +92,9 @@ type AdvisoryDeliveryConfig struct {
 	// AlreadyDelivered InterventionIDs are suppressed without calling Actuator,
 	// and successful intermediate/terminal results are recorded.
 	Ledger *DurableAdviceLedger
+	// DedupeHostFamily pins host family into ledger dedupe keys (session/host/action-bound).
+	// Should match the actuator's HostFamily (e.g. GrokLiveHostFamily) so restart suppress matches writes.
+	DedupeHostFamily string
 }
 
 // AdvisoryDelivery owns the pending queue and turn-boundary delivery path.
@@ -102,6 +105,7 @@ type AdvisoryDelivery struct {
 	defaultTTL             time.Duration
 	queue                  *PendingQueue
 	ledger                 *DurableAdviceLedger
+	dedupeHostFamily       string
 }
 
 // NewAdvisoryDelivery builds an AdvisoryDelivery from config.
@@ -128,6 +132,7 @@ func NewAdvisoryDelivery(cfg AdvisoryDeliveryConfig) (*AdvisoryDelivery, error) 
 		defaultTTL:             ttl,
 		queue:                  q,
 		ledger:                 cfg.Ledger,
+		dedupeHostFamily:       cfg.DedupeHostFamily,
 	}, nil
 }
 
@@ -158,10 +163,10 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 		return nil, InterventionResult{}, errors.New("no pending intervention for session")
 	}
 
-	// Durable restart dedupe: session/host/action-bound when available (#200).
+	// Durable restart dedupe: session/host/action-bound (#200).
 	if d.ledger != nil {
-		host := ""
-		if item.Result != nil {
+		host := d.dedupeHostFamily
+		if item.Result != nil && item.Result.HostFamily != "" {
 			host = item.Result.HostFamily
 		}
 		if d.ledger.AlreadyDeliveredKey(item.Intervention.InterventionID, sessionID, host, item.Intervention.Fingerprint) {
@@ -227,10 +232,14 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 	}
 
 	res, err := d.actuator.Deliver(ctx, item.Intervention)
+	if res.HostFamily == "" {
+		res.HostFamily = d.dedupeHostFamily
+	}
 	state := mapResultToState(res, err)
 	d.queue.UpdateState(item.Intervention.InterventionID, state, &res)
 	if d.ledger != nil {
-		if lerr := d.ledger.RecordResult(StateDelivering, sessionID, res, state); lerr != nil {
+		fp := item.Intervention.Fingerprint
+		if lerr := d.ledger.RecordResultWithSource(StateDelivering, sessionID, res, state, "", "", "", fp); lerr != nil {
 			// Host may have accepted; durable commit failed — AMBIGUOUS, never auto-redeliver.
 			res.Message = strings.TrimSpace(res.Message + "; durable_write_failed")
 			res.ErrorClass = ErrorClassTransport
@@ -238,8 +247,8 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 			out.State = StateAmbiguous
 			out.Result = &res
 			d.queue.UpdateState(item.Intervention.InterventionID, StateAmbiguous, &res)
-			// Best-effort record ambiguous so restart suppresses redelivery.
-			_ = d.ledger.RecordResult(StateDelivering, sessionID, res, StateAmbiguous)
+			// Best-effort record ambiguous so restart suppresses redelivery (same bound key).
+			_ = d.ledger.RecordResultWithSource(StateDelivering, sessionID, res, StateAmbiguous, "", "", "", fp)
 			if err == nil {
 				err = fmt.Errorf("%w: %v", ErrDurableWriteFailed, lerr)
 			}

@@ -185,19 +185,19 @@ func TestDurableAdviceLedger_RestartSuppressesDuplicate(t *testing.T) {
 		SafeBoundary:   adapter.GrokSafeBoundaryNextInput,
 		Message:        "delivered",
 	}
-	if err := l1.RecordResult(adapter.StatePending, "rf", res, adapter.StateSessionVisible); err != nil {
+	if err := l1.RecordResultWithSource(adapter.StatePending, "rf", res, adapter.StateSessionVisible, "", "", "", "fp-dup"); err != nil {
 		t.Fatal(err)
 	}
-	if !l1.AlreadyDelivered("iv-dup") {
-		t.Fatal("expected seen")
+	if !l1.AlreadyDeliveredKey("iv-dup", "rf", adapter.GrokLiveHostFamily, "fp-dup") {
+		t.Fatal("expected bound key seen")
 	}
 	// Restart
 	l2, err := adapter.OpenDurableAdviceLedger(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !l2.AlreadyDelivered("iv-dup") {
-		t.Fatal("restart must suppress duplicate delivery")
+	if !l2.AlreadyDeliveredKey("iv-dup", "rf", adapter.GrokLiveHostFamily, "fp-dup") {
+		t.Fatal("restart must suppress duplicate delivery for bound key")
 	}
 	if l2.Cursor() <= 0 {
 		t.Fatal("cursor")
@@ -334,6 +334,7 @@ func TestAdvisoryDelivery_LedgerSuppressesDuplicate(t *testing.T) {
 		Actuator:               act,
 		SupportsAdviceDelivery: true,
 		Ledger:                 led,
+		DedupeHostFamily:       "test_host",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -343,6 +344,7 @@ func TestAdvisoryDelivery_LedgerSuppressesDuplicate(t *testing.T) {
 		SessionID:      "s",
 		ActionType:     "ZOOM_OUT_PROMPT",
 		AdvicePrompt:   "once",
+		Fingerprint:    "fp-once",
 	}
 	del.Enqueue(iv, time.Minute)
 	item, res, err := del.DeliverPending(context.Background(), "s")
@@ -355,16 +357,15 @@ func TestAdvisoryDelivery_LedgerSuppressesDuplicate(t *testing.T) {
 			t.Fatalf("state=%s res=%+v", item.State, res)
 		}
 	}
-	if !led.AlreadyDelivered("iv-led") {
-		// Fake maps to DELIVERING which is NOT suppress state — force record transport-accepted
-		_ = led.RecordResult(adapter.StateDelivering, "s", adapter.InterventionResult{
+	// DELIVERING is not a suppress state — record transport-accepted with bound key.
+	if !led.AlreadyDeliveredKey("iv-led", "s", "test_host", "fp-once") {
+		_ = led.RecordResultWithSource(adapter.StateDelivering, "s", adapter.InterventionResult{
 			InterventionID: "iv-led",
+			HostFamily:     "test_host",
 			AckLayer:       adapter.ACKLayerTransport,
 			AckStatus:      adapter.AckStatusPending,
-		}, adapter.StateTransportAccepted)
+		}, adapter.StateTransportAccepted, "", "", "", "fp-once")
 	}
-	// Re-enqueue same ID is suppressed by queue; use new enqueue after forget?
-	// AlreadyDelivered path: put another PENDING clone isn't possible (queue dedupe).
 	// Simulate restart: new queue + ledger reload.
 	led2, err := adapter.OpenDurableAdviceLedger(filepath.Join(dir, "l.jsonl"))
 	if err != nil {
@@ -375,12 +376,12 @@ func TestAdvisoryDelivery_LedgerSuppressesDuplicate(t *testing.T) {
 		SupportsAdviceDelivery: true,
 		Ledger:                 led2,
 		Queue:                  adapter.NewPendingQueue(),
+		DedupeHostFamily:       "test_host",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// New queue allows re-enqueue same InterventionID as "new" only if not in byID —
-	// new queue is empty so Enqueue succeeds; DeliverPending should suppress via ledger.
+	// New queue allows re-enqueue same InterventionID; DeliverPending should suppress via bound ledger key.
 	del2.Enqueue(iv, time.Minute)
 	item2, res2, err := del2.DeliverPending(context.Background(), "s")
 	if err != nil {

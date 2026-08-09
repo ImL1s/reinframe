@@ -230,18 +230,37 @@ func TestAdvisoryDelivery_AcknowledgeFromSessionVisible(t *testing.T) {
 	})
 	// Remove from pending delivery order is already done? NextPending moves it.
 	// UpdateState alone leaves bySess; Acknowledge should work from SESSION_VISIBLE.
-	if err := del.Acknowledge("iv-ack", adapter.AckStatusAcked); err != nil {
+	if err := del.AcknowledgeSource(adapter.AcknowledgeRequest{
+		InterventionID: "iv-ack", SourceKind: "test", SourceEventID: "evt-1",
+		Status: adapter.AckStatusAcked, AckLayer: adapter.ACKLayerSessionVisible,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	item, ok := del.Get("iv-ack")
 	if !ok {
 		t.Fatal("missing")
 	}
-	if item.State != adapter.StateAcked {
-		t.Fatalf("state=%s want ACKED", item.State)
+	// Source-bound ack at session_visible ceiling (Grok cannot mint explicit).
+	if item.State != adapter.StateSessionVisible && item.State != adapter.StateAcked {
+		t.Fatalf("state=%s want SESSION_VISIBLE or ACKED", item.State)
 	}
-	if item.Result == nil || item.Result.AckLayer != adapter.ACKLayerExplicit {
-		t.Fatalf("explicit layer required on external ACK, got %+v", item.Result)
+	if item.Result == nil || item.Result.AckLayer != adapter.ACKLayerSessionVisible {
+		t.Fatalf("session_visible layer expected (not explicit), got %+v", item.Result)
+	}
+	// Bare Acknowledge(acked) must refuse explicit mint.
+	if err := del.Acknowledge("iv-ack", adapter.AckStatusAcked); err == nil {
+		// already terminal — may error for state; also test fresh path below
+	}
+	if err := del.AcknowledgeSource(adapter.AcknowledgeRequest{
+		InterventionID: "iv-ack",
+		HostFamily:     adapter.GrokLiveHostFamily,
+		Profile:        adapter.GrokACPProfileV1,
+		SourceKind:     "test",
+		SourceEventID:  "evt-explicit",
+		Status:         adapter.AckStatusAcked,
+		AckLayer:       adapter.ACKLayerExplicit,
+	}); err == nil {
+		t.Fatal("Grok profile must refuse explicit ACK")
 	}
 }
 

@@ -41,9 +41,13 @@ type DeliveryTransition struct {
 }
 
 // OpenDurableAdviceLedger loads existing IDs from path (if present) for restart dedupe.
+// Rejects symlink/reparse paths (#200).
 func OpenDurableAdviceLedger(path string) (*DurableAdviceLedger, error) {
 	if path == "" {
 		return nil, fmt.Errorf("durable advice ledger: path required")
+	}
+	if err := rejectLedgerSymlink(path); err != nil {
+		return nil, err
 	}
 	l := &DurableAdviceLedger{
 		Path: path,
@@ -72,20 +76,52 @@ func OpenDurableAdviceLedger(path string) (*DurableAdviceLedger, error) {
 		// DELIVERING alone does not suppress — crash mid-flight should allow retry.
 		if isSuppressState(DeliveryState(tr.ToState)) {
 			l.seen[tr.InterventionID] = struct{}{}
+			l.seen[dedupeKey(tr.InterventionID, tr.SessionID, tr.HostFamily, "")] = struct{}{}
 		}
 	}
 	return l, nil
 }
 
 // AlreadyDelivered reports whether InterventionID has a durable delivery transition.
+// Prefer AlreadyDeliveredKey for session/host/action-bound dedupe (#200).
 func (l *DurableAdviceLedger) AlreadyDelivered(interventionID string) bool {
+	return l.AlreadyDeliveredKey(interventionID, "", "", "")
+}
+
+// AlreadyDeliveredKey checks a bound dedupe key (intervention|session|host|fingerprint).
+func (l *DurableAdviceLedger) AlreadyDeliveredKey(interventionID, sessionID, hostFamily, fingerprint string) bool {
 	if l == nil {
 		return false
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if _, ok := l.seen[dedupeKey(interventionID, sessionID, hostFamily, fingerprint)]; ok {
+		return true
+	}
+	// Backward compatible: bare intervention id.
 	_, ok := l.seen[interventionID]
 	return ok
+}
+
+func dedupeKey(interventionID, sessionID, hostFamily, fingerprint string) string {
+	return interventionID + "|" + sessionID + "|" + hostFamily + "|" + fingerprint
+}
+
+func rejectLedgerSymlink(path string) error {
+	// If the leaf exists and is a symlink, reject.
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("durable advice ledger: path is a symlink")
+		}
+	}
+	// Also reject if any parent is a symlink (best-effort).
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("durable advice ledger: parent path is a symlink")
+		}
+	}
+	return nil
 }
 
 // Append records a transition and marks the InterventionID as seen for dedupe.
@@ -123,6 +159,9 @@ func (l *DurableAdviceLedger) Append(tr DeliveryTransition) error {
 	}
 	l.cursor += int64(n)
 	if tr.InterventionID != "" && isSuppressState(DeliveryState(tr.ToState)) {
+		// FAILED/UNSUPPORTED are NOT permanent suppress — allow policy retry (#200).
+		key := dedupeKey(tr.InterventionID, tr.SessionID, tr.HostFamily, "")
+		l.seen[key] = struct{}{}
 		l.seen[tr.InterventionID] = struct{}{}
 	}
 	return nil
@@ -131,8 +170,8 @@ func (l *DurableAdviceLedger) Append(tr DeliveryTransition) error {
 func isSuppressState(st DeliveryState) bool {
 	switch st {
 	case StateTransportAccepted, StateSessionVisible, StateExplicitACK, StateBehavioralACK,
-		StateAcked, StateRejected, StateTimedOut, StateExpired, StateSuppressed,
-		StateFailed, StateUnsupported:
+		StateAcked, StateRejected, StateTimedOut, StateExpired, StateSuppressed:
+		// Intentionally exclude StateFailed / StateUnsupported so transient failures can retry.
 		return true
 	default:
 		return false

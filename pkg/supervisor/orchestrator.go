@@ -144,8 +144,23 @@ func (o *Orchestrator) DeliverAtSafeBoundary(ctx context.Context, sessionID stri
 }
 
 // Acknowledge records agent ACK/REJECT/TIMEOUT and clears the pending latch on acked.
+// Acked status uses source-bound AcknowledgeSource at session_visible ceiling
+// (Grok cannot mint explicit via bare call — #200).
 func (o *Orchestrator) Acknowledge(interventionID, status string) error {
-	if err := o.del.Acknowledge(interventionID, status); err != nil {
+	var err error
+	if status == adapter.AckStatusAcked {
+		err = o.del.AcknowledgeSource(adapter.AcknowledgeRequest{
+			SchemaVersion:  adapter.AcknowledgeRequestSchemaV1,
+			InterventionID: interventionID,
+			SourceKind:     "orchestrator",
+			SourceEventID:  "orchestrator:" + interventionID,
+			Status:         status,
+			AckLayer:       adapter.ACKLayerSessionVisible,
+		})
+	} else {
+		err = o.del.Acknowledge(interventionID, status)
+	}
+	if err != nil {
 		return err
 	}
 	item, ok := o.del.Get(interventionID)

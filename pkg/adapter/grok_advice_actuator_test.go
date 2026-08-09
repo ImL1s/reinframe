@@ -247,10 +247,6 @@ func TestAdvisoryDelivery_AcknowledgeFromSessionVisible(t *testing.T) {
 	if item.Result == nil || item.Result.AckLayer != adapter.ACKLayerSessionVisible {
 		t.Fatalf("session_visible layer expected (not explicit), got %+v", item.Result)
 	}
-	// Bare Acknowledge(acked) must refuse explicit mint.
-	if err := del.Acknowledge("iv-ack", adapter.AckStatusAcked); err == nil {
-		// already terminal — may error for state; also test fresh path below
-	}
 	if err := del.AcknowledgeSource(adapter.AcknowledgeRequest{
 		InterventionID: "iv-ack",
 		HostFamily:     adapter.GrokLiveHostFamily,

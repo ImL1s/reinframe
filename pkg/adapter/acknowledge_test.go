@@ -21,9 +21,6 @@ func TestBareAcknowledgeCannotMintExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := del.Acknowledge("x", adapter.AckStatusAcked); !errors.Is(err, adapter.ErrBareAcknowledgeExplicit) {
-		// may also fail unknown intervention first — enqueue+deliver then bare
-	}
 	del.Enqueue(protocol.Intervention{
 		InterventionID: "x", SessionID: "s", ActionType: "ZOOM_OUT_PROMPT", AdvicePrompt: "a",
 	}, time.Minute)

@@ -47,7 +47,6 @@ func runReport(args []string) {
 	}
 	osName := runtime.GOOS
 	day := time.Now().UTC().Format("2006-01-02")
-	base := fmt.Sprintf("issue-167-live-%s-%s-%s", sanitizeVersion(ver), osName, day)
 
 	ack := "transport"
 	if sr, ok := scenarios["ACP-SESSION-001"]; ok && sr.ACKLayer != "" {
@@ -131,7 +130,7 @@ func runReport(args []string) {
 	}
 
 	// Prefer v2 basename; keep OS/date pin.
-	base = fmt.Sprintf("issue-167-live-v2-%s-%s-%s", sanitizeVersion(ver), osName, day)
+	base := fmt.Sprintf("issue-167-live-v2-%s-%s-%s", sanitizeVersion(ver), osName, day)
 	jsonPath := filepath.Join(evDir, base+".json")
 	mdPath := filepath.Join(evDir, base+".md")
 	if err := writeJSON(jsonPath, report); err != nil {
@@ -305,22 +304,4 @@ func renderMD(report map[string]any, disp, ack, ver, osName string, reasons []st
 	b.WriteString("- No credential material intentionally stored\n")
 	_ = report
 	return b.String()
-}
-
-// minimalSchema kept for tools that still look for v1 path; v1 is historical only.
-func minimalSchema() map[string]any {
-	return map[string]any{
-		"$schema":              "https://json-schema.org/draft/2020-12/schema",
-		"$id":                  LiveControlSchemaV1,
-		"title":                "Reinframe Grok Build live control evidence (historical v1)",
-		"type":                 "object",
-		"required":             []string{"schema_version", "final_disposition", "scenarios"},
-		"additionalProperties": true,
-		"properties": map[string]any{
-			"schema_version":    map[string]any{"type": "string"},
-			"final_disposition": map[string]any{"enum": []string{"GO", "LIMITED_GO", "MORE_DATA", "NO_GO"}},
-			"scenarios":         map[string]any{"type": "object"},
-		},
-		"description": "Historical only. Use reinframe.grok_build_live_control.v2 for new reports (#199).",
-	}
 }

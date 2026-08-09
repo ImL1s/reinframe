@@ -344,13 +344,14 @@ func (d *AdvisoryDelivery) AcknowledgeSource(req AcknowledgeRequest) error {
 		res.Accepted = true
 		res.AckStatus = AckStatusAcked
 		res.AckLayer = layer
-		if layer == ACKLayerExplicit {
+		switch layer {
+		case ACKLayerExplicit:
 			state = StateExplicitACK
-		} else if layer == ACKLayerSessionVisible {
+		case ACKLayerSessionVisible:
 			state = StateSessionVisible
-		} else if layer == ACKLayerTransport {
+		case ACKLayerTransport:
 			state = StateTransportAccepted
-		} else {
+		default:
 			state = StateAcked
 		}
 		ackAt := now

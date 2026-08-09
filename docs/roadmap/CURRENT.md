@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-09) — Grok **historical live evidence** (#167) under **#199** requalification (public **MORE_DATA**); **#108** foundation only (**#200** open); **#168 MORE-DATA**; governance **#201**  
+**Status:** current (2026-08-09) — **#201/#199/#200 closed** on main; public Grok disposition remains **MORE_DATA** (historical v1; v2 gates refuse false GO); #168 MORE-DATA; no ranking  
 **Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open.
 
 ## Implemented — narrow DoD, do not reopen for the same scope
@@ -27,11 +27,11 @@
 
 | Issue | Notes |
 |-------|-------|
-| **#201** | Public claim downgrade (docs) |
-| **#199** | Requalify #167 closed-schema GO gates; public MORE_DATA until closed |
-| **#200** | Source-bound ACK + durable delivery + live #108 E2E composition |
+| **#201** | **CLOSED** — public claim downgrade |
+| **#199** | **CLOSED** — v2 gates/schema; public MORE_DATA without new live v2 GO |
+| **#200** | **CLOSED** — source-bound ACK + durable honesty; live E2E composition not claimed |
 
-Dependency order: **#201 → #199 → #200 → re-sync README/Epic/#168**.
+ residual order completed: **#201 → #199 → #200**.
 
 ### Environment / live evidence (still open)
 

@@ -120,19 +120,40 @@ func runReport(args []string) {
 		reasons = append(reasons2, verrs...)
 		report["final_disposition"] = disp
 		report["limitations"] = reasons
-		if disp == "GO" {
-			// Extra belt: never emit GO with validation errors.
+		if disp == "GO" || disp == "LIMITED_GO" {
+			// Extra belt: never emit GO/LIMITED_GO with validation errors.
 			disp = "NO_GO"
-			reasons = append(reasons, "validation errors forbid GO")
+			reasons = append(reasons, "validation errors forbid GO/LIMITED_GO")
 			report["final_disposition"] = disp
 			report["limitations"] = reasons
 		}
+	}
+
+	// Fail-closed committed schema gate before disk write (#209 residual).
+	// Convert scenarios to plain maps for JSON schema (struct tags).
+	if err := validateReportAgainstCommittedSchema(report); err != nil {
+		reasons = append(reasons, "committed_schema: "+err.Error())
+		if disp == "GO" || disp == "LIMITED_GO" {
+			disp = "NO_GO"
+			reasons = append(reasons, "committed schema validation forbids GO/LIMITED_GO")
+		}
+		report["final_disposition"] = disp
+		report["limitations"] = reasons
 	}
 
 	// Prefer v2 basename; keep OS/date pin.
 	base := fmt.Sprintf("issue-167-live-v2-%s-%s-%s", sanitizeVersion(ver), osName, day)
 	jsonPath := filepath.Join(evDir, base+".json")
 	mdPath := filepath.Join(evDir, base+".md")
+	// Final belt: never write a GO/LIMITED_GO artifact that fails committed schema.
+	if disp == "GO" || disp == "LIMITED_GO" {
+		if err := validateReportAgainstCommittedSchema(report); err != nil {
+			disp = "NO_GO"
+			reasons = append(reasons, "pre-write schema gate: "+err.Error())
+			report["final_disposition"] = disp
+			report["limitations"] = reasons
+		}
+	}
 	if err := writeJSON(jsonPath, report); err != nil {
 		fail(err)
 	}

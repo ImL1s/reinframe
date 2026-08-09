@@ -84,14 +84,16 @@ func (f *FileActuator) Deliver(ctx context.Context, intervention protocol.Interv
 	}
 	line, err := json.Marshal(env)
 	if err != nil {
+		// Pre-send local failure — never reached the channel.
 		return InterventionResult{
-			InterventionID: intervention.InterventionID,
-			Accepted:       false,
-			DeliveryMode:   mode,
-			DeliveredAt:    now,
-			AckStatus:      AckStatusRejected,
-			ErrorClass:     ErrorClassTransport,
-			Message:        err.Error(),
+			InterventionID:   intervention.InterventionID,
+			Accepted:         false,
+			DeliveryMode:     mode,
+			DeliveredAt:      now,
+			AckStatus:        AckStatusRejected,
+			ErrorClass:       ErrorClassUnsupportedCapability,
+			DeliveryBoundary: BoundaryNotSent,
+			Message:          err.Error(),
 		}, err
 	}
 	line = append(line, '\n')
@@ -100,51 +102,57 @@ func (f *FileActuator) Deliver(ctx context.Context, intervention protocol.Interv
 	defer f.writeMu.Unlock()
 	if f.Path == "" {
 		return InterventionResult{
-			InterventionID: intervention.InterventionID,
-			Accepted:       false,
-			DeliveryMode:   mode,
-			DeliveredAt:    now,
-			AckStatus:      AckStatusUnsupported,
-			ErrorClass:     ErrorClassTransport,
-			Message:        "file actuator: Path required",
+			InterventionID:   intervention.InterventionID,
+			Accepted:         false,
+			DeliveryMode:     mode,
+			DeliveredAt:      now,
+			AckStatus:        AckStatusUnsupported,
+			ErrorClass:       ErrorClassUnsupportedCapability,
+			DeliveryBoundary: BoundaryNotSent,
+			Message:          "file actuator: Path required",
 		}, fmt.Errorf("file actuator: Path required")
 	}
 	if err := os.MkdirAll(filepath.Dir(f.Path), 0o755); err != nil && !os.IsExist(err) {
 		// Dir may be "." — MkdirAll(".") is fine; if Path has no dir, Dir is "."
 		if filepath.Dir(f.Path) != "." {
 			return InterventionResult{
-				InterventionID: intervention.InterventionID,
-				Accepted:       false,
-				DeliveryMode:   mode,
-				DeliveredAt:    now,
-				AckStatus:      AckStatusRejected,
-				ErrorClass:     ErrorClassTransport,
-				Message:        err.Error(),
+				InterventionID:   intervention.InterventionID,
+				Accepted:         false,
+				DeliveryMode:     mode,
+				DeliveredAt:      now,
+				AckStatus:        AckStatusRejected,
+				ErrorClass:       ErrorClassUnsupportedCapability,
+				DeliveryBoundary: BoundaryNotSent,
+				Message:          err.Error(),
 			}, err
 		}
 	}
 	fh, err := os.OpenFile(f.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
+		// File never opened for write — pre-send.
 		return InterventionResult{
-			InterventionID: intervention.InterventionID,
-			Accepted:       false,
-			DeliveryMode:   mode,
-			DeliveredAt:    now,
-			AckStatus:      AckStatusRejected,
-			ErrorClass:     ErrorClassTransport,
-			Message:        err.Error(),
+			InterventionID:   intervention.InterventionID,
+			Accepted:         false,
+			DeliveryMode:     mode,
+			DeliveredAt:      now,
+			AckStatus:        AckStatusRejected,
+			ErrorClass:       ErrorClassUnsupportedCapability,
+			DeliveryBoundary: BoundaryNotSent,
+			Message:          err.Error(),
 		}, err
 	}
 	defer func() { _ = fh.Close() }()
 	if _, err := fh.Write(line); err != nil {
+		// Write attempted — may be partial; treat as send-attempted-unknown.
 		return InterventionResult{
-			InterventionID: intervention.InterventionID,
-			Accepted:       false,
-			DeliveryMode:   mode,
-			DeliveredAt:    now,
-			AckStatus:      AckStatusRejected,
-			ErrorClass:     ErrorClassTransport,
-			Message:        err.Error(),
+			InterventionID:   intervention.InterventionID,
+			Accepted:         false,
+			DeliveryMode:     mode,
+			DeliveredAt:      now,
+			AckStatus:        AckStatusRejected,
+			ErrorClass:       ErrorClassTransport,
+			DeliveryBoundary: BoundarySendAttemptedUnknown,
+			Message:          err.Error(),
 		}, err
 	}
 	f.lastLine = string(line)

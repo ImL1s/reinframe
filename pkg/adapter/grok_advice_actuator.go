@@ -74,6 +74,7 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		base.Accepted = false
 		base.AckStatus = AckStatusUnsupported
 		base.ErrorClass = ErrorClassUnsupportedCapability
+		base.DeliveryBoundary = BoundaryNotSent
 		base.Message = "grok advice: client required"
 		return base, fmt.Errorf("grok advice: client required")
 	}
@@ -86,6 +87,7 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		base.Accepted = false
 		base.AckStatus = AckStatusUnsupported
 		base.ErrorClass = ErrorClassUnsupportedCapability
+		base.DeliveryBoundary = BoundaryNotSent
 		base.Message = "grok advice: TargetSessionID required"
 		return base, fmt.Errorf("grok advice: TargetSessionID required")
 	}
@@ -98,6 +100,7 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 			base.AckStatus = AckStatusRejected
 			// Local pre-send validation — not a host transport attempt (#208).
 			base.ErrorClass = ErrorClassUnsupportedCapability
+			base.DeliveryBoundary = BoundaryNotSent
 			base.Message = "session/host mismatch: intervention pin does not match TargetSessionID"
 			return base, fmt.Errorf("grok advice: session mismatch")
 		}
@@ -106,6 +109,7 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		base.Accepted = false
 		base.AckStatus = AckStatusRejected
 		base.ErrorClass = ErrorClassUnsupportedCapability
+		base.DeliveryBoundary = BoundaryNotSent
 		base.Message = "empty advice"
 		return base, fmt.Errorf("grok advice: empty intervention")
 	}
@@ -126,6 +130,7 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 			base.AckStatus = AckStatusRejected
 			// Local privacy gate before SessionPrompt (#208 not_sent).
 			base.ErrorClass = ErrorClassUnsupportedCapability
+			base.DeliveryBoundary = BoundaryNotSent
 			base.Message = "refusing private-reasoning-shaped advice body"
 			return base, fmt.Errorf("grok advice: privacy reject")
 		}
@@ -135,6 +140,7 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		base.Accepted = false
 		base.AckStatus = AckStatusTimedOut
 		base.ErrorClass = ErrorClassTimeout
+		base.DeliveryBoundary = BoundarySendAttemptedUnknown
 		base.Message = "context done before deliver"
 		return base, err
 	}
@@ -142,6 +148,8 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		base.Accepted = false
 		base.AckStatus = AckStatusRejected
 		base.ErrorClass = ErrorClassTransport
+		// Host may have accepted after send — never treat as not_sent (#211).
+		base.DeliveryBoundary = BoundarySendAttemptedUnknown
 		base.Message = "session/prompt: " + boundRunes(err.Error(), 200)
 		base.AckLayer = ACKLayerNone
 		return base, err

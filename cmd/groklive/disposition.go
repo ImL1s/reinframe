@@ -66,13 +66,17 @@ func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reas
 		return "MORE_DATA", []string{"no scenarios recorded"}
 	}
 
-	// Closed status enum gate (#209): any non-enum status forbids GO and LIMITED_GO.
+	// Closed status enum + non-empty id==key gate (#209 residuals).
 	for id, sr := range scenarios {
 		// Empty status on a present entry is invalid (distinct from missing key).
 		if sr.Status == "" || !validScenarioStatus(sr.Status) {
 			return "NO_GO", []string{fmt.Sprintf("%s invalid status %q", id, sr.Status)}
 		}
-		if sr.ID != "" && sr.ID != id {
+		// Committed schema requires id minLength:1 and equal to map key — empty id is not GO.
+		if sr.ID == "" {
+			return "NO_GO", []string{fmt.Sprintf("%s missing embedded id", id)}
+		}
+		if sr.ID != id {
 			return "NO_GO", []string{fmt.Sprintf("scenario key %s mismatches embedded id %s", id, sr.ID)}
 		}
 	}
@@ -401,12 +405,14 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 		}
 	}
 
-	// Scenario status enum + key/id consistency.
+	// Scenario status enum + key/id consistency (id required minLength 1).
 	for id, sr := range scenarios {
 		if !validScenarioStatus(sr.Status) {
 			errs = append(errs, fmt.Sprintf("scenario %s invalid status %q", id, sr.Status))
 		}
-		if sr.ID != "" && sr.ID != id {
+		if sr.ID == "" {
+			errs = append(errs, fmt.Sprintf("scenario %s missing embedded id", id))
+		} else if sr.ID != id {
 			errs = append(errs, fmt.Sprintf("scenario key %s mismatches id %s", id, sr.ID))
 		}
 	}

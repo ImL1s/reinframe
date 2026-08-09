@@ -377,6 +377,57 @@ func TestEvaluateDisposition_V2_IllegalStatusOnMandatoryInFullMatrix(t *testing.
 	}
 }
 
+// TestEvaluateDisposition_V2_EmptyEmbeddedIDNeverGO: schema requires id minLength 1.
+func TestEvaluateDisposition_V2_EmptyEmbeddedIDNeverGO(t *testing.T) {
+	t.Parallel()
+	m := fullGOScenarios()
+	// Full matrix otherwise perfect — only empty embedded id.
+	s := m["HOOK-ALLOW-001"]
+	s.ID = ""
+	m["HOOK-ALLOW-001"] = s
+	disp, reasons := evaluateDisposition(m)
+	if disp == "GO" || disp == "LIMITED_GO" {
+		t.Fatalf("empty embedded id must not yield GO/LIMITED_GO; got %s %v", disp, reasons)
+	}
+	if disp != "NO_GO" {
+		t.Fatalf("want NO_GO got %s %v", disp, reasons)
+	}
+}
+
+// TestValidateReportAgainstCommittedSchema_RejectsEmptyID drives the same gate
+// used before report disk write.
+func TestValidateReportAgainstCommittedSchema_RejectsEmptyID(t *testing.T) {
+	t.Parallel()
+	m := fullGOScenarios()
+	// Build a report-shaped document with empty id in scenarios (schema violation).
+	scenarios := map[string]any{}
+	for id, sr := range m {
+		scenarios[id] = map[string]any{
+			"id":     "", // violates minLength:1
+			"status": sr.Status,
+		}
+	}
+	// Put one valid-looking entry that is empty id
+	report := map[string]any{
+		"schema_version": LiveControlSchemaV2,
+		"provenance": map[string]any{
+			"issue": 167, "generated_at": "t", "goos": "darwin", "harness": "cmd/groklive",
+		},
+		"entry_gates": map[string]any{
+			"live_flag_required": true, "auth_json_read": false, "credential_print": false,
+		},
+		"scenarios":         scenarios,
+		"ack_layers":        map[string]any{"strongest_proven": "session_visible", "explicit_claimed": false},
+		"privacy_checks":    map[string]any{"method": "best_effort_scan"},
+		"limitations":       []string{},
+		"scenario_registry": append([]string{}, goMandatoryIDs...),
+		"final_disposition": "GO",
+	}
+	if err := validateReportAgainstCommittedSchema(report); err == nil {
+		t.Fatal("committed schema must reject empty scenario id")
+	}
+}
+
 // TestClosedSchemaV2_MatchesCommittedArtifact pins in-memory schema SoT against repo file.
 func TestClosedSchemaV2_MatchesCommittedCriticalClosedness(t *testing.T) {
 	t.Parallel()

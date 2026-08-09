@@ -30,10 +30,10 @@
 | **#201** | **CLOSED** — public claim downgrade |
 | **#199** | **CLOSED** — v2 gates first version |
 | **#200** | **CLOSED** — source-bound ACK + durable foundation |
-| **#208** | **CLOSED** (PR #210) — fail-closed ambiguous sidecar / not_sent vs suppress |
-| **#209** | **CLOSED** (PR #210) — truly closed v2 schema + unknown-status NO_GO |
+| **#208** | **CLOSED** (PR #210/#211 + residuals) — fail-closed sidecar, `.tmp` promote, semantic JSONL, actuator boundary |
+| **#209** | **CLOSED** (PR #210 + residuals) — closed status enum, empty id NO_GO, committed-schema pre-write gate |
 
-Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209**.
+Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 + residual follow-ups**.
 
 ### Environment / live evidence (still open)
 

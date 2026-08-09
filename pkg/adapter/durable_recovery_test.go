@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,6 +15,14 @@ import (
 	"github.com/ImL1s/reinframe/pkg/adapter"
 	"github.com/ImL1s/reinframe/pkg/protocol"
 )
+
+func boundKey(iv, sess, host, fp string) string {
+	b, err := json.Marshal([4]string{iv, sess, host, fp})
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
 
 func markerNameForKey(key string) string {
 	sum := sha256.Sum256([]byte(key))
@@ -52,7 +61,7 @@ func TestOpen_MarkerIsDirectory_FailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Valid-looking hash name but directory body.
-	key := "iv|sess|host|fp"
+	key := boundKey("iv", "sess", "host", "fp")
 	bad := filepath.Join(sup, markerNameForKey(key))
 	if err := os.MkdirAll(bad, 0o700); err != nil {
 		t.Fatal(err)
@@ -75,7 +84,7 @@ func TestOpen_EmptyMarker_FailClosed(t *testing.T) {
 	if err := os.MkdirAll(sup, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	key := "iv|sess|host|fp"
+	key := boundKey("iv", "sess", "host", "fp")
 	if err := os.WriteFile(filepath.Join(sup, markerNameForKey(key)), []byte(""), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +103,7 @@ func TestOpen_NonCanonicalMarkerName_FailClosed(t *testing.T) {
 	if err := os.MkdirAll(sup, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sup, "deadbeefdeadbeef.key"), []byte("iv|sess|host|fp\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(sup, "deadbeefdeadbeef.key"), []byte(boundKey("iv", "sess", "host", "fp")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := adapter.OpenDurableAdviceLedger(path)
@@ -302,14 +311,19 @@ func TestClassifyDeliveryBoundary_Table(t *testing.T) {
 		{"timeout", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassTimeout}, context.DeadlineExceeded, adapter.BoundarySendAttemptedUnknown},
 		{"agent_rejected", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassAgentRejected, AckStatus: adapter.AckStatusRejected}, nil, adapter.BoundaryTransportAccepted},
 		// Grok SessionPrompt failure shape (shipped grok_advice_actuator.go):
-		// ErrorClassTransport + AckStatusRejected + Accepted=false → send_attempted_unknown.
+		// DeliveryBoundary authoritative; ErrorClassTransport alone is heuristic fallback.
 		{"grok_session_prompt_fail", adapter.InterventionResult{
-			Accepted: false, ErrorClass: adapter.ErrorClassTransport, AckStatus: adapter.AckStatusRejected, AckLayer: adapter.ACKLayerNone,
+			Accepted: false, ErrorClass: adapter.ErrorClassTransport, AckStatus: adapter.AckStatusRejected,
+			AckLayer: adapter.ACKLayerNone, DeliveryBoundary: adapter.BoundarySendAttemptedUnknown,
 		}, errors.New("session/prompt: boom"), adapter.BoundarySendAttemptedUnknown},
 		{"post_send_transport_fail", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassTransport, AckStatus: adapter.AckStatusPending}, errors.New("rpc"), adapter.BoundarySendAttemptedUnknown},
-		// Pre-send Grok locals use unsupported_capability only.
-		{"grok_privacy_style", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassUnsupportedCapability, AckStatus: adapter.AckStatusRejected}, errors.New("privacy"), adapter.BoundaryNotSent},
-		{"grok_session_mismatch", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassUnsupportedCapability, AckStatus: adapter.AckStatusRejected}, errors.New("session mismatch"), adapter.BoundaryNotSent},
+		// Pre-send FileActuator / Grok locals declare not_sent.
+		{"file_pre_send", adapter.InterventionResult{
+			Accepted: false, ErrorClass: adapter.ErrorClassUnsupportedCapability, AckStatus: adapter.AckStatusUnsupported,
+			DeliveryBoundary: adapter.BoundaryNotSent,
+		}, errors.New("path required"), adapter.BoundaryNotSent},
+		{"grok_privacy_style", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassUnsupportedCapability, AckStatus: adapter.AckStatusRejected, DeliveryBoundary: adapter.BoundaryNotSent}, errors.New("privacy"), adapter.BoundaryNotSent},
+		{"grok_session_mismatch", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassUnsupportedCapability, AckStatus: adapter.AckStatusRejected, DeliveryBoundary: adapter.BoundaryNotSent}, errors.New("session mismatch"), adapter.BoundaryNotSent},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -345,14 +359,15 @@ func TestDeliverPending_SessionPromptFail_PoisonLedger_SuppressesRestart(t *test
 	act := adapter.NewFakeActuator()
 	act.ResultHook = func(_ context.Context, intervention protocol.Intervention) (adapter.InterventionResult, error) {
 		return adapter.InterventionResult{
-			InterventionID: intervention.InterventionID,
-			Accepted:       false,
-			DeliveryMode:   adapter.DefaultDeliveryMode(intervention.ActionType),
-			AckStatus:      adapter.AckStatusRejected,
-			ErrorClass:     adapter.ErrorClassTransport,
-			AckLayer:       adapter.ACKLayerNone,
-			HostFamily:     adapter.GrokLiveHostFamily,
-			Message:        "session/prompt: simulated host failure",
+			InterventionID:   intervention.InterventionID,
+			Accepted:         false,
+			DeliveryMode:     adapter.DefaultDeliveryMode(intervention.ActionType),
+			AckStatus:        adapter.AckStatusRejected,
+			ErrorClass:       adapter.ErrorClassTransport,
+			AckLayer:         adapter.ACKLayerNone,
+			HostFamily:       adapter.GrokLiveHostFamily,
+			DeliveryBoundary: adapter.BoundarySendAttemptedUnknown, // matches GrokACPActuator SessionPrompt fail
+			Message:          "session/prompt: simulated host failure",
 		}, errors.New("session/prompt: simulated host failure")
 	}
 

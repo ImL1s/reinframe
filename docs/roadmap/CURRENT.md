@@ -28,12 +28,12 @@
 | Issue | Notes |
 |-------|-------|
 | **#201** | **CLOSED** — public claim downgrade |
-| **#199** | **CLOSED** — v2 gates first version; follow-up **#209** fully closed schema/evaluator |
-| **#200** | **CLOSED** — source-bound ACK + durable foundation; follow-up **#208** fail-closed sidecar |
-| **#208** | Fail-closed ambiguous sidecar recovery / not_sent vs suppress |
-| **#209** | Truly closed v2 schema + unknown-status NO_GO |
+| **#199** | **CLOSED** — v2 gates first version |
+| **#200** | **CLOSED** — source-bound ACK + durable foundation |
+| **#208** | **CLOSED** (PR #210) — fail-closed ambiguous sidecar / not_sent vs suppress |
+| **#209** | **CLOSED** (PR #210) — truly closed v2 schema + unknown-status NO_GO |
 
-Completed honesty order: **#201 → #199 → #200 → #205–#207**. Active P1: **#208, #209**.
+Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209**.
 
 ### Environment / live evidence (still open)
 

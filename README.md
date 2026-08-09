@@ -59,8 +59,8 @@ Evaluation:
 | TaskSubmitted intake mappers (#84) | ✅ Fixture/host mappers (no protocol host type names) |
 | Codex EventSource offline + near-live tail (#95/#107/#118) | ✅ Observe-only L0; collision-safe source identity |
 | Codex project-local hooks control (#163) | ✅ Foundation — project-local hooks.json install/doctor + PreTool/Permission mapping; **live proof #164** |
-| Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; historical live #167 (MORE_DATA/#199) |
-| Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; historical live #167 (MORE_DATA/#199) |
+| Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; historical live #167 (MORE_DATA; #199 closed) |
+| Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; historical live #167 (MORE_DATA; #199 closed) |
 | Live Codex hooks proof (#164) | 🔲 Open — blocked on interactive Codex + project trust |
 | Live Grok Build hooks+ACP proof (#167) | 🟡 **Historical live run** (darwin/`grok 1.0.0`); public disposition **MORE_DATA**; **#199 v2 gates on main** (full matrix/correlation required for GO); no new live v2 GO artifact yet |
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |

@@ -12,7 +12,7 @@
 **MORE-DATA** (unchanged after single live host)
 
 - Fake Codex hooks / Grok hooks / Grok ACP / Claude PreTool fixtures remain.
-- **Historical Grok live pin present** after #167 live run (public MORE_DATA pending #199) (`grok 1.0.0` darwin, hooks allow/deny/fail-open, ACP `session_visible`).
+- **Historical Grok live pin present** after #167 live run (public MORE_DATA; #199 v2 gates closed) (`grok 1.0.0` darwin, hooks allow/deny/fail-open, ACP `session_visible`).
 - Matched live lanes still missing: **#164 Codex**, **#120 Claude**.
 - **No host/model ranking**; tunneling scores stay zero.
 - ACK layers kept separate; never invent explicit ACK.

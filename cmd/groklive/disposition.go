@@ -290,6 +290,8 @@ func closedSchemaV2() map[string]any {
 				"grok_version":          map[string]any{"type": "string"},
 				"grok_version_full":     map[string]any{"type": "string"},
 				"reinframe_commit":      map[string]any{"type": "string"},
+				"reinframe_dirty":       map[string]any{"type": "boolean"},
+				"reinframe_commit_src":  map[string]any{"type": "string"},
 				"starting_main_sha":     map[string]any{"type": "string"},
 				"main_tip_note":         map[string]any{"type": "string"},
 				"harness":               map[string]any{"type": "string"},
@@ -316,14 +318,31 @@ func closedSchemaV2() map[string]any {
 				"source_correlated": map[string]any{"type": "boolean"},
 				"note":              map[string]any{"type": "string"},
 			}, []string{"strongest_proven", "explicit_claimed"}),
-			"process_cleanup":      scenarioMap,
-			"capability_manifests": map[string]any{}, // optional free-form host pin
-			// privacy_checks: closed keys matching scanPrivacy output (#209).
+			"process_cleanup": scenarioMap,
+			// capability_manifests: closed ACP harness shape (#215).
+			"capability_manifests": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"pre_handshake", "post_handshake", "auth_methods", "caps_digest"},
+				"properties": map[string]any{
+					"pre_handshake":  map[string]any{"type": "object"},
+					"post_handshake": map[string]any{"type": "object"},
+					"auth_methods":   map[string]any{"type": "array"},
+					"caps_digest":    map[string]any{"type": "string", "minLength": 1},
+				},
+			},
+			// privacy_checks: closed keys matching complete-or-fail scan (#215).
 			"privacy_checks": map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,
 				"properties": map[string]any{
 					"method":                    map[string]any{"type": "string"},
+					"complete":                  map[string]any{"type": "boolean"},
+					"files_seen":                map[string]any{"type": "integer"},
+					"files_scanned":             map[string]any{"type": "integer"},
+					"files_skipped":             map[string]any{"type": "integer"},
+					"bytes_scanned":             map[string]any{"type": "integer"},
+					"failure_classes":           map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 					"auth_json_read":            map[string]any{"type": "boolean"},
 					"auth_json_path_seen_in_honesty_notes_only": map[string]any{"type": "boolean"},
 					"auth_json_path_leak_suspected":             map[string]any{"type": "boolean"},
@@ -380,7 +399,8 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 	if prov, ok := report["provenance"].(map[string]any); ok {
 		provAllowed := map[string]struct{}{
 			"issue": {}, "generated_at": {}, "goos": {}, "goarch": {}, "grok_version": {},
-			"grok_version_full": {}, "reinframe_commit": {}, "starting_main_sha": {},
+			"grok_version_full": {}, "reinframe_commit": {}, "reinframe_dirty": {}, "reinframe_commit_src": {},
+			"starting_main_sha": {},
 			"main_tip_note": {}, "harness": {}, "evidence_binding_note": {}, "schema_note": {},
 		}
 		for k := range prov {

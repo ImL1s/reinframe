@@ -376,3 +376,31 @@ func TestEvaluateDisposition_V2_IllegalStatusOnMandatoryInFullMatrix(t *testing.
 		t.Fatalf("illegal mandatory status must not be GO/LIMITED_GO; got %s %v", disp, reasons)
 	}
 }
+
+// TestClosedSchemaV2_MatchesCommittedArtifact pins in-memory schema SoT against repo file.
+func TestClosedSchemaV2_MatchesCommittedCriticalClosedness(t *testing.T) {
+	t.Parallel()
+	path := committedV2SchemaPath(t)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var committed map[string]any
+	if err := json.Unmarshal(b, &committed); err != nil {
+		t.Fatal(err)
+	}
+	mem := closedSchemaV2()
+	// Critical closedness flags must agree (full deep equal is brittle on key order).
+	if mem["additionalProperties"] != false || committed["additionalProperties"] != false {
+		t.Fatal("top-level must be closed in both sources")
+	}
+	memProps, _ := mem["properties"].(map[string]any)
+	comProps, _ := committed["properties"].(map[string]any)
+	for _, key := range []string{"ack_layers", "provenance", "entry_gates"} {
+		mObj, _ := memProps[key].(map[string]any)
+		cObj, _ := comProps[key].(map[string]any)
+		if mObj["additionalProperties"] != false || cObj["additionalProperties"] != false {
+			t.Fatalf("%s must be nested-closed in memory and committed schema", key)
+		}
+	}
+}

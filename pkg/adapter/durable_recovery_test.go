@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,13 +199,18 @@ func TestDeliverPending_NotSent_NoSuppressMarker(t *testing.T) {
 	if led.AlreadyDeliveredKey("iv-not-sent", "sess-n", "test_host", "fp-n") {
 		t.Fatal("not_sent durable fail must not install suppress key")
 	}
-	// Sidecar must not permanently suppress after repair.
-	// Unpoison path: remove dir poison so a fresh Open can succeed without markers.
+	// Assert no suppress marker was written on disk before cleanup.
+	if entries, err := os.ReadDir(path + ".suppress"); err == nil {
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".key") {
+				t.Fatalf("not_sent must not write suppress marker; found %s", e.Name())
+			}
+		}
+	}
+	// Unpoison JSONL path for repair path; leave .suppress as-is if empty.
 	if err := os.RemoveAll(path); err != nil {
 		t.Fatal(err)
 	}
-	// Also remove any accidental suppress dir.
-	_ = os.RemoveAll(path + ".suppress")
 
 	led2, err := adapter.OpenDurableAdviceLedger(path)
 	if err != nil {
@@ -294,6 +300,10 @@ func TestClassifyDeliveryBoundary_Table(t *testing.T) {
 		{"transport_layer", adapter.InterventionResult{Accepted: true, AckLayer: adapter.ACKLayerTransport}, nil, adapter.BoundaryTransportAccepted},
 		{"session_visible", adapter.InterventionResult{Accepted: true, AckLayer: adapter.ACKLayerSessionVisible}, nil, adapter.BoundarySessionVisible},
 		{"timeout", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassTimeout}, context.DeadlineExceeded, adapter.BoundarySendAttemptedUnknown},
+		{"agent_rejected", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassAgentRejected, AckStatus: adapter.AckStatusRejected}, nil, adapter.BoundaryTransportAccepted},
+		{"local_reject_transport_class", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassTransport, AckStatus: adapter.AckStatusRejected}, nil, adapter.BoundaryNotSent},
+		{"post_send_transport_fail", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassTransport, AckStatus: adapter.AckStatusPending}, errors.New("rpc"), adapter.BoundarySendAttemptedUnknown},
+		{"grok_privacy_style", adapter.InterventionResult{Accepted: false, ErrorClass: adapter.ErrorClassUnsupportedCapability, AckStatus: adapter.AckStatusRejected}, errors.New("privacy"), adapter.BoundaryNotSent},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

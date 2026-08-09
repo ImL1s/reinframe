@@ -148,6 +148,15 @@ func (l *DurableAdviceLedger) loadAmbiguousMarkersUnlocked() error {
 	if err := rejectLedgerSymlink(dir); err != nil {
 		return fmt.Errorf("%w: %v", ErrLedgerPathUnsafe, err)
 	}
+	// Explicit type check: a non-directory suppress path is incomplete recovery
+	// (portable across platforms where ReadDir(file) errors differ).
+	if fi, err := os.Lstat(dir); err == nil {
+		if !fi.IsDir() {
+			return fmt.Errorf("%w: suppress path is not a directory", ErrLedgerRecoveryIncomplete)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("%w: suppress path: %v", ErrLedgerRecoveryIncomplete, err)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {

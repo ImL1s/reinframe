@@ -444,10 +444,10 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 		if ex, ok := ack["explicit_claimed"].(bool); ok && ex {
 			errs = append(errs, "explicit_claimed must be false")
 		}
-		// source_correlated=false cannot claim session_visible strongest for product GO.
+		// source_correlated=false cannot claim session_visible as strongest for product GO.
 		if sc, ok := ack["source_correlated"].(bool); ok && !sc {
 			if sp, _ := ack["strongest_proven"].(string); sp == "session_visible" && disp == "GO" {
-				// GO still requires SessionCorrelated on ACP-SESSION; belt if mismatch.
+				errs = append(errs, "GO forbids strongest_proven=session_visible when source_correlated=false")
 			}
 		}
 		ackAllowed := map[string]struct{}{

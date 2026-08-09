@@ -10,7 +10,9 @@ Unit/integration tests drive the **shipped** APIs:
 | `AcknowledgeSource` + Grok + explicit | Unit: `ErrExplicitACKNotSupported` |
 | Symlink ledger path | Unit: open rejects |
 | `AcknowledgeSource` session_visible + ledger | Code path + API tests (source fields on transition) |
-| Host-accepted + ledger fail | Code returns `ErrDurableWriteFailed` and `StateAmbiguous` (suppresses redelivery) |
+| Host-accepted + ledger fail | `ErrDurableWriteFailed` + `StateAmbiguous`; sidecar suppress marker for restart |
+| Ambiguous restart (process-sim) | Unit: re-open ledger + new queue → `StateSuppressed` (no second Deliver) |
+| Ledger without `DedupeHostFamily` | Fail-closed at `NewAdvisoryDelivery` (Grok actuator infers `grok_build`) |
 | Live E2E composition | **Not claimed** |
 
 ## What is still not claimed

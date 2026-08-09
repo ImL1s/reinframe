@@ -132,6 +132,10 @@ func (o *Orchestrator) DeliverAtSafeBoundary(ctx context.Context, sessionID stri
 		if item.State == adapter.StateSuppressed {
 			o.clearLatch(sessionID, item.Intervention.InterventionID)
 		}
+		// Host may have accepted but durable commit failed — clear latch; operator re-enqueues deliberately.
+		if item.State == adapter.StateAmbiguous {
+			o.clearLatch(sessionID, item.Intervention.InterventionID)
+		}
 		// Human escalation (observe-only) clears latch so hooks are not stuck forever.
 		if item.State == adapter.StateFailed && res.DeliveryMode == adapter.DeliveryModeHumanEscalation && err == nil {
 			o.clearLatch(sessionID, item.Intervention.InterventionID)

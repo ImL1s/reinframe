@@ -46,10 +46,10 @@
 
 | Issue | Notes |
 |-------|-------|
-| **#167** / PR #193 | Historical live harness + v1 evidence on main; **unconditional GO withdrawn**; **#199** v2 gates closed (MORE_DATA until new live v2 report) |
-| **#108** / PR #194 | Foundation consumer/ledger on main; **live product complete withdrawn** pending **#200** |
+| **#167** / PR #193 | Historical live harness + v1 evidence on main; **unconditional GO withdrawn**; **#199** v2 gates closed (public MORE_DATA until new live v2 GO artifact) |
+| **#108** / PR #194 | Foundation consumer/ledger on main; **#200** ACK/durability closed; **live E2E composition not claimed** |
 | **#191** | Grok ACP official-contract / lifecycle hardening on main |
-| **#201** | Immediate public-status downgrade (this wording) |
+| **#201** | Immediate public-status downgrade (closed) |
 
 ### Evaluation
 
@@ -65,7 +65,7 @@
 
 ## Explicit non-claims
 
-- Historical Grok live run present (#167 v1); public disposition MORE_DATA until #199; no live Codex/Claude until #164/#120
+- Historical Grok live run present (#167 v1); public disposition **MORE_DATA** until a **new live v2 GO artifact** (#199 gates closed; no false GO)
 - No fail-closed Grok hook security (host fail-open)
 - CapToolGate ≠ CapPause / Level 2
 - JSON-RPC / file append / hook exit ≠ explicit agent ACK
@@ -73,8 +73,8 @@
 - No dual-host production supervision; no hard-gate; no default cache enablement
 - No cross-host tunneling ranking without matched multi-host live evidence
 - No Level 2 / CapPause from hooks alone; transport ≠ explicit ACK
-- No source-correlated session_visible or explicit ACK without #199/#200
-- No exactly-once delivery claim
+- No source-correlated session_visible product claim without a new live v2 report; no explicit ACK for current Grok profile
+- No exactly-once delivery claim; no completed live #108 E2E composition path
 
 ## Evaluation artifacts
 

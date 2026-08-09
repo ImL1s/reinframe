@@ -46,6 +46,11 @@ func (g *GrokACPActuator) now() time.Time {
 	return time.Now().UTC()
 }
 
+// HostFamily returns the live host pin used in durable dedupe keys.
+func (g *GrokACPActuator) HostFamily() string {
+	return GrokLiveHostFamily
+}
+
 // Deliver implements InterventionActuator for Grok ACP session/prompt.
 func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Intervention) (InterventionResult, error) {
 	if ctx == nil {

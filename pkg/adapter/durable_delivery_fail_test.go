@@ -12,75 +12,37 @@ import (
 	"github.com/ImL1s/reinframe/pkg/protocol"
 )
 
+// poisonLedgerAsDir makes the ledger JSONL path a directory so Append OpenFile fails,
+// while a sibling sidecar path (path+".suppress") remains writable under the parent.
+func poisonLedgerAsDir(t *testing.T, path string) {
+	t.Helper()
+	if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestDeliverPending_LedgerWriteFailure_ReturnsAmbiguous drives the real
 // AdvisoryDelivery.DeliverPending path with a ledger path that cannot be written
 // after the host actuator has already succeeded.
 func TestDeliverPending_LedgerWriteFailure_ReturnsAmbiguous(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	// Parent path will be a regular file so OpenFile on .../file/ledger.jsonl fails.
-	blocker := filepath.Join(dir, "not-a-dir")
-	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	badLedgerPath := filepath.Join(blocker, "ledger.jsonl")
-
-	// Open succeeds when path does not exist yet (no symlink). Then we poison via Path.
-	// Use a valid open first, then redirect Path to the unwritable location.
-	goodPath := filepath.Join(dir, "good.jsonl")
-	led, err := adapter.OpenDurableAdviceLedger(goodPath)
+	path := filepath.Join(dir, "advice.jsonl")
+	led, err := adapter.OpenDurableAdviceLedger(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Redirect subsequent Append writes to a path whose parent is a file → write fails.
-	// Access Path via re-open pattern: construct delivery with poisoned ledger by
-	// writing through a ledger that we replace after open.
-	// Direct field: Open returns *DurableAdviceLedger with Path; tests in package adapter_test
-	// cannot set unexported fields — use a path that Append will fail on:
-	// OpenDurableAdviceLedger does not require parent to exist; Append does MkdirAll then OpenFile.
-	// If parent component is a file, MkdirAll fails / OpenFile fails.
-	led2, err := adapter.OpenDurableAdviceLedger(badLedgerPath)
-	if err != nil {
-		// Open may succeed (path absent). Append must fail.
-		t.Logf("open err (ok if nil): %v", err)
-	}
-	if led2 == nil {
-		// If open rejects, still prove DeliverPending surfaces durable failure via led with bad path.
-		// Re-open good then we need exported way — use badLedgerPath open that succeeds with non-existing parents.
-		// MkdirAll(".../not-a-dir") fails when not-a-dir is a file.
-		led2, err = adapter.OpenDurableAdviceLedger(filepath.Join(dir, "nested", "l.jsonl"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Point to bad path by recording through a custom approach:
-		// Write once to establish, then replace parent with file before second write.
-		_ = led
-	}
-
-	// Canonical portable approach: ledger under a directory we later replace with a file.
-	base := filepath.Join(dir, "ledger-root")
-	if err := os.MkdirAll(base, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(base, "advice.jsonl")
-	led3, err := adapter.OpenDurableAdviceLedger(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Remove directory and put a file in its place so next Append fails.
-	if err := os.RemoveAll(base); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(base, []byte("blocked"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	poisonLedgerAsDir(t, path)
 
 	act := adapter.NewFakeActuator()
 	act.AutoAck = false
 	del, err := adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{
 		Actuator:               act,
 		SupportsAdviceDelivery: true,
-		Ledger:                 led3,
+		Ledger:                 led,
 		DedupeHostFamily:       "test_host",
 	})
 	if err != nil {
@@ -110,6 +72,143 @@ func TestDeliverPending_LedgerWriteFailure_ReturnsAmbiguous(t *testing.T) {
 	// Host actuator was still invoked (not a silent skip).
 	if act.CallCount() != 1 {
 		t.Fatalf("actuator calls=%d want 1", act.CallCount())
+	}
+}
+
+// TestDeliverPending_AmbiguousMarker_RestartSuppress proves that when the JSONL
+// path cannot commit after host accept, the sidecar suppress marker prevents
+// redelivery after process-sim restart (new Open + new queue).
+func TestDeliverPending_AmbiguousMarker_RestartSuppress(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "advice.jsonl")
+	led, err := adapter.OpenDurableAdviceLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poisonLedgerAsDir(t, path)
+
+	act := adapter.NewFakeActuator()
+	act.AutoAck = false
+	del, err := adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{
+		Actuator:               act,
+		SupportsAdviceDelivery: true,
+		Ledger:                 led,
+		DedupeHostFamily:       "test_host",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iv := protocol.Intervention{
+		InterventionID: "iv-amb-restart",
+		SessionID:      "sess-r",
+		ActionType:     "ZOOM_OUT_PROMPT",
+		AdvicePrompt:   "once",
+		Fingerprint:    "fp-restart",
+	}
+	del.Enqueue(iv, time.Minute)
+	item, _, err := del.DeliverPending(context.Background(), "sess-r")
+	if !errors.Is(err, adapter.ErrDurableWriteFailed) {
+		t.Fatalf("want ErrDurableWriteFailed got %v", err)
+	}
+	if item == nil || item.State != adapter.StateAmbiguous {
+		t.Fatalf("want AMBIGUOUS got %+v", item)
+	}
+	if act.CallCount() != 1 {
+		t.Fatalf("calls=%d", act.CallCount())
+	}
+
+	// Process-sim restart: reopen ledger (loads sidecar markers), fresh queue.
+	led2, err := adapter.OpenDurableAdviceLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !led2.AlreadyDeliveredKey("iv-amb-restart", "sess-r", "test_host", "fp-restart") {
+		t.Fatal("restart Open must load ambiguous suppress marker for bound key")
+	}
+	del2, err := adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{
+		Actuator:               act,
+		SupportsAdviceDelivery: true,
+		Ledger:                 led2,
+		Queue:                  adapter.NewPendingQueue(),
+		DedupeHostFamily:       "test_host",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	del2.Enqueue(iv, time.Minute)
+	item2, res2, err := del2.DeliverPending(context.Background(), "sess-r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item2.State != adapter.StateSuppressed {
+		t.Fatalf("want SUPPRESSED after restart got %s res=%+v", item2.State, res2)
+	}
+	if act.CallCount() != 1 {
+		t.Fatalf("actuator must not redeliver after restart; calls=%d", act.CallCount())
+	}
+}
+
+// TestNewAdvisoryDelivery_LedgerRequiresHostFamily fails closed when Ledger is set
+// without DedupeHostFamily and the actuator does not advertise a host pin.
+func TestNewAdvisoryDelivery_LedgerRequiresHostFamily(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	led, err := adapter.OpenDurableAdviceLedger(filepath.Join(dir, "l.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{
+		Actuator:               adapter.NewFakeActuator(),
+		SupportsAdviceDelivery: true,
+		Ledger:                 led,
+		// DedupeHostFamily intentionally empty; FakeActuator has no HostFamily().
+	})
+	if err == nil {
+		t.Fatal("expected error when Ledger set without host family")
+	}
+}
+
+// TestNewAdvisoryDelivery_GrokInfersDedupeHostFamily defaults host from Grok actuator.
+func TestNewAdvisoryDelivery_GrokInfersDedupeHostFamily(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "l.jsonl")
+	led, err := adapter.OpenDurableAdviceLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pre-seed a suppress key using Grok host family (what Grok actuator writes).
+	if err := led.RecordResultWithSource(adapter.StateDelivering, "s", adapter.InterventionResult{
+		InterventionID: "iv-g",
+		HostFamily:     adapter.GrokLiveHostFamily,
+		AckLayer:       adapter.ACKLayerTransport,
+		AckStatus:      adapter.AckStatusPending,
+	}, adapter.StateTransportAccepted, "", "", "", "fp-g"); err != nil {
+		t.Fatal(err)
+	}
+	// Empty DedupeHostFamily — must infer grok_build from *GrokACPActuator.
+	del, err := adapter.NewAdvisoryDelivery(adapter.AdvisoryDeliveryConfig{
+		Actuator:               &adapter.GrokACPActuator{}, // nil client; only used for host pin + we suppress before Deliver
+		SupportsAdviceDelivery: true,
+		Ledger:                 led,
+	})
+	if err != nil {
+		t.Fatalf("Grok actuator should infer DedupeHostFamily: %v", err)
+	}
+	del.Enqueue(protocol.Intervention{
+		InterventionID: "iv-g",
+		SessionID:      "s",
+		ActionType:     "ZOOM_OUT_PROMPT",
+		AdvicePrompt:   "x",
+		Fingerprint:    "fp-g",
+	}, time.Minute)
+	item, _, err := del.DeliverPending(context.Background(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.State != adapter.StateSuppressed {
+		t.Fatalf("want SUPPRESSED via inferred host family; got %s", item.State)
 	}
 }
 
@@ -164,11 +263,7 @@ func TestLedgerDedupe_ActionFingerprintBound(t *testing.T) {
 func TestAcknowledgeSource_LedgerWriteFailure(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	base := filepath.Join(dir, "ack-root")
-	if err := os.MkdirAll(base, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(base, "ack.jsonl")
+	path := filepath.Join(dir, "ack.jsonl")
 	led, err := adapter.OpenDurableAdviceLedger(path)
 	if err != nil {
 		t.Fatal(err)
@@ -201,13 +296,8 @@ func TestAcknowledgeSource_LedgerWriteFailure(t *testing.T) {
 			t.Fatalf("state=%s", item.State)
 		}
 	}
-	// Poison ledger path.
-	if err := os.RemoveAll(base); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(base, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// Poison ledger path after successful first write.
+	poisonLedgerAsDir(t, path)
 	err = del.AcknowledgeSource(adapter.AcknowledgeRequest{
 		InterventionID: "iv-ack-fail",
 		HostFamily:     "test_host",

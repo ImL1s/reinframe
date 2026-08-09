@@ -108,6 +108,21 @@ type AdvisoryDelivery struct {
 	dedupeHostFamily       string
 }
 
+// hostFamilyFromActuator returns a known actuator's host pin for durable dedupe.
+func hostFamilyFromActuator(a InterventionActuator) string {
+	type hostFamer interface{ HostFamily() string }
+	if hf, ok := a.(hostFamer); ok {
+		if s := strings.TrimSpace(hf.HostFamily()); s != "" {
+			return s
+		}
+	}
+	switch a.(type) {
+	case *GrokACPActuator:
+		return GrokLiveHostFamily
+	}
+	return ""
+}
+
 // NewAdvisoryDelivery builds an AdvisoryDelivery from config.
 func NewAdvisoryDelivery(cfg AdvisoryDeliveryConfig) (*AdvisoryDelivery, error) {
 	if cfg.Actuator == nil {
@@ -125,6 +140,14 @@ func NewAdvisoryDelivery(cfg AdvisoryDeliveryConfig) (*AdvisoryDelivery, error) 
 	if q == nil {
 		q = NewPendingQueue()
 	}
+	hostFamily := strings.TrimSpace(cfg.DedupeHostFamily)
+	if hostFamily == "" {
+		hostFamily = hostFamilyFromActuator(cfg.Actuator)
+	}
+	// Ledger keys include host family; empty host makes restart suppress miss writes.
+	if cfg.Ledger != nil && hostFamily == "" {
+		return nil, errors.New("DedupeHostFamily required when Ledger is set (must match actuator HostFamily for restart suppress)")
+	}
 	return &AdvisoryDelivery{
 		actuator:               cfg.Actuator,
 		alerter:                alerter,
@@ -132,7 +155,7 @@ func NewAdvisoryDelivery(cfg AdvisoryDeliveryConfig) (*AdvisoryDelivery, error) 
 		defaultTTL:             ttl,
 		queue:                  q,
 		ledger:                 cfg.Ledger,
-		dedupeHostFamily:       cfg.DedupeHostFamily,
+		dedupeHostFamily:       hostFamily,
 	}, nil
 }
 
@@ -180,9 +203,11 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 				ErrorClass:     ErrorClassNone,
 				Message:        "duplicate InterventionID suppressed by durable ledger",
 				AckLayer:       ACKLayerNone,
+				HostFamily:     host,
 			}
 			d.queue.UpdateState(item.Intervention.InterventionID, StateSuppressed, &res)
-			_ = d.ledger.RecordResult(StateDelivering, sessionID, res, StateSuppressed)
+			// Audit suppress with the same bound key identity (fingerprint + host).
+			_ = d.ledger.RecordResultWithSource(StateDelivering, sessionID, res, StateSuppressed, "", "", "", item.Intervention.Fingerprint)
 			out := *item
 			out.State = StateSuppressed
 			out.Result = &res
@@ -247,8 +272,18 @@ func (d *AdvisoryDelivery) DeliverPending(ctx context.Context, sessionID string)
 			out.State = StateAmbiguous
 			out.Result = &res
 			d.queue.UpdateState(item.Intervention.InterventionID, StateAmbiguous, &res)
-			// Best-effort record ambiguous so restart suppresses redelivery (same bound key).
-			_ = d.ledger.RecordResultWithSource(StateDelivering, sessionID, res, StateAmbiguous, "", "", "", fp)
+			// Prefer JSONL AMBIGUOUS line; if path is still broken, write sidecar suppress marker
+			// so process restart cannot silently redeliver the same bound key.
+			if merr := d.ledger.RecordResultWithSource(StateDelivering, sessionID, res, StateAmbiguous, "", "", "", fp); merr != nil {
+				if serr := d.ledger.MarkAmbiguousSuppress(item.Intervention.InterventionID, sessionID, res.HostFamily, fp); serr != nil {
+					if err == nil {
+						err = fmt.Errorf("%w: ledger=%v marker=%v", ErrDurableWriteFailed, lerr, serr)
+					} else {
+						err = fmt.Errorf("%w: %v; durable_write_failed ledger=%v marker=%v", err, ErrDurableWriteFailed, lerr, serr)
+					}
+					return &out, res, err
+				}
+			}
 			if err == nil {
 				err = fmt.Errorf("%w: %v", ErrDurableWriteFailed, lerr)
 			}

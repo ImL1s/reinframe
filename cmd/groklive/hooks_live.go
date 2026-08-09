@@ -68,6 +68,7 @@ set -eu
 LOG=%q
 BIN=%q
 TMP=$(mktemp)
+OUT=$(mktemp)
 cat > "$TMP"
 if command -v python3 >/dev/null 2>&1; then
 python3 - "$TMP" "$LOG" <<'PY'
@@ -82,13 +83,33 @@ def g(*ks):
  for k in ks:
   if k in d: return d[k]
  return ''
-rec={'at':__import__('datetime').datetime.utcnow().isoformat()+'Z','event':g('hookEventName','hook_event_name'),'tool':g('toolName','tool_name'),'session':bool(g('sessionId','session_id')),'permissionMode':g('permissionMode','permission_mode')}
+rec={'at':__import__('datetime').datetime.utcnow().isoformat()+'Z','event':g('hookEventName','hook_event_name'),'tool':g('toolName','tool_name'),'session':bool(g('sessionId','session_id')),'permissionMode':g('permissionMode','permission_mode'),'phase':'pre'}
 open(log,'a').write(json.dumps(rec)+'\n')
 PY
 else
-  echo "{\"at\":\"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\",\"event\":\"pretool_fallback\",\"tool\":\"\",\"session\":false}" >> "$LOG"
+  echo "{\"at\":\"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\",\"event\":\"pretool_fallback\",\"tool\":\"\",\"session\":false,\"phase\":\"pre\"}" >> "$LOG"
 fi
-exec "$BIN" pretool < "$TMP"
+set +e
+"$BIN" pretool < "$TMP" > "$OUT"
+EC=$?
+set -e
+if command -v python3 >/dev/null 2>&1; then
+python3 - "$OUT" "$LOG" "$EC" <<'PY'
+import json,sys
+outp,log,ec=sys.argv[1],sys.argv[2],int(sys.argv[3])
+raw=open(outp,'rb').read()[:65536]
+dec=''
+try:
+ d=json.loads(raw.decode('utf-8','replace') or '{}')
+ dec=str(d.get('decision') or d.get('permissionDecision') or '')
+except Exception:
+ dec=''
+rec={'at':__import__('datetime').datetime.utcnow().isoformat()+'Z','event':'pretool_result','decision':dec,'exit':ec,'deny_json':dec.lower()=='deny','deny_exit2':ec==2}
+open(log,'a').write(json.dumps(rec)+'\n')
+PY
+fi
+cat "$OUT"
+exit "$EC"
 `, logPath, gh)
 	if err := os.WriteFile(wrapPath, []byte(wrap), 0o700); err != nil {
 		fail(err)
@@ -201,15 +222,29 @@ If the tool is denied, acknowledge and stop. Do not work around the denial.`,
 	_, denyFileExists := os.Stat(denyPath)
 	fileAbsent := denyFileExists != nil
 	hookForDeny := denyRes.HookSeen && (denyRes.ToolName != "" || toolName != "")
+	// Direct deny proof requires deny JSON/exit2 for that attempt; side-effect absence alone is inductive only (#199).
+	denyDirect := denyRes.DenyJSONObserved || denyRes.DenyExit2
 	switch {
 	case !fileAbsent:
 		set("HOOK-DENY-001", "FAIL", "denied file exists — host did not enforce deny; "+denyRes.Detail,
 			map[string]string{"tool": firstNonEmpty(denyRes.ToolName, toolName), "host": "not_enforced"})
+	case fileAbsent && hookForDeny && denyDirect:
+		sr := ScenarioResult{
+			ID: "HOOK-DENY-001", Status: "PASS", At: stamp(),
+			ToolName: denyRes.ToolName, HostOutcome: "enforced_deny",
+			DenyDirectProof: true,
+			Detail:          "direct deny response/exit observed for tool=" + denyRes.ToolName + "; " + denyRes.Detail,
+		}
+		scenarios["HOOK-DENY-001"] = sr
 	case fileAbsent && hookForDeny && denyRes.ToolName != "":
-		// Host-side proof without claiming adapter HostOutcomeEnforcedDeny (that requires deny JSON/exit2).
-		// Vocabulary: side_effect_absent_with_pretool_invoke — inductive under REINFRAME_GROK_DENY_TOOLS.
-		set("HOOK-DENY-001", "PASS", "pretool invoke observed for tool="+denyRes.ToolName+" and deny-side-effect absent; "+denyRes.Detail,
-			map[string]string{"tool": denyRes.ToolName, "host": "side_effect_absent_with_pretool_invoke"})
+		// Inductive only — cannot support unconditional GO under v2 gates.
+		sr := ScenarioResult{
+			ID: "HOOK-DENY-001", Status: "PASS", At: stamp(),
+			ToolName: denyRes.ToolName, HostOutcome: "side_effect_absent_with_pretool_invoke",
+			DenyDirectProof: false,
+			Detail:          "inductive deny only (hook invoke + side-effect absent); no deny JSON/exit2 for attempt; " + denyRes.Detail,
+		}
+		scenarios["HOOK-DENY-001"] = sr
 	case fileAbsent && hookForDeny && denyRes.ToolName == "":
 		set("HOOK-DENY-001", "INCONCLUSIVE", "hook log line seen but tool name empty on deny window; side-effect absent; "+denyRes.Detail,
 			map[string]string{"tool": toolName, "host": "unknown"})
@@ -239,8 +274,12 @@ If the tool is denied, acknowledge and stop. Do not work around the denial.`,
 		{"HOOK-FAIL-004", "#!/bin/sh\npython3 -c 'print(\"x\"*100000)'\n", "oversized"},
 	} {
 		fixPath := filepath.Join(proj, "bin", fc.id+".sh")
+		// Log wrapper around broken body so invocation is proven even when body misbehaves (#199).
+		loggedFix := filepath.Join(proj, "bin", fc.id+"_wrap.sh")
+		wrapBody := fmt.Sprintf("#!/bin/sh\necho '{\"event\":\"broken_hook_invoke\",\"id\":%q}' >> %q\nexec /bin/sh %q\n", fc.id, logPath, fixPath)
 		_ = os.WriteFile(fixPath, []byte(fc.body), 0o700)
-		mgr.BridgeCommand = fixPath
+		_ = os.WriteFile(loggedFix, []byte(wrapBody), 0o700)
+		mgr.BridgeCommand = loggedFix
 		_ = mgr.Install()
 		marker := filepath.Join(proj, "harmless", fc.id+".txt")
 		_ = os.Remove(marker)
@@ -250,9 +289,24 @@ If the tool is denied, acknowledge and stop. Do not work around the denial.`,
 		)
 		mgr.BridgeCommand = wrapPath
 		_ = mgr.Install()
-		if b, err := os.ReadFile(marker); err == nil && strings.Contains(string(b), "failopen") {
-			set(fc.id, "PASS", "marker written under broken hook ("+fc.note+") → host fail-open proven; "+boundStr(failRes.Detail, 200),
-				map[string]string{"host": string(adapter.HostOutcomeFailOpen)})
+		// Positive invocation proof of the *broken* hook is required (#199).
+		// Marker alone can mean host skipped untrusted/stale command.
+		invoked := failRes.HookSeen
+		if b, err := os.ReadFile(marker); err == nil && strings.Contains(string(b), "failopen") && invoked {
+			sr := ScenarioResult{
+				ID: fc.id, Status: "PASS", At: stamp(),
+				HostOutcome:     string(adapter.HostOutcomeFailOpen),
+				FailOpenInvoked: true,
+				Detail:          "broken hook invoked and marker written (" + fc.note + "); " + boundStr(failRes.Detail, 200),
+			}
+			scenarios[fc.id] = sr
+		} else if b, err := os.ReadFile(marker); err == nil && strings.Contains(string(b), "failopen") && !invoked {
+			sr := ScenarioResult{
+				ID: fc.id, Status: "INCONCLUSIVE", At: stamp(),
+				HostOutcome: "unknown", FailOpenInvoked: false,
+				Detail: "marker written but broken-hook invocation not proven (may be untrusted skip); " + boundStr(failRes.Detail, 200),
+			}
+			scenarios[fc.id] = sr
 		} else {
 			set(fc.id, "INCONCLUSIVE", "broken hook ("+fc.note+") installed but marker not written — cannot claim fail-open or deny; "+boundStr(failRes.Detail, 200),
 				map[string]string{"host": "unknown"})
@@ -278,9 +332,11 @@ If the tool is denied, acknowledge and stop. Do not work around the denial.`,
 }
 
 type liveToolResult struct {
-	ToolName string
-	Detail   string
-	HookSeen bool
+	ToolName         string
+	Detail           string
+	HookSeen         bool
+	DenyJSONObserved bool
+	DenyExit2        bool
 }
 
 func runLiveToolScenario(grok, proj, logPath, prompt, denyToolsCSV string) liveToolResult {
@@ -329,9 +385,21 @@ func runLiveToolScenario(grok, proj, logPath, prompt, denyToolsCSV string) liveT
 				if e, _ := rec["event"].(string); e != "" {
 					// Any new hook log line after scenario start is invocation evidence.
 					res.HookSeen = true
-					if strings.Contains(strings.ToLower(e), "tool") {
+					if strings.Contains(strings.ToLower(e), "tool") || e == "broken_hook_invoke" || e == "pretool_result" {
 						res.HookSeen = true
 					}
+				}
+				if b, ok := rec["deny_json"].(bool); ok && b {
+					res.DenyJSONObserved = true
+				}
+				if b, ok := rec["deny_exit2"].(bool); ok && b {
+					res.DenyExit2 = true
+				}
+				if dec, _ := rec["decision"].(string); strings.EqualFold(dec, "deny") {
+					res.DenyJSONObserved = true
+				}
+				if ec, ok := rec["exit"].(float64); ok && int(ec) == 2 {
+					res.DenyExit2 = true
 				}
 			}
 		}

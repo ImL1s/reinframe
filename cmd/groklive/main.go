@@ -120,7 +120,7 @@ func saveScenarioMap(dir string, m map[string]ScenarioResult) error {
 	return writeJSON(filepath.Join(dir, "scenarios.json"), m)
 }
 
-// ScenarioResult is one scenario outcome for #167 evidence.
+// ScenarioResult is one scenario outcome for #167 evidence (v1 and v2).
 type ScenarioResult struct {
 	ID          string `json:"id"`
 	Status      string `json:"status"` // PASS|FAIL|NOT_RUN|INCONCLUSIVE
@@ -129,6 +129,19 @@ type ScenarioResult struct {
 	ACKLayer    string `json:"ack_layer,omitempty"`
 	HostOutcome string `json:"host_outcome,omitempty"`
 	At          string `json:"at,omitempty"`
+	// v2 correlation / proof fields (#199)
+	// DenyDirectProof: true only when deny JSON or exit-2 for the exact tool attempt was observed.
+	DenyDirectProof bool `json:"deny_direct_proof,omitempty"`
+	// FailOpenInvoked: true only when the broken hook process was positively invoked.
+	FailOpenInvoked bool `json:"fail_open_invoked,omitempty"`
+	// SessionCorrelated: true only when session/update matched target session + this prompt turn.
+	SessionCorrelated bool `json:"session_correlated,omitempty"`
+	// InterventionID bound into the scenario when relevant.
+	InterventionID string `json:"intervention_id,omitempty"`
+	// TargetSessionID for ACP scenarios.
+	TargetSessionID string `json:"target_session_id,omitempty"`
+	// DedupSuppressed: second same InterventionID was suppressed at business layer.
+	DedupSuppressed bool `json:"dedup_suppressed,omitempty"`
 }
 
 func stamp() string { return time.Now().UTC().Format(time.RFC3339) }

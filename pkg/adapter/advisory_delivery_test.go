@@ -239,15 +239,22 @@ func TestAdvisory_AcknowledgePaths(t *testing.T) {
 		t.Fatalf("state=%s want DELIVERING", item.State)
 	}
 
-	if err := del.Acknowledge("iv-ack", adapter.AckStatusAcked); err != nil {
+	if err := del.AcknowledgeSource(adapter.AcknowledgeRequest{
+		InterventionID: "iv-ack", SourceKind: "test", SourceEventID: "evt-1",
+		Status: adapter.AckStatusAcked, AckLayer: adapter.ACKLayerSessionVisible,
+	}); err != nil {
 		t.Fatalf("Acknowledge: %v", err)
 	}
 	got, _ := del.Get("iv-ack")
-	if got.State != adapter.StateAcked {
-		t.Fatalf("state=%s want ACKED", got.State)
+	if got.State != adapter.StateSessionVisible {
+		t.Fatalf("state=%s want SESSION_VISIBLE (profile ceiling)", got.State)
 	}
-	if got.Result == nil || got.Result.AckStatus != adapter.AckStatusAcked {
+	if got.Result == nil || got.Result.AckStatus != adapter.AckStatusAcked || got.Result.AckLayer != adapter.ACKLayerSessionVisible {
 		t.Fatalf("result=%+v", got.Result)
+	}
+	// Bare acked must fail.
+	if err := del.Acknowledge("iv-ack", adapter.AckStatusAcked); err == nil {
+		t.Fatal("bare Acknowledge(acked) must refuse explicit mint")
 	}
 }
 

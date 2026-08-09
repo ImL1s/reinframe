@@ -182,10 +182,11 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 	return base, nil
 }
 
-// updateMatchesTargetSession accepts updates that either omit sessionId or match target.
+// updateMatchesTargetSession requires a sessionId equal to target (#199/#200).
+// Updates that omit sessionId are not treated as source-correlated.
 func updateMatchesTargetSession(u map[string]any, target string) bool {
 	if target == "" {
-		return true
+		return false
 	}
 	sid, _ := u["sessionId"].(string)
 	if sid == "" {
@@ -194,7 +195,7 @@ func updateMatchesTargetSession(u map[string]any, target string) bool {
 		}
 	}
 	if sid == "" {
-		return true // host omitted session id — do not reject solely for that
+		return false
 	}
 	return sid == target
 }

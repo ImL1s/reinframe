@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reinframe.grok_build_live_control.v2",
+  "title": "Reinframe Grok Build live control evidence v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "provenance",
+    "entry_gates",
+    "scenarios",
+    "ack_layers",
+    "privacy_checks",
+    "limitations",
+    "final_disposition",
+    "scenario_registry"
+  ],
+  "properties": {
+    "schema_version": { "const": "reinframe.grok_build_live_control.v2" },
+    "provenance": { "type": "object" },
+    "entry_gates": { "type": "object" },
+    "trust_results": { "type": "object" },
+    "hook_results": { "type": "object" },
+    "hook_failure_semantics": { "type": "object" },
+    "static_permission_results": { "type": "object" },
+    "acp_negotiation": { "type": "object" },
+    "auth_boundary": { "type": "object" },
+    "session_results": { "type": "object" },
+    "advice_results": { "type": "object" },
+    "challenge_results": { "type": "object" },
+    "ack_layers": {
+      "type": "object",
+      "required": ["strongest_proven", "explicit_claimed"],
+      "properties": {
+        "strongest_proven": { "type": "string" },
+        "explicit_claimed": { "const": false },
+        "source_correlated": { "type": "boolean" },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "process_cleanup": { "type": "object" },
+    "capability_manifests": {},
+    "privacy_checks": { "type": "object" },
+    "limitations": { "type": "array", "items": { "type": "string" } },
+    "scenarios": { "type": "object" },
+    "scenario_registry": { "type": "array", "items": { "type": "string" } },
+    "final_disposition": { "enum": ["GO", "LIMITED_GO", "MORE_DATA", "NO_GO"] },
+    "scenario_status_enum": { "enum": ["PASS", "FAIL", "NOT_RUN", "INCONCLUSIVE"] }
+  },
+  "description": "Closed v2 live-control evidence (#199). Historical v1 remains under HISTORICAL_v1.md."
+}

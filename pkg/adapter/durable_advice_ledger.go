@@ -4,12 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // DurableAdviceLedger is an append-only, user-private JSONL ledger of advice
@@ -20,7 +22,7 @@ type DurableAdviceLedger struct {
 	Path string
 
 	mu     sync.Mutex
-	seen   map[string]struct{} // InterventionIDs that reached a terminal or transport-accepted state
+	seen   map[string]struct{} // bound dedupe keys that suppress redelivery
 	cursor int64               // bytes written (restart: file size)
 }
 
@@ -47,8 +49,19 @@ type DeliveryTransition struct {
 	Fingerprint    string    `json:"fingerprint,omitempty"`
 }
 
+// Recovery / integrity errors (#208).
+var (
+	ErrLedgerRecoveryIncomplete = errors.New("durable advice ledger: suppress recovery incomplete")
+	ErrLedgerCorrupt            = errors.New("durable advice ledger: corrupt transition record")
+	ErrLedgerMarkerInvalid      = errors.New("durable advice ledger: invalid suppress marker")
+	ErrLedgerPathUnsafe         = errors.New("durable advice ledger: unsafe path")
+)
+
+// maxSuppressMarkerBytes bounds a single sidecar marker body.
+const maxSuppressMarkerBytes = 4096
+
 // OpenDurableAdviceLedger loads existing IDs from path (if present) for restart dedupe.
-// Rejects symlink/reparse paths (#200).
+// Rejects symlink/reparse paths (#200). Fail-closed on incomplete suppress recovery (#208).
 func OpenDurableAdviceLedger(path string) (*DurableAdviceLedger, error) {
 	if path == "" {
 		return nil, fmt.Errorf("durable advice ledger: path required")
@@ -71,28 +84,48 @@ func OpenDurableAdviceLedger(path string) (*DurableAdviceLedger, error) {
 		}
 	} else {
 		l.cursor = int64(len(b))
-		for _, line := range splitLines(b) {
-			if len(line) == 0 {
-				continue
-			}
+		if err := l.ingestJSONL(b); err != nil {
+			return nil, err
+		}
+	}
+	// Fail-closed: incomplete suppress recovery must not yield a usable ledger.
+	if err := l.loadAmbiguousMarkersUnlocked(); err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+func (l *DurableAdviceLedger) ingestJSONL(b []byte) error {
+	// Torn tail: non-empty file without trailing newline on last non-empty byte → incomplete write.
+	if len(b) > 0 && b[len(b)-1] != '\n' {
+		// Allow pure empty; otherwise last line is torn if it does not parse as full transition.
+		lines := splitLines(b)
+		if len(lines) > 0 && len(lines[len(lines)-1]) > 0 {
 			var tr DeliveryTransition
-			if json.Unmarshal(line, &tr) != nil {
-				continue
-			}
-			if tr.InterventionID == "" {
-				continue
-			}
-			// Only states that prove host accepted transport (or terminal no-retry) suppress redelivery.
-			// DELIVERING alone does not suppress — crash mid-flight should allow retry.
-			if isSuppressState(DeliveryState(tr.ToState)) {
-				// Session/host/action-bound key (fingerprint = action identity).
-				l.seen[dedupeKey(tr.InterventionID, tr.SessionID, tr.HostFamily, tr.Fingerprint)] = struct{}{}
+			if json.Unmarshal(lines[len(lines)-1], &tr) != nil {
+				return fmt.Errorf("%w: torn final line", ErrLedgerCorrupt)
 			}
 		}
 	}
-	// Load sidecar ambiguous suppress markers (host accepted; JSONL commit failed).
-	_ = l.loadAmbiguousMarkersUnlocked()
-	return l, nil
+	for _, line := range splitLines(b) {
+		if len(line) == 0 {
+			continue
+		}
+		var tr DeliveryTransition
+		if err := json.Unmarshal(line, &tr); err != nil {
+			return fmt.Errorf("%w: malformed transition line", ErrLedgerCorrupt)
+		}
+		if tr.InterventionID == "" {
+			// Empty id on a parseable line cannot affect suppress state — skip.
+			continue
+		}
+		// Only states that prove host accepted transport (or terminal no-retry) suppress redelivery.
+		// DELIVERING alone does not suppress — crash mid-flight should allow retry.
+		if isSuppressState(DeliveryState(tr.ToState)) {
+			l.seen[dedupeKey(tr.InterventionID, tr.SessionID, tr.HostFamily, tr.Fingerprint)] = struct{}{}
+		}
+	}
+	return nil
 }
 
 // suppressSidecarDir is a sibling of the JSONL path used when Append cannot commit
@@ -109,27 +142,62 @@ func suppressMarkerFilename(key string) string {
 
 // loadAmbiguousMarkersUnlocked reads sidecar suppress keys into seen.
 // Open is single-threaded before the ledger is returned to callers.
+// Returns error on incomplete recovery (fail-closed #208).
 func (l *DurableAdviceLedger) loadAmbiguousMarkersUnlocked() error {
 	dir := l.suppressSidecarDir()
+	if err := rejectLedgerSymlink(dir); err != nil {
+		return fmt.Errorf("%w: %v", ErrLedgerPathUnsafe, err)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("%w: suppress dir: %v", ErrLedgerRecoveryIncomplete, err)
 	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".key") {
+		name := e.Name()
+		// Ignore temp files from atomic write.
+		if strings.HasSuffix(name, ".tmp") {
 			continue
 		}
-		b, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
-		if rerr != nil {
+		if e.IsDir() {
+			// Directory where a marker file is required → incomplete recovery.
+			if strings.HasSuffix(name, ".key") {
+				return fmt.Errorf("%w: marker %s is a directory", ErrLedgerRecoveryIncomplete, name)
+			}
 			continue
+		}
+		if !strings.HasSuffix(name, ".key") {
+			continue
+		}
+		full := filepath.Join(dir, name)
+		if err := rejectLedgerSymlink(full); err != nil {
+			return fmt.Errorf("%w: %v", ErrLedgerPathUnsafe, err)
+		}
+		b, rerr := os.ReadFile(full)
+		if rerr != nil {
+			return fmt.Errorf("%w: marker %s: %v", ErrLedgerRecoveryIncomplete, name, rerr)
+		}
+		if len(b) == 0 || len(b) > maxSuppressMarkerBytes {
+			return fmt.Errorf("%w: marker size", ErrLedgerMarkerInvalid)
+		}
+		if !utf8.Valid(b) {
+			return fmt.Errorf("%w: marker encoding", ErrLedgerMarkerInvalid)
 		}
 		key := strings.TrimSpace(string(b))
-		if key != "" {
-			l.seen[key] = struct{}{}
+		if key == "" || strings.ContainsRune(key, 0) {
+			return fmt.Errorf("%w: empty or null key", ErrLedgerMarkerInvalid)
 		}
+		// Canonical name must match hash of key (prevents rename/collision games).
+		if name != suppressMarkerFilename(key) {
+			return fmt.Errorf("%w: marker name not canonical for key", ErrLedgerMarkerInvalid)
+		}
+		// Bound key shape: intervention|session|host|fingerprint (exactly 3 pipes).
+		if strings.Count(key, "|") != 3 {
+			return fmt.Errorf("%w: key shape", ErrLedgerMarkerInvalid)
+		}
+		l.seen[key] = struct{}{}
 	}
 	return nil
 }
@@ -148,6 +216,9 @@ func (l *DurableAdviceLedger) MarkAmbiguousSuppress(interventionID, sessionID, h
 	defer l.mu.Unlock()
 	l.seen[key] = struct{}{}
 	dir := l.suppressSidecarDir()
+	if err := rejectLedgerSymlink(dir); err != nil {
+		return fmt.Errorf("%w: %v", ErrLedgerPathUnsafe, err)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

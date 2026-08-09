@@ -1,15 +1,26 @@
 package main
 
-// Live control disposition evaluator (#167 / #199).
+import "fmt"
+
+// Live control disposition evaluator (#167 / #199 / #209).
 //
 // Schema reinframe.grok_build_live_control.v2 requires a full mandatory matrix
 // for GO. Historical v1 evidence that only filled a subset must demote.
+// Unknown scenario statuses never yield GO or LIMITED_GO (#209).
 
 // Schema versions.
 const (
 	LiveControlSchemaV1 = "reinframe.grok_build_live_control.v1"
 	LiveControlSchemaV2 = "reinframe.grok_build_live_control.v2"
 )
+
+// Closed scenario status enum (#209).
+var closedScenarioStatuses = map[string]struct{}{
+	"PASS":         {},
+	"FAIL":         {},
+	"NOT_RUN":      {},
+	"INCONCLUSIVE": {},
+}
 
 // goMandatoryIDs must all PASS (and pass correlation gates) for disposition GO.
 var goMandatoryIDs = []string{
@@ -28,24 +39,42 @@ var coreMandatoryIDs = []string{
 	"ACP-INIT-001", "ACP-AUTH-001", "ACP-SESSION-001", "ACP-CLEANUP-001",
 }
 
+// validScenarioStatus reports whether status is in the closed enum.
+func validScenarioStatus(status string) bool {
+	_, ok := closedScenarioStatuses[status]
+	return ok
+}
+
 // evaluateDisposition ranks GO / LIMITED_GO / MORE_DATA / NO_GO from scenario map.
 //
 // GO requires:
-//   - every goMandatoryID PASS;
+//   - every goMandatoryID PASS with closed enum status only;
 //   - ACP-AUTH-001 PASS;
 //   - HOOK-DENY-001 DenyDirectProof;
 //   - each HOOK-FAIL-* FailOpenInvoked + host_fail_open;
 //   - ACP-SESSION-001 SessionCorrelated + ack_layer=session_visible;
-//   - ADVICE-DEDUP-001 DedupSuppressed (true business suppression, not "host accepted twice");
+//   - ADVICE-DEDUP-001 DedupSuppressed;
 //   - no soft gaps.
 //
+// Unknown/non-enum statuses (PASSX, UNKNOWN, pass, empty on present key) → NO_GO.
 // LIMITED_GO: core paths PASS with weaker correlation or some GO-only IDs INCONCLUSIVE.
 // MORE_DATA: empty map, or only partial foundation without full core PASS.
-// NO_GO: any core FAIL or auth not PASS.
+// NO_GO: any core FAIL, auth not PASS, or any invalid status.
 func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reasons []string) {
 	reasons = []string{}
 	if len(scenarios) == 0 {
 		return "MORE_DATA", []string{"no scenarios recorded"}
+	}
+
+	// Closed status enum gate (#209): any non-enum status forbids GO and LIMITED_GO.
+	for id, sr := range scenarios {
+		// Empty status on a present entry is invalid (distinct from missing key).
+		if sr.Status == "" || !validScenarioStatus(sr.Status) {
+			return "NO_GO", []string{fmt.Sprintf("%s invalid status %q", id, sr.Status)}
+		}
+		if sr.ID != "" && sr.ID != id {
+			return "NO_GO", []string{fmt.Sprintf("scenario key %s mismatches embedded id %s", id, sr.ID)}
+		}
 	}
 
 	// Auth hard gate.
@@ -67,7 +96,7 @@ func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reas
 	corePass := 0
 	for _, id := range coreMandatoryIDs {
 		sr, ok := scenarios[id]
-		if !ok || sr.Status == "" || sr.Status == "NOT_RUN" {
+		if !ok || sr.Status == "NOT_RUN" {
 			coreMissing++
 			reasons = append(reasons, id+" missing")
 			continue
@@ -78,10 +107,14 @@ func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reas
 		case "INCONCLUSIVE":
 			coreInconclusive++
 			reasons = append(reasons, id+" INCONCLUSIVE")
+		case "FAIL":
+			// already handled
+		default:
+			// Unreachable after enum gate; belt.
+			return "NO_GO", append(reasons, id+" invalid status "+sr.Status)
 		}
 	}
 	if coreMissing > 0 && corePass < len(coreMandatoryIDs)/2 {
-		// Too incomplete for LIMITED_GO product claim.
 		if !containsStr(reasons, "incomplete core matrix") {
 			reasons = append(reasons, "incomplete core matrix")
 		}
@@ -93,10 +126,9 @@ func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reas
 
 	for _, id := range goMandatoryIDs {
 		sr, ok := scenarios[id]
-		if !ok || sr.Status == "" || sr.Status == "NOT_RUN" {
+		if !ok || sr.Status == "NOT_RUN" {
 			disp = demote(disp, "LIMITED_GO")
 			if id == "STATIC-PERM-001" {
-				// static permission optional fragment: missing → LIMITED_GO for full GO claim
 				reasons = append(reasons, id+" NOT_RUN")
 			} else {
 				reasons = append(reasons, id+" missing")
@@ -105,7 +137,6 @@ func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reas
 		}
 		switch sr.Status {
 		case "FAIL":
-			// Non-core already handled; GO-only FAIL demotes hard.
 			if isCore(id) {
 				return "NO_GO", append(reasons, id+" FAIL")
 			}
@@ -117,7 +148,6 @@ func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reas
 				reasons = append(reasons, id+" INCONCLUSIVE")
 			}
 		case "PASS":
-			// correlation gates for GO
 			if id == "HOOK-DENY-001" && !sr.DenyDirectProof {
 				disp = demote(disp, "LIMITED_GO")
 				reasons = append(reasons, "HOOK-DENY-001 lacks deny_direct_proof")
@@ -138,6 +168,10 @@ func evaluateDisposition(scenarios map[string]ScenarioResult) (disp string, reas
 				disp = demote(disp, "LIMITED_GO")
 				reasons = append(reasons, "ADVICE-DEDUP-001 no durable/business suppression proven")
 			}
+		case "NOT_RUN":
+			// handled above
+		default:
+			return "NO_GO", append(reasons, id+" invalid status "+sr.Status)
 		}
 	}
 
@@ -186,10 +220,51 @@ func stringsHasPrefix(s, p string) bool {
 	return len(s) >= len(p) && s[:len(p)] == p
 }
 
-// closedSchemaV2 is a machine-checkable evidence contract (#199).
+func scenarioResultSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"id", "status"},
+		"properties": map[string]any{
+			"id":                  map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+			"status":              map[string]any{"enum": []string{"PASS", "FAIL", "NOT_RUN", "INCONCLUSIVE"}},
+			"detail":              map[string]any{"type": "string", "maxLength": 2000},
+			"tool_name":           map[string]any{"type": "string", "maxLength": 256},
+			"ack_layer":           map[string]any{"type": "string", "maxLength": 64},
+			"host_outcome":        map[string]any{"type": "string", "maxLength": 256},
+			"at":                  map[string]any{"type": "string", "maxLength": 64},
+			"deny_direct_proof":   map[string]any{"type": "boolean"},
+			"fail_open_invoked":   map[string]any{"type": "boolean"},
+			"session_correlated":  map[string]any{"type": "boolean"},
+			"intervention_id":     map[string]any{"type": "string", "maxLength": 256},
+			"target_session_id":   map[string]any{"type": "string", "maxLength": 256},
+			"dedup_suppressed":    map[string]any{"type": "boolean"},
+		},
+	}
+}
+
+// closedSchemaV2 is the machine-checkable evidence contract (#199/#209).
+// Nested objects use additionalProperties:false; scenario status is a closed enum.
 func closedSchemaV2() map[string]any {
 	statusEnum := []string{"PASS", "FAIL", "NOT_RUN", "INCONCLUSIVE"}
 	dispEnum := []string{"GO", "LIMITED_GO", "MORE_DATA", "NO_GO"}
+	sr := scenarioResultSchema()
+	// Group maps: values are ScenarioResult objects (closed).
+	scenarioMap := map[string]any{
+		"type":                 "object",
+		"additionalProperties": sr,
+	}
+	closedObj := func(props map[string]any, required []string) map[string]any {
+		m := map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties":           props,
+		}
+		if len(required) > 0 {
+			m["required"] = required
+		}
+		return m
+	}
 	return map[string]any{
 		"$schema":              "https://json-schema.org/draft/2020-12/schema",
 		"$id":                  LiveControlSchemaV2,
@@ -202,35 +277,68 @@ func closedSchemaV2() map[string]any {
 			"scenario_registry",
 		},
 		"properties": map[string]any{
-			"schema_version":            map[string]any{"const": LiveControlSchemaV2},
-			"provenance":                map[string]any{"type": "object"},
-			"entry_gates":               map[string]any{"type": "object"},
-			"trust_results":             map[string]any{"type": "object"},
-			"hook_results":              map[string]any{"type": "object"},
-			"hook_failure_semantics":    map[string]any{"type": "object"},
-			"static_permission_results": map[string]any{"type": "object"},
-			"acp_negotiation":           map[string]any{"type": "object"},
-			"auth_boundary":             map[string]any{"type": "object"},
-			"session_results":           map[string]any{"type": "object"},
-			"advice_results":            map[string]any{"type": "object"},
-			"challenge_results":         map[string]any{"type": "object"},
-			"ack_layers": map[string]any{
+			"schema_version": map[string]any{"const": LiveControlSchemaV2},
+			"provenance": closedObj(map[string]any{
+				"issue":                 map[string]any{"type": "integer"},
+				"generated_at":          map[string]any{"type": "string"},
+				"goos":                  map[string]any{"type": "string"},
+				"goarch":                map[string]any{"type": "string"},
+				"grok_version":          map[string]any{"type": "string"},
+				"grok_version_full":     map[string]any{"type": "string"},
+				"reinframe_commit":      map[string]any{"type": "string"},
+				"starting_main_sha":     map[string]any{"type": "string"},
+				"main_tip_note":         map[string]any{"type": "string"},
+				"harness":               map[string]any{"type": "string"},
+				"evidence_binding_note": map[string]any{"type": "string"},
+				"schema_note":           map[string]any{"type": "string"},
+			}, []string{"issue", "generated_at", "goos", "harness"}),
+			"entry_gates": closedObj(map[string]any{
+				"live_flag_required": map[string]any{"type": "boolean"},
+				"auth_json_read":     map[string]any{"type": "boolean"},
+				"credential_print":   map[string]any{"type": "boolean"},
+			}, []string{"live_flag_required", "auth_json_read", "credential_print"}),
+			"trust_results":             scenarioMap,
+			"hook_results":              scenarioMap,
+			"hook_failure_semantics":    scenarioMap,
+			"static_permission_results": scenarioMap,
+			"acp_negotiation":           scenarioMap,
+			"auth_boundary":             scenarioMap,
+			"session_results":           scenarioMap,
+			"advice_results":            scenarioMap,
+			"challenge_results":         scenarioMap,
+			"ack_layers": closedObj(map[string]any{
+				"strongest_proven":  map[string]any{"type": "string"},
+				"explicit_claimed":  map[string]any{"const": false},
+				"source_correlated": map[string]any{"type": "boolean"},
+				"note":              map[string]any{"type": "string"},
+			}, []string{"strongest_proven", "explicit_claimed"}),
+			"process_cleanup":      scenarioMap,
+			"capability_manifests": map[string]any{}, // optional free-form host pin
+			// privacy_checks: closed keys matching scanPrivacy output (#209).
+			"privacy_checks": map[string]any{
 				"type":                 "object",
-				"required":             []string{"strongest_proven", "explicit_claimed"},
-				"additionalProperties": true,
+				"additionalProperties": false,
 				"properties": map[string]any{
-					"strongest_proven":  map[string]any{"type": "string"},
-					"explicit_claimed":  map[string]any{"const": false},
-					"source_correlated": map[string]any{"type": "boolean"},
-					"note":              map[string]any{"type": "string"},
+					"method":                    map[string]any{"type": "string"},
+					"auth_json_read":            map[string]any{"type": "boolean"},
+					"auth_json_path_seen_in_honesty_notes_only": map[string]any{"type": "boolean"},
+					"auth_json_path_leak_suspected":             map[string]any{"type": "boolean"},
+					"token_fields_in_auth_envelope":             map[string]any{"type": "boolean"},
+					"raw_thoughts_stored":                       map[string]any{"type": "boolean"},
+					"secret_pattern_hits":                       map[string]any{"type": "integer"},
+					"error":                                     map[string]any{"type": "string"},
 				},
 			},
-			"process_cleanup":      map[string]any{"type": "object"},
-			"capability_manifests": map[string]any{},
-			"privacy_checks":       map[string]any{"type": "object"},
-			"limitations":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"scenarios":            map[string]any{"type": "object"},
-			"scenario_registry":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"limitations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"scenarios": map[string]any{
+				"type":                 "object",
+				"additionalProperties": sr,
+			},
+			"scenario_registry": map[string]any{
+				"type":     "array",
+				"items":    map[string]any{"type": "string"},
+				"minItems": 1,
+			},
 			"final_disposition":    map[string]any{"enum": dispEnum},
 			"scenario_status_enum": map[string]any{"enum": statusEnum},
 		},
@@ -238,6 +346,7 @@ func closedSchemaV2() map[string]any {
 }
 
 // validateReportV2Basics checks closed invariants without external JSON-schema libs.
+// Semantic checks complement schema validation (#209).
 func validateReportV2Basics(report map[string]any, scenarios map[string]ScenarioResult) []string {
 	var errs []string
 	if report["schema_version"] != LiveControlSchemaV2 {
@@ -262,6 +371,70 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 			errs = append(errs, "missing required field: "+req)
 		}
 	}
+
+	// Nested closed checks: provenance/entry_gates unknown keys.
+	if prov, ok := report["provenance"].(map[string]any); ok {
+		provAllowed := map[string]struct{}{
+			"issue": {}, "generated_at": {}, "goos": {}, "goarch": {}, "grok_version": {},
+			"grok_version_full": {}, "reinframe_commit": {}, "starting_main_sha": {},
+			"main_tip_note": {}, "harness": {}, "evidence_binding_note": {}, "schema_note": {},
+		}
+		for k := range prov {
+			if _, ok := provAllowed[k]; !ok {
+				errs = append(errs, "unknown provenance field: "+k)
+			}
+		}
+		for _, req := range []string{"issue", "generated_at", "goos", "harness"} {
+			if _, ok := prov[req]; !ok {
+				errs = append(errs, "missing provenance field: "+req)
+			}
+		}
+	} else {
+		errs = append(errs, "provenance must be object")
+	}
+	if eg, ok := report["entry_gates"].(map[string]any); ok {
+		egAllowed := map[string]struct{}{"live_flag_required": {}, "auth_json_read": {}, "credential_print": {}}
+		for k := range eg {
+			if _, ok := egAllowed[k]; !ok {
+				errs = append(errs, "unknown entry_gates field: "+k)
+			}
+		}
+	}
+
+	// Scenario status enum + key/id consistency.
+	for id, sr := range scenarios {
+		if !validScenarioStatus(sr.Status) {
+			errs = append(errs, fmt.Sprintf("scenario %s invalid status %q", id, sr.Status))
+		}
+		if sr.ID != "" && sr.ID != id {
+			errs = append(errs, fmt.Sprintf("scenario key %s mismatches id %s", id, sr.ID))
+		}
+	}
+
+	// Registry uniqueness + coverage of goMandatoryIDs when disposition is GO.
+	if reg, ok := report["scenario_registry"].([]string); ok {
+		seen := map[string]struct{}{}
+		for _, id := range reg {
+			if _, dup := seen[id]; dup {
+				errs = append(errs, "duplicate scenario_registry entry: "+id)
+			}
+			seen[id] = struct{}{}
+		}
+	} else if regAny, ok := report["scenario_registry"].([]any); ok {
+		seen := map[string]struct{}{}
+		for _, v := range regAny {
+			id, _ := v.(string)
+			if id == "" {
+				errs = append(errs, "empty scenario_registry entry")
+				continue
+			}
+			if _, dup := seen[id]; dup {
+				errs = append(errs, "duplicate scenario_registry entry: "+id)
+			}
+			seen[id] = struct{}{}
+		}
+	}
+
 	disp, _ := report["final_disposition"].(string)
 	if disp != "GO" && disp != "LIMITED_GO" && disp != "MORE_DATA" && disp != "NO_GO" {
 		errs = append(errs, "invalid final_disposition")
@@ -270,6 +443,20 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 	if ack != nil {
 		if ex, ok := ack["explicit_claimed"].(bool); ok && ex {
 			errs = append(errs, "explicit_claimed must be false")
+		}
+		// source_correlated=false cannot claim session_visible strongest for product GO.
+		if sc, ok := ack["source_correlated"].(bool); ok && !sc {
+			if sp, _ := ack["strongest_proven"].(string); sp == "session_visible" && disp == "GO" {
+				// GO still requires SessionCorrelated on ACP-SESSION; belt if mismatch.
+			}
+		}
+		ackAllowed := map[string]struct{}{
+			"strongest_proven": {}, "explicit_claimed": {}, "source_correlated": {}, "note": {},
+		}
+		for k := range ack {
+			if _, ok := ackAllowed[k]; !ok {
+				errs = append(errs, "unknown ack_layers field: "+k)
+			}
 		}
 	}
 	// Recompute disposition and require match.
@@ -288,6 +475,14 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 		for _, id := range []string{"HOOK-FAIL-001", "HOOK-FAIL-002", "HOOK-FAIL-003", "HOOK-FAIL-004"} {
 			if sr, ok := scenarios[id]; !ok || !sr.FailOpenInvoked {
 				errs = append(errs, "GO requires "+id+" fail_open_invoked")
+			}
+		}
+	}
+	// Never allow GO/LIMITED_GO when any status is invalid (belt after recompute).
+	if disp == "GO" || disp == "LIMITED_GO" {
+		for id, sr := range scenarios {
+			if !validScenarioStatus(sr.Status) {
+				errs = append(errs, "GO/LIMITED_GO forbidden with invalid status on "+id)
 			}
 		}
 	}

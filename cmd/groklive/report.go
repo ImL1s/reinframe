@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,11 +16,45 @@ import (
 	"github.com/ImL1s/reinframe/pkg/protocol"
 )
 
+// liveReportOutcome is the result of the shipped report path (#219).
+// Tests drive generateLiveReport without process exit.
+type liveReportOutcome struct {
+	Disposition   string
+	Reasons       []string
+	Report        map[string]any
+	JSONPath      string
+	MDPath        string
+	SchemaPath    string
+	MandatoryOK   bool
+	ArtifactValid bool
+	ExitCode      int // 0 when disposition is not NO_GO; 1 for NO_GO
+}
+
 func runReport(args []string) {
 	fs := flag.NewFlagSet("report", flag.ExitOnError)
 	out := fs.String("evidence-out", "", "evidence directory")
 	_ = fs.Parse(args)
 	evDir := mustAbs(*out, "--evidence-out")
+	outcome, err := generateLiveReport(evDir)
+	if err != nil {
+		fail(err)
+	}
+	printJSON(map[string]any{
+		"ok":             true,
+		"disposition":    outcome.Disposition,
+		"json":           outcome.JSONPath,
+		"md":             outcome.MDPath,
+		"reasons":        outcome.Reasons,
+		"mandatory_ok":   outcome.MandatoryOK,
+		"artifact_valid": outcome.ArtifactValid,
+	})
+	if outcome.ExitCode != 0 {
+		os.Exit(outcome.ExitCode)
+	}
+}
+
+// generateLiveReport is the shipped report generator used by runReport and tests (#219).
+func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	scenarios := loadScenarioMap(evDir)
 
 	// Normalize scenario registry BEFORE first disposition evaluation so later
@@ -37,7 +72,7 @@ func runReport(args []string) {
 	// Floor: disposition may only demote after this point.
 	floor := disp
 
-	// Privacy scan: complete-or-fail (#215).
+	// Privacy scan: complete-or-fail (#215/#219).
 	privacy := scanPrivacy(evDir)
 
 	ver := "unknown"
@@ -49,8 +84,8 @@ func runReport(args []string) {
 		preflightPresent = true
 		var pf map[string]any
 		if json.Unmarshal(b, &pf) != nil {
+			// Always surface diagnostic (#219); demote only qualifying floors (#217).
 			reasons = append(reasons, "preflight.json malformed")
-			// Only demote qualifying dispositions; MORE_DATA stays MORE_DATA.
 			if floor == "GO" || floor == "LIMITED_GO" {
 				floor = demoteFloor(floor, "NO_GO")
 				reasons = append(reasons, "malformed preflight forbids GO/LIMITED_GO")
@@ -63,19 +98,29 @@ func runReport(args []string) {
 			}
 			if usable, ok := pf["usable"].(bool); ok {
 				preflightUsable = usable
-				if !usable && (floor == "GO" || floor == "LIMITED_GO") {
-					floor = demoteFloor(floor, "NO_GO")
-					reasons = append(reasons, "preflight usable=false forbids GO/LIMITED_GO")
+				if !usable {
+					reasons = append(reasons, "preflight usable=false")
+					if floor == "GO" || floor == "LIMITED_GO" {
+						floor = demoteFloor(floor, "NO_GO")
+						reasons = append(reasons, "preflight usable=false forbids GO/LIMITED_GO")
+					}
 				}
-			} else if floor == "GO" || floor == "LIMITED_GO" {
-				floor = demoteFloor(floor, "NO_GO")
-				reasons = append(reasons, "preflight missing usable forbids GO/LIMITED_GO")
+			} else {
+				reasons = append(reasons, "preflight missing usable field")
+				if floor == "GO" || floor == "LIMITED_GO" {
+					floor = demoteFloor(floor, "NO_GO")
+					reasons = append(reasons, "preflight missing usable forbids GO/LIMITED_GO")
+				}
 			}
 		}
 	} else {
-		// Missing preflight forbids GO/LIMITED_GO only; incomplete MORE_DATA remains MORE_DATA.
-		if floor == "GO" || floor == "LIMITED_GO" {
+		// Always record missing/unreadable preflight (#219). Demote only GO/LIMITED_GO (#217).
+		if os.IsNotExist(err) {
 			reasons = append(reasons, "preflight.json missing")
+		} else {
+			reasons = append(reasons, "preflight.json unreadable: "+err.Error())
+		}
+		if floor == "GO" || floor == "LIMITED_GO" {
 			floor = demoteFloor(floor, "NO_GO")
 			reasons = append(reasons, "missing preflight forbids GO/LIMITED_GO")
 		}
@@ -146,16 +191,28 @@ func runReport(args []string) {
 			"source_correlated": sessCorr,
 			"note":              "JSON-RPC success is transport; session_visible only when SessionCorrelated; explicit never from transport alone",
 		},
-		"process_cleanup": pick(scenarios, "ACP-CLEANUP-001"),
-		"privacy_checks":  privacy,
-		"limitations":          reasons,
-		"scenarios":            scenarios,
+		"process_cleanup":   pick(scenarios, "ACP-CLEANUP-001"),
+		"privacy_checks":    privacy,
+		"limitations":       reasons,
+		"scenarios":         scenarios,
 		"scenario_registry": append([]string{}, goMandatoryIDs...),
 		"final_disposition": disp,
 	}
-	// Omit capability_manifests when absent so JSON null does not fail schema (#215 follow-up).
+	// Only emit capability_manifests when structurally schema-ready (#219).
+	// Invalid optional evidence is omitted with an explicit limitation (not embedded invalid).
+	// If we omit after qualification used caps, demote GO/LIMITED_GO (#219 review).
 	if caps != nil {
-		report["capability_manifests"] = caps
+		if err := capabilityManifestEmitOK(caps); err != nil {
+			reasons = append(reasons, "capability_manifests omitted: "+err.Error())
+			if disp == "GO" || disp == "LIMITED_GO" {
+				disp = "NO_GO"
+				reasons = append(reasons, "omitted capability_manifests forbids GO/LIMITED_GO")
+			}
+			report["final_disposition"] = disp
+			report["limitations"] = reasons
+		} else {
+			report["capability_manifests"] = caps
+		}
 	}
 
 	if verrs := validateReportV2Basics(report, scenarios); len(verrs) > 0 {
@@ -177,51 +234,138 @@ func runReport(args []string) {
 		report["limitations"] = reasons
 	}
 
-	if err := validateReportAgainstCommittedSchema(report); err != nil {
-		reasons = append(reasons, "committed_schema: "+err.Error())
-		if disp == "GO" || disp == "LIMITED_GO" {
-			disp = "NO_GO"
-			reasons = append(reasons, "committed schema validation forbids GO/LIMITED_GO")
-		}
-		report["final_disposition"] = disp
-		report["limitations"] = reasons
+	// Committed schema gate for ALL dispositions (#219): never write invalid success.
+	if err := ensureReportSchemaValid(report, &reasons); err != nil {
+		return liveReportOutcome{}, err
 	}
+	// Sync disposition from report if ensure demoted GO after caps strip.
+	if d, ok := report["final_disposition"].(string); ok && d != "" {
+		disp = d
+	}
+	report["limitations"] = reasons
+	report["final_disposition"] = disp
 
 	base := fmt.Sprintf("issue-167-live-v2-%s-%s-%s", sanitizeVersion(ver), osName, day)
 	jsonPath := filepath.Join(evDir, base+".json")
 	mdPath := filepath.Join(evDir, base+".md")
-	if disp == "GO" || disp == "LIMITED_GO" {
-		if err := validateReportAgainstCommittedSchema(report); err != nil {
-			disp = "NO_GO"
-			reasons = append(reasons, "pre-write schema gate: "+err.Error())
-			report["final_disposition"] = disp
-			report["limitations"] = reasons
-		}
-	}
+	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v2.schema.json")
+
+	// Write JSON first; only then MD/schema once disk JSON is schema-valid.
 	if err := writeJSON(jsonPath, report); err != nil {
-		fail(err)
+		return liveReportOutcome{}, err
 	}
+	onDisk, err := os.ReadFile(jsonPath)
+	if err != nil {
+		return liveReportOutcome{}, err
+	}
+	var diskReport map[string]any
+	if err := json.Unmarshal(onDisk, &diskReport); err != nil {
+		_ = os.Remove(jsonPath)
+		return liveReportOutcome{}, fmt.Errorf("written report not JSON: %w", err)
+	}
+	if err := validateReportAgainstCommittedSchema(diskReport); err != nil {
+		_ = os.Remove(jsonPath)
+		return liveReportOutcome{}, fmt.Errorf("written report fails committed schema: %w", err)
+	}
+
 	md := renderMD(report, disp, ack, ver, osName, reasons, scenarios)
 	if err := os.WriteFile(mdPath, []byte(md), 0o600); err != nil {
-		fail(err)
+		_ = os.Remove(jsonPath)
+		return liveReportOutcome{}, err
 	}
-
-	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v2.schema.json")
 	if err := os.WriteFile(schemaPath, EmbeddedV2SchemaJSON(), 0o600); err != nil {
-		fail(fmt.Errorf("write schema: %w", err))
+		_ = os.Remove(jsonPath)
+		_ = os.Remove(mdPath)
+		return liveReportOutcome{}, fmt.Errorf("write schema: %w", err)
 	}
 
-	printJSON(map[string]any{
-		"ok":           true,
-		"disposition":  disp,
-		"json":         jsonPath,
-		"md":           mdPath,
-		"reasons":      reasons,
-		"mandatory_ok": disp == "GO" || disp == "LIMITED_GO",
-	})
+	exit := 0
 	if disp == "NO_GO" {
-		os.Exit(1)
+		exit = 1
 	}
+	return liveReportOutcome{
+		Disposition:   disp,
+		Reasons:       reasons,
+		Report:        report,
+		JSONPath:      jsonPath,
+		MDPath:        mdPath,
+		SchemaPath:    schemaPath,
+		MandatoryOK:   disp == "GO" || disp == "LIMITED_GO",
+		ArtifactValid: true,
+		ExitCode:      exit,
+	}, nil
+}
+
+// ensureReportSchemaValid drops optional bad capability_manifests once, then requires schema pass.
+// When caps are stripped, demotes GO/LIMITED_GO on the report body (#219).
+func ensureReportSchemaValid(report map[string]any, reasons *[]string) error {
+	if err := validateReportAgainstCommittedSchema(report); err == nil {
+		return nil
+	} else {
+		*reasons = append(*reasons, "committed_schema: "+err.Error())
+		if _, ok := report["capability_manifests"]; ok {
+			delete(report, "capability_manifests")
+			*reasons = append(*reasons, "capability_manifests omitted: fails committed schema")
+			if d, _ := report["final_disposition"].(string); d == "GO" || d == "LIMITED_GO" {
+				report["final_disposition"] = "NO_GO"
+				*reasons = append(*reasons, "omitted capability_manifests forbids GO/LIMITED_GO")
+			}
+			report["limitations"] = *reasons
+			if err2 := validateReportAgainstCommittedSchema(report); err2 == nil {
+				return nil
+			} else {
+				return fmt.Errorf("report fails committed schema after omit: %w", err2)
+			}
+		}
+		return fmt.Errorf("report fails committed schema: %w", err)
+	}
+}
+
+// capabilityManifestEmitOK checks closed structural readiness for JSON emit (#219).
+// Does not require ACP scenario PASS (qualification still does via liveQualification).
+func capabilityManifestEmitOK(caps any) error {
+	if caps == nil {
+		return fmt.Errorf("missing")
+	}
+	m, ok := caps.(map[string]any)
+	if !ok {
+		return fmt.Errorf("must be object (got %T)", caps)
+	}
+	for _, req := range []string{"pre_handshake", "post_handshake", "auth_methods", "caps_digest"} {
+		if _, ok := m[req]; !ok {
+			return fmt.Errorf("missing required field %s", req)
+		}
+	}
+	pre, err := decodeClosedFoundation(m["pre_handshake"])
+	if err != nil {
+		return fmt.Errorf("pre_handshake: %w", err)
+	}
+	post, err := decodeClosedFoundation(m["post_handshake"])
+	if err != nil {
+		return fmt.Errorf("post_handshake: %w", err)
+	}
+	if err := validatePreHandshake(pre); err != nil {
+		return fmt.Errorf("pre_handshake: %w", err)
+	}
+	if err := validatePostHandshake(post); err != nil {
+		return fmt.Errorf("post_handshake: %w", err)
+	}
+	authIDs, err := parseClosedAuthMethods(m["auth_methods"])
+	if err != nil {
+		return fmt.Errorf("auth_methods: %w", err)
+	}
+	if !stringSlicesEqual(authIDs, post.AuthMethods) {
+		return fmt.Errorf("auth_methods disagree with post_handshake.auth_methods")
+	}
+	if len(authIDs) == 0 {
+		return fmt.Errorf("auth_methods empty")
+	}
+	dig, _ := m["caps_digest"].(string)
+	dig = strings.TrimSpace(dig)
+	if dig != adapter.CapsDigestFromFoundation(post) {
+		return fmt.Errorf("caps_digest forged or stale")
+	}
+	return nil
 }
 
 // demoteFloor never promotes: returns the worse of floor and candidate.
@@ -493,17 +637,13 @@ func parseClosedAuthMethods(v any) ([]string, error) {
 		case string:
 			ids = append(ids, x)
 		case map[string]any:
-			// Only closed {id: "..."} (or methodId) — no credential keys.
+			// Schema-aligned: only closed {id: "..."} (no methodId-only for emit).
 			for k := range x {
-				lk := strings.ToLower(k)
-				if lk != "id" && lk != "methodid" {
+				if k != "id" {
 					return nil, fmt.Errorf("auth method object allows only id")
 				}
 			}
 			id, _ := x["id"].(string)
-			if id == "" {
-				id, _ = x["methodId"].(string)
-			}
 			if id == "" {
 				return nil, fmt.Errorf("auth method object missing id")
 			}
@@ -550,9 +690,23 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-const maxPrivacyFileBytes = 1 << 20 // 1 MiB
+const (
+	maxPrivacyFileBytes  = 1 << 20 // 1 MiB per file
+	maxPrivacyFiles      = 256
+	maxPrivacyTotalBytes = 8 << 20 // 8 MiB aggregate scanned content
+)
 
-// scanPrivacy is a complete-or-fail privacy scan of the flat evidence directory (#215).
+// Closed substrings that indicate private reasoning envelopes were persisted (#219).
+var rawThoughtsMarkers = []string{
+	`"raw_thoughts"`,
+	`"private_reasoning"`,
+	`"thinking_blocks"`,
+	`"reasoning_content"`,
+	`"encrypted_content"`,
+}
+
+// scanPrivacy is a complete-or-fail privacy scan of the flat evidence directory (#215/#219).
+// Only regular files are content-scanned; size is checked before full load via Stat + LimitReader.
 func scanPrivacy(evDir string) map[string]any {
 	out := map[string]any{
 		"method":                                    "complete_or_fail_flat_scan",
@@ -578,10 +732,11 @@ func scanPrivacy(evDir string) map[string]any {
 	hits := 0
 	honestyOnly := false
 	leak := false
+	rawThoughts := false
 	seen := 0
 	scanned := 0
 	skipped := 0
-	bytes := 0
+	totalBytes := 0
 	var fails []string
 	for _, e := range entries {
 		// Evidence dir is flat: nested directories forbid complete qualification.
@@ -591,16 +746,47 @@ func scanPrivacy(evDir string) map[string]any {
 			fails = append(fails, "nested_directory:"+e.Name())
 			continue
 		}
-		// Symlink leaf under evidence root: reject for complete scan.
 		full := filepath.Join(evDir, e.Name())
-		if fi, err := os.Lstat(full); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		fi, err := os.Lstat(full)
+		if err != nil {
 			seen++
+			skipped++
+			fails = append(fails, "unreadable:"+e.Name())
+			continue
+		}
+		seen++
+		mode := fi.Mode()
+		if mode&os.ModeSymlink != 0 {
 			skipped++
 			fails = append(fails, "symlink:"+e.Name())
 			continue
 		}
-		seen++
-		b, err := os.ReadFile(full)
+		if !mode.IsRegular() {
+			// FIFO, socket, device, etc. — never open for content (#219).
+			skipped++
+			fails = append(fails, "non_regular:"+e.Name())
+			continue
+		}
+		if fi.Size() > int64(maxPrivacyFileBytes) {
+			skipped++
+			fails = append(fails, "oversized:"+e.Name())
+			continue
+		}
+		if scanned >= maxPrivacyFiles {
+			skipped++
+			fails = append(fails, "file_count_cap:"+e.Name())
+			continue
+		}
+		// Bounded read: Stat size already checked; LimitReader is a hard cap.
+		f, err := os.Open(full)
+		if err != nil {
+			skipped++
+			fails = append(fails, "unreadable:"+e.Name())
+			continue
+		}
+		lr := io.LimitReader(f, int64(maxPrivacyFileBytes)+1)
+		b, err := io.ReadAll(lr)
+		_ = f.Close()
 		if err != nil {
 			skipped++
 			fails = append(fails, "unreadable:"+e.Name())
@@ -611,8 +797,13 @@ func scanPrivacy(evDir string) map[string]any {
 			fails = append(fails, "oversized:"+e.Name())
 			continue
 		}
+		if totalBytes+len(b) > maxPrivacyTotalBytes {
+			skipped++
+			fails = append(fails, "total_bytes_cap:"+e.Name())
+			continue
+		}
 		scanned++
-		bytes += len(b)
+		totalBytes += len(b)
 		s := string(b)
 		if strings.Contains(s, "auth.json") || strings.Contains(s, ".grok/auth") {
 			if strings.Contains(strings.ToLower(s), "never read") || strings.Contains(s, "honesty_note") ||
@@ -634,12 +825,19 @@ func scanPrivacy(evDir string) map[string]any {
 				hits++
 			}
 		}
+		for _, m := range rawThoughtsMarkers {
+			if strings.Contains(s, m) {
+				rawThoughts = true
+				break
+			}
+		}
 	}
 	out["files_seen"] = seen
 	out["files_scanned"] = scanned
 	out["files_skipped"] = skipped
-	out["bytes_scanned"] = bytes
+	out["bytes_scanned"] = totalBytes
 	out["secret_pattern_hits"] = hits
+	out["raw_thoughts_stored"] = rawThoughts
 	out["auth_json_path_seen_in_honesty_notes_only"] = honestyOnly && !leak
 	out["auth_json_path_leak_suspected"] = leak
 	if len(fails) > 0 {

@@ -247,6 +247,40 @@ func scenarioResultSchema() map[string]any {
 	}
 }
 
+// foundationManifestSchema is the closed pre/post handshake object (#218).
+func foundationManifestSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required": []string{
+			"profile", "protocol_version", "cap_event_stream", "cap_tool_inspection",
+			"cap_advice_delivery", "cap_diff_inspection", "cap_pause", "cap_cancel",
+			"cap_resume", "cap_intervention_ack", "explicit_ack", "load_session",
+			"negotiated_level", "honesty_note",
+		},
+		"properties": map[string]any{
+			"profile":              map[string]any{"type": "string", "const": "reinframe.grok_build_acp.v1"},
+			"protocol_version":     map[string]any{"type": "integer", "const": 1},
+			"cap_event_stream":     map[string]any{"type": "boolean"},
+			"cap_tool_inspection":  map[string]any{"type": "boolean"},
+			"cap_advice_delivery":  map[string]any{"type": "boolean"},
+			"cap_diff_inspection":  map[string]any{"type": "boolean"},
+			"cap_pause":            map[string]any{"type": "boolean"},
+			"cap_cancel":           map[string]any{"type": "boolean"},
+			"cap_resume":           map[string]any{"type": "boolean"},
+			"cap_intervention_ack": map[string]any{"type": "boolean"},
+			"explicit_ack":         map[string]any{"type": "boolean"},
+			"load_session":         map[string]any{"type": "boolean"},
+			"auth_methods": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+			},
+			"negotiated_level": map[string]any{"type": "integer", "minimum": -1, "maximum": 3},
+			"honesty_note":     map[string]any{"type": "string", "minLength": 1},
+		},
+	}
+}
+
 // closedSchemaV2 is the machine-checkable evidence contract (#199/#209).
 // Nested objects use additionalProperties:false; scenario status is a closed enum.
 func closedSchemaV2() map[string]any {
@@ -319,16 +353,37 @@ func closedSchemaV2() map[string]any {
 				"note":              map[string]any{"type": "string"},
 			}, []string{"strongest_proven", "explicit_claimed"}),
 			"process_cleanup": scenarioMap,
-			// capability_manifests: closed ACP harness shape (#215).
+			// capability_manifests: closed ACP foundation shape (#215/#218).
 			"capability_manifests": map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,
 				"required":             []string{"pre_handshake", "post_handshake", "auth_methods", "caps_digest"},
 				"properties": map[string]any{
-					"pre_handshake":  map[string]any{"type": "object"},
-					"post_handshake": map[string]any{"type": "object"},
-					"auth_methods":   map[string]any{"type": "array"},
-					"caps_digest":    map[string]any{"type": "string", "minLength": 1},
+					"pre_handshake":  foundationManifestSchema(),
+					"post_handshake": foundationManifestSchema(),
+					"auth_methods": map[string]any{
+						"type":     "array",
+						"minItems": 1,
+						"maxItems": 16,
+						"items": map[string]any{
+							"oneOf": []any{
+								map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+								map[string]any{
+									"type":                 "object",
+									"additionalProperties": false,
+									"required":             []string{"id"},
+									"properties": map[string]any{
+										"id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+									},
+								},
+							},
+						},
+					},
+					// Canonical digest: load=… pause=… cancel=… resume=… tool=… diff=…
+					"caps_digest": map[string]any{
+						"type":    "string",
+						"pattern": `^load=(true|false) pause=(true|false) cancel=(true|false) resume=(true|false) tool=(true|false) diff=(true|false)$`,
+					},
 				},
 			},
 			// privacy_checks: closed keys matching complete-or-fail scan (#215).

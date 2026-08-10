@@ -1,0 +1,9 @@
+{
+  "hooks_file": "/var/folders/9w/6m1x9qr10zv2p2sztxyyxyq00000gn/T/tmp.iYJX2aATQg/reinframe-grok-v2-20260810T170640Z/project/.grok/hooks/reinframe-pretool.json",
+  "exists": true,
+  "ok": true,
+  "messages": [
+    "valid reinframe grok hooks foundation"
+  ],
+  "profile_hash": "47c317e88ea4b6b92ec259daba0e5cf3"
+}

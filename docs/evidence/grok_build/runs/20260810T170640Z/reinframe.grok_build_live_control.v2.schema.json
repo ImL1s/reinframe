@@ -1,0 +1,502 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reinframe.grok_build_live_control.v2",
+  "title": "Reinframe Grok Build live control evidence v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "provenance",
+    "entry_gates",
+    "scenarios",
+    "ack_layers",
+    "privacy_checks",
+    "limitations",
+    "final_disposition",
+    "scenario_registry"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "reinframe.grok_build_live_control.v2"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issue",
+        "generated_at",
+        "goos",
+        "harness"
+      ],
+      "properties": {
+        "issue": {
+          "type": "integer"
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "goos": {
+          "type": "string"
+        },
+        "goarch": {
+          "type": "string"
+        },
+        "grok_version": {
+          "type": "string"
+        },
+        "grok_version_full": {
+          "type": "string"
+        },
+        "reinframe_commit": {
+          "type": "string"
+        },
+        "starting_main_sha": {
+          "type": "string"
+        },
+        "main_tip_note": {
+          "type": "string"
+        },
+        "harness": {
+          "type": "string"
+        },
+        "evidence_binding_note": {
+          "type": "string"
+        },
+        "schema_note": {
+          "type": "string"
+        },
+        "reinframe_dirty": {
+          "type": "boolean"
+        },
+        "reinframe_commit_src": {
+          "type": "string"
+        }
+      }
+    },
+    "entry_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "live_flag_required",
+        "auth_json_read",
+        "credential_print"
+      ],
+      "properties": {
+        "live_flag_required": {
+          "type": "boolean"
+        },
+        "auth_json_read": {
+          "type": "boolean"
+        },
+        "credential_print": {
+          "type": "boolean"
+        }
+      }
+    },
+    "trust_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "hook_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "hook_failure_semantics": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "static_permission_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "acp_negotiation": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "auth_boundary": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "session_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "advice_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "challenge_results": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "ack_layers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strongest_proven",
+        "explicit_claimed"
+      ],
+      "properties": {
+        "strongest_proven": {
+          "type": "string"
+        },
+        "explicit_claimed": {
+          "const": false
+        },
+        "source_correlated": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "process_cleanup": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "capability_manifests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pre_handshake",
+        "post_handshake",
+        "auth_methods",
+        "caps_digest"
+      ],
+      "properties": {
+        "pre_handshake": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profile",
+            "protocol_version",
+            "cap_event_stream",
+            "cap_tool_inspection",
+            "cap_advice_delivery",
+            "cap_diff_inspection",
+            "cap_pause",
+            "cap_cancel",
+            "cap_resume",
+            "cap_intervention_ack",
+            "explicit_ack",
+            "load_session",
+            "negotiated_level",
+            "honesty_note"
+          ],
+          "properties": {
+            "profile": {
+              "type": "string",
+              "const": "reinframe.grok_build_acp.v1"
+            },
+            "protocol_version": {
+              "type": "integer",
+              "const": 1
+            },
+            "cap_event_stream": {
+              "type": "boolean"
+            },
+            "cap_tool_inspection": {
+              "type": "boolean"
+            },
+            "cap_advice_delivery": {
+              "type": "boolean"
+            },
+            "cap_diff_inspection": {
+              "type": "boolean"
+            },
+            "cap_pause": {
+              "type": "boolean"
+            },
+            "cap_cancel": {
+              "type": "boolean"
+            },
+            "cap_resume": {
+              "type": "boolean"
+            },
+            "cap_intervention_ack": {
+              "type": "boolean"
+            },
+            "explicit_ack": {
+              "type": "boolean"
+            },
+            "load_session": {
+              "type": "boolean"
+            },
+            "auth_methods": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "negotiated_level": {
+              "type": "integer",
+              "minimum": -1,
+              "maximum": 3
+            },
+            "honesty_note": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "post_handshake": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profile",
+            "protocol_version",
+            "cap_event_stream",
+            "cap_tool_inspection",
+            "cap_advice_delivery",
+            "cap_diff_inspection",
+            "cap_pause",
+            "cap_cancel",
+            "cap_resume",
+            "cap_intervention_ack",
+            "explicit_ack",
+            "load_session",
+            "negotiated_level",
+            "honesty_note"
+          ],
+          "properties": {
+            "profile": {
+              "type": "string",
+              "const": "reinframe.grok_build_acp.v1"
+            },
+            "protocol_version": {
+              "type": "integer",
+              "const": 1
+            },
+            "cap_event_stream": {
+              "type": "boolean"
+            },
+            "cap_tool_inspection": {
+              "type": "boolean"
+            },
+            "cap_advice_delivery": {
+              "type": "boolean"
+            },
+            "cap_diff_inspection": {
+              "type": "boolean"
+            },
+            "cap_pause": {
+              "type": "boolean"
+            },
+            "cap_cancel": {
+              "type": "boolean"
+            },
+            "cap_resume": {
+              "type": "boolean"
+            },
+            "cap_intervention_ack": {
+              "type": "boolean"
+            },
+            "explicit_ack": {
+              "type": "boolean"
+            },
+            "load_session": {
+              "type": "boolean"
+            },
+            "auth_methods": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "negotiated_level": {
+              "type": "integer",
+              "minimum": -1,
+              "maximum": 3
+            },
+            "honesty_note": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "auth_methods": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "caps_digest": {
+          "type": "string",
+          "pattern": "^load=(true|false) pause=(true|false) cancel=(true|false) resume=(true|false) tool=(true|false) diff=(true|false)$"
+        }
+      }
+    },
+    "privacy_checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "auth_json_read": {
+          "type": "boolean"
+        },
+        "auth_json_path_seen_in_honesty_notes_only": {
+          "type": "boolean"
+        },
+        "auth_json_path_leak_suspected": {
+          "type": "boolean"
+        },
+        "token_fields_in_auth_envelope": {
+          "type": "boolean"
+        },
+        "raw_thoughts_stored": {
+          "type": "boolean"
+        },
+        "secret_pattern_hits": {
+          "type": "integer"
+        },
+        "error": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "files_seen": {
+          "type": "integer"
+        },
+        "files_scanned": {
+          "type": "integer"
+        },
+        "files_skipped": {
+          "type": "integer"
+        },
+        "bytes_scanned": {
+          "type": "integer"
+        },
+        "failure_classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scenarios": {
+      "$ref": "#/$defs/scenario_map"
+    },
+    "scenario_registry": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "final_disposition": {
+      "enum": [
+        "GO",
+        "LIMITED_GO",
+        "MORE_DATA",
+        "NO_GO"
+      ]
+    },
+    "scenario_status_enum": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "NOT_RUN",
+        "INCONCLUSIVE"
+      ]
+    }
+  },
+  "$defs": {
+    "scenario_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "NOT_RUN",
+            "INCONCLUSIVE"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "tool_name": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "ack_layer": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "host_outcome": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "at": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "deny_direct_proof": {
+          "type": "boolean"
+        },
+        "fail_open_invoked": {
+          "type": "boolean"
+        },
+        "session_correlated": {
+          "type": "boolean"
+        },
+        "intervention_id": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "target_session_id": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "dedup_suppressed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "scenario_map": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/scenario_result"
+      }
+    }
+  },
+  "description": "Closed v2 live-control evidence (#199/#209). Nested objects closed; scenario status enum enforced. Historical v1 remains under HISTORICAL_v1.md."
+}

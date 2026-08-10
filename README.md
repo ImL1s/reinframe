@@ -12,7 +12,7 @@ Reinframe **aims to become** a cross-platform (Windows, macOS, Linux) Anti-Tunne
 
 > **Phase: M1 + M2 library + host-control foundations + shadow classifier + native classifier providers + exact cache + offline evaluation**  
 > **Implemented:** provider/cache campaign (#131–#141); host foundations [#163](https://github.com/ImL1s/reinframe/issues/163)/[#165](https://github.com/ImL1s/reinframe/issues/165)/[#166](https://github.com/ImL1s/reinframe/issues/166); offline [#168](https://github.com/ImL1s/reinframe/issues/168) framework (**MORE-DATA**).  
-> **Live:** historical Grok run exists ([#167](https://github.com/ImL1s/reinframe/issues/167) evidence); **#199 v2 gates closed** → public **MORE_DATA** until a new live v2 report proves full matrix. Still blocked: [#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
+> **Live:** historical Grok run exists ([#167](https://github.com/ImL1s/reinframe/issues/167) evidence); **#199 v2 gates closed**; latest current-main live v2 campaign (`docs/evidence/grok_build/runs/20260810T170640Z/`) is harness **NO_GO** (ACP session/prompt Internal error) — public ranking remains **MORE_DATA**. Still blocked: [#164](https://github.com/ImL1s/reinframe/issues/164) Codex · [#120](https://github.com/ImL1s/reinframe/issues/120) Claude.  
 > **Product:** [#108](https://github.com/ImL1s/reinframe/issues/108) foundation merged; **#200** source-bound ACK + durable honesty **closed on main** — live E2E composition **not claimed**. Governance [#201](https://github.com/ImL1s/reinframe/issues/201) closed. Epic [#80](https://github.com/ImL1s/reinframe/issues/80) open.  
 > **Executable roadmap:** [`docs/roadmap/CURRENT.md`](docs/roadmap/CURRENT.md).
 
@@ -62,7 +62,7 @@ Evaluation:
 | Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; historical live #167 (MORE_DATA; #199 closed) |
 | Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; historical live #167 (MORE_DATA; #199 closed) |
 | Live Codex hooks proof (#164) | 🔲 Open — blocked on interactive Codex + project trust |
-| Live Grok Build hooks+ACP proof (#167) | 🟡 **Historical live run** (darwin/`grok 1.0.0`); public disposition **MORE_DATA**; **#199 v2 gates on main** (full matrix/correlation required for GO); no new live v2 GO artifact yet |
+| Live Grok Build hooks+ACP proof (#167) | 🟡 **Historical live run** + **2026-08-10 live v2 campaign** (darwin/`grok 1.0.0`, tip `3a218bd`) → harness **NO_GO** (ACP-SESSION/CHALLENGE); ranking **MORE_DATA**; **#199** gates on main; no live v2 GO artifact |
 | Claude PreTool / prompt bridge (#96) | ✅ Experimental API + `cmd/claudebridge` |
 | Claude project-local install/doctor (#106/#117) | ✅ Installer/unit + exact ownership; **not** live smoke |
 | Typed ProposedAction (#115) | ✅ ToolName ≠ Command |

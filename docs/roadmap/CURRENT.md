@@ -1,6 +1,7 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-09) — **#201/#199/#200 closed** on main; public Grok disposition remains **MORE_DATA** (historical v1; v2 gates refuse false GO); #168 MORE-DATA; no ranking  
+**Status:** current (2026-08-10) — **#201/#199/#200/#215/#218/#219 closed** on main; public Grok ranking disposition remains **MORE_DATA**; latest live v2 campaign on tip `3a218bd` produced harness **NO_GO** (ACP-SESSION prompt Internal error) under `docs/evidence/grok_build/runs/20260810T170640Z/`; #168 MORE-DATA; no ranking  
+
 **Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open.
 
 ## Implemented — narrow DoD, do not reopen for the same scope
@@ -48,7 +49,7 @@ Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 
 
 | Issue | Notes |
 |-------|-------|
-| **#167** / PR #193 | Historical live harness + v1 evidence on main; **unconditional GO withdrawn**; **#199** v2 gates closed (public MORE_DATA until new live v2 GO artifact) |
+| **#167** / PR #193 | Historical live harness + v1 evidence on main; **unconditional GO withdrawn**; **#199** v2 gates closed; **2026-08-10** live v2 campaign on main `3a218bd` → harness **NO_GO** (see `docs/evidence/grok_build/runs/20260810T170640Z/`); public ranking still **MORE_DATA** |
 | **#108** / PR #194 | Foundation consumer/ledger on main; **#200** ACK/durability closed; **live E2E composition not claimed** |
 | **#191** | Grok ACP official-contract / lifecycle hardening on main |
 | **#201** | Immediate public-status downgrade (closed) |
@@ -57,7 +58,7 @@ Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 
 
 | Issue | Blocker | Notes |
 |-------|---------|-------|
-| **#168** live match | #164/#120 matched data | Grok live pin present; disposition **MORE-DATA**; no ranking |
+| **#168** live match | #164/#120 matched data + Grok session reliability | Grok historical + v2 live pins present; #168 disposition **MORE-DATA**; no ranking; Grok v2 campaign **NO_GO** does not strengthen ranking |
 
 ### Epic
 
@@ -67,7 +68,7 @@ Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 
 
 ## Explicit non-claims
 
-- Historical Grok live run present (#167 v1); public disposition **MORE_DATA** until a **new live v2 GO artifact** (#199 gates closed; no false GO)
+- Historical Grok live run present (#167 v1); latest live v2 campaign is **NO_GO** (not a GO artifact); public ranking disposition remains **MORE_DATA** (#199 gates closed; no false GO)
 - No fail-closed Grok hook security (host fail-open)
 - CapToolGate ≠ CapPause / Level 2
 - JSON-RPC / file append / hook exit ≠ explicit agent ACK

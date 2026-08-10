@@ -917,8 +917,8 @@ func TestGenerateLiveReport_MoreDataMissingPreflight_LimitationAndSchema(t *test
 	if err != nil {
 		t.Fatalf("generateLiveReport: %v", err)
 	}
-	if out.Disposition == "GO" || out.Disposition == "LIMITED_GO" {
-		t.Fatalf("want non-qualifying disposition, got %s reasons=%v", out.Disposition, out.Reasons)
+	if out.Disposition != "MORE_DATA" {
+		t.Fatalf("want MORE_DATA (not forced NO_GO), got %s reasons=%v", out.Disposition, out.Reasons)
 	}
 	if out.MandatoryOK {
 		t.Fatal("mandatory_ok must be false")
@@ -930,7 +930,9 @@ func TestGenerateLiveReport_MoreDataMissingPreflight_LimitationAndSchema(t *test
 	for _, r := range out.Reasons {
 		if strings.Contains(r, "preflight.json missing") {
 			found = true
-			break
+		}
+		if strings.Contains(r, "missing preflight forbids GO/LIMITED_GO") {
+			t.Fatalf("MORE_DATA must not get GO-only preflight demote phrase: %v", out.Reasons)
 		}
 	}
 	if !found {
@@ -1083,6 +1085,36 @@ func TestScanPrivacy_RawThoughtsDetector(t *testing.T) {
 	p := scanPrivacy(dir)
 	if p["raw_thoughts_stored"] != true {
 		t.Fatalf("raw_thoughts marker must set raw_thoughts_stored: %+v", p)
+	}
+}
+
+func TestGenerateLiveReport_MoreDataMalformedPreflight(t *testing.T) {
+	dir := t.TempDir()
+	writeScenarios(t, dir, moreDataScenarios())
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "preflight.json"), []byte(`{not-json`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := generateLiveReport(dir)
+	if err != nil {
+		t.Fatalf("generateLiveReport: %v", err)
+	}
+	if out.Disposition != "MORE_DATA" {
+		t.Fatalf("want MORE_DATA got %s %v", out.Disposition, out.Reasons)
+	}
+	found := false
+	for _, r := range out.Reasons {
+		if strings.Contains(r, "preflight.json malformed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("want malformed preflight limitation: %v", out.Reasons)
+	}
+	if err := validateReportAgainstCommittedSchema(out.Report); err != nil {
+		t.Fatalf("schema: %v", err)
 	}
 }
 

@@ -114,8 +114,12 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 			}
 		}
 	} else {
-		// Always record missing preflight (#219). Demote only GO/LIMITED_GO (#217).
-		reasons = append(reasons, "preflight.json missing")
+		// Always record missing/unreadable preflight (#219). Demote only GO/LIMITED_GO (#217).
+		if os.IsNotExist(err) {
+			reasons = append(reasons, "preflight.json missing")
+		} else {
+			reasons = append(reasons, "preflight.json unreadable: "+err.Error())
+		}
 		if floor == "GO" || floor == "LIMITED_GO" {
 			floor = demoteFloor(floor, "NO_GO")
 			reasons = append(reasons, "missing preflight forbids GO/LIMITED_GO")
@@ -196,9 +200,15 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	}
 	// Only emit capability_manifests when structurally schema-ready (#219).
 	// Invalid optional evidence is omitted with an explicit limitation (not embedded invalid).
+	// If we omit after qualification used caps, demote GO/LIMITED_GO (#219 review).
 	if caps != nil {
 		if err := capabilityManifestEmitOK(caps); err != nil {
 			reasons = append(reasons, "capability_manifests omitted: "+err.Error())
+			if disp == "GO" || disp == "LIMITED_GO" {
+				disp = "NO_GO"
+				reasons = append(reasons, "omitted capability_manifests forbids GO/LIMITED_GO")
+			}
+			report["final_disposition"] = disp
 			report["limitations"] = reasons
 		} else {
 			report["capability_manifests"] = caps
@@ -228,52 +238,45 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	if err := ensureReportSchemaValid(report, &reasons); err != nil {
 		return liveReportOutcome{}, err
 	}
+	// Sync disposition from report if ensure demoted GO after caps strip.
+	if d, ok := report["final_disposition"].(string); ok && d != "" {
+		disp = d
+	}
 	report["limitations"] = reasons
 	report["final_disposition"] = disp
-
-	if disp == "GO" || disp == "LIMITED_GO" {
-		// Belt: qualification must still hold against emitted report body.
-		if err := validateReportAgainstCommittedSchema(report); err != nil {
-			disp = "NO_GO"
-			reasons = append(reasons, "pre-write schema gate: "+err.Error())
-			report["final_disposition"] = disp
-			report["limitations"] = reasons
-			if err := ensureReportSchemaValid(report, &reasons); err != nil {
-				return liveReportOutcome{}, err
-			}
-			report["limitations"] = reasons
-		}
-	}
 
 	base := fmt.Sprintf("issue-167-live-v2-%s-%s-%s", sanitizeVersion(ver), osName, day)
 	jsonPath := filepath.Join(evDir, base+".json")
 	mdPath := filepath.Join(evDir, base+".md")
+	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v2.schema.json")
+
+	// Write JSON first; only then MD/schema once disk JSON is schema-valid.
 	if err := writeJSON(jsonPath, report); err != nil {
 		return liveReportOutcome{}, err
 	}
-	md := renderMD(report, disp, ack, ver, osName, reasons, scenarios)
-	if err := os.WriteFile(mdPath, []byte(md), 0o600); err != nil {
-		return liveReportOutcome{}, err
-	}
-
-	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v2.schema.json")
-	if err := os.WriteFile(schemaPath, EmbeddedV2SchemaJSON(), 0o600); err != nil {
-		return liveReportOutcome{}, fmt.Errorf("write schema: %w", err)
-	}
-
-	// Final proof: on-disk JSON validates.
 	onDisk, err := os.ReadFile(jsonPath)
 	if err != nil {
 		return liveReportOutcome{}, err
 	}
 	var diskReport map[string]any
 	if err := json.Unmarshal(onDisk, &diskReport); err != nil {
+		_ = os.Remove(jsonPath)
 		return liveReportOutcome{}, fmt.Errorf("written report not JSON: %w", err)
 	}
 	if err := validateReportAgainstCommittedSchema(diskReport); err != nil {
-		// Fail closed: remove invalid artifact claim path.
 		_ = os.Remove(jsonPath)
 		return liveReportOutcome{}, fmt.Errorf("written report fails committed schema: %w", err)
+	}
+
+	md := renderMD(report, disp, ack, ver, osName, reasons, scenarios)
+	if err := os.WriteFile(mdPath, []byte(md), 0o600); err != nil {
+		_ = os.Remove(jsonPath)
+		return liveReportOutcome{}, err
+	}
+	if err := os.WriteFile(schemaPath, EmbeddedV2SchemaJSON(), 0o600); err != nil {
+		_ = os.Remove(jsonPath)
+		_ = os.Remove(mdPath)
+		return liveReportOutcome{}, fmt.Errorf("write schema: %w", err)
 	}
 
 	exit := 0
@@ -294,6 +297,7 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 }
 
 // ensureReportSchemaValid drops optional bad capability_manifests once, then requires schema pass.
+// When caps are stripped, demotes GO/LIMITED_GO on the report body (#219).
 func ensureReportSchemaValid(report map[string]any, reasons *[]string) error {
 	if err := validateReportAgainstCommittedSchema(report); err == nil {
 		return nil
@@ -302,6 +306,10 @@ func ensureReportSchemaValid(report map[string]any, reasons *[]string) error {
 		if _, ok := report["capability_manifests"]; ok {
 			delete(report, "capability_manifests")
 			*reasons = append(*reasons, "capability_manifests omitted: fails committed schema")
+			if d, _ := report["final_disposition"].(string); d == "GO" || d == "LIMITED_GO" {
+				report["final_disposition"] = "NO_GO"
+				*reasons = append(*reasons, "omitted capability_manifests forbids GO/LIMITED_GO")
+			}
 			report["limitations"] = *reasons
 			if err2 := validateReportAgainstCommittedSchema(report); err2 == nil {
 				return nil
@@ -629,17 +637,13 @@ func parseClosedAuthMethods(v any) ([]string, error) {
 		case string:
 			ids = append(ids, x)
 		case map[string]any:
-			// Only closed {id: "..."} (or methodId) — no credential keys.
+			// Schema-aligned: only closed {id: "..."} (no methodId-only for emit).
 			for k := range x {
-				lk := strings.ToLower(k)
-				if lk != "id" && lk != "methodid" {
+				if k != "id" {
 					return nil, fmt.Errorf("auth method object allows only id")
 				}
 			}
 			id, _ := x["id"].(string)
-			if id == "" {
-				id, _ = x["methodId"].(string)
-			}
 			if id == "" {
 				return nil, fmt.Errorf("auth method object missing id")
 			}

@@ -98,6 +98,15 @@ func mustFoundationMap(m adapter.GrokACPFoundationManifest) map[string]any {
 	return out
 }
 
+func mustDecodeFoundation(t *testing.T, m map[string]any) adapter.GrokACPFoundationManifest {
+	t.Helper()
+	out, err := decodeClosedFoundation(m)
+	if err != nil {
+		t.Fatalf("decode foundation: %v", err)
+	}
+	return out
+}
+
 // TestLiveQualification_PrivacyAndPreflight gates GO and LIMITED_GO (#215).
 func TestLiveQualification_PrivacyAndPreflight(t *testing.T) {
 	t.Parallel()
@@ -263,6 +272,32 @@ func TestValidateCapabilityManifest_Issue218(t *testing.T) {
 		t.Fatal("AUTH NOT_RUN must contradict manifest")
 	}
 
+	// Auth invent: post omits auth while top-level invents methods.
+	invent := validCaps()
+	postNoAuth := mustFoundationMap(adapter.ManifestFromNegotiated(adapter.GrokACPNegotiatedCaps{
+		ProtocolVersion: 1, LoadSession: true, Cancel: true,
+	}))
+	// Ensure post has empty auth_methods key omitted → empty after decode.
+	delete(postNoAuth, "auth_methods")
+	invent["post_handshake"] = postNoAuth
+	invent["auth_methods"] = []any{"forged_method"}
+	invent["caps_digest"] = adapter.CapsDigestFromFoundation(mustDecodeFoundation(t, postNoAuth))
+	if err := validateCapabilityManifest(invent, sc); err == nil {
+		t.Fatal("top-level auth invent with empty post auth must fail")
+	}
+
+	// Inflated negotiated_level with sparse caps must fail.
+	levelForge := validCaps()
+	postL := mustFoundationMap(adapter.ManifestFromNegotiated(adapter.GrokACPNegotiatedCaps{
+		ProtocolVersion: 1, LoadSession: true, Cancel: true, AuthMethods: []string{"cached_token"},
+	}))
+	postL["negotiated_level"] = float64(3)
+	levelForge["post_handshake"] = postL
+	levelForge["caps_digest"] = adapter.CapsDigestFromFoundation(mustDecodeFoundation(t, postL))
+	if err := validateCapabilityManifest(levelForge, sc); err == nil {
+		t.Fatal("forged negotiated_level=3 must fail")
+	}
+
 	// 6. Valid canonical manifest passes and digest is reproducible.
 	v := validCaps()
 	if err := validateCapabilityManifest(v, sc); err != nil {
@@ -314,7 +349,7 @@ func TestBuildIdentity_Issue218(t *testing.T) {
 }
 
 func TestReinframeBuildIdentity_LdflagsDirtyDefault(t *testing.T) {
-	// Sequential: mutates package-level ldflags vars.
+	// Not parallel: mutates package-level ldflags vars (avoid race with other tests).
 	prevC, prevD := reinframeCommit, reinframeDirty
 	t.Cleanup(func() {
 		reinframeCommit, reinframeDirty = prevC, prevD

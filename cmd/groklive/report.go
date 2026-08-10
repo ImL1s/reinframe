@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
+	"github.com/ImL1s/reinframe/pkg/protocol"
 )
 
 func runReport(args []string) {
@@ -350,11 +351,10 @@ func validateCapabilityManifest(caps any, scenarios map[string]ScenarioResult) e
 	if err != nil {
 		return fmt.Errorf("auth_methods: %w", err)
 	}
-	// Top-level auth_methods must match post-handshake claim when both present.
-	if len(post.AuthMethods) > 0 {
-		if !stringSlicesEqual(authIDs, post.AuthMethods) {
-			return fmt.Errorf("auth_methods disagree with post_handshake.auth_methods")
-		}
+	// Top-level auth_methods must always match post-handshake (including empty).
+	// omitempty on post must not allow inventing top-level auth alone (#218 review).
+	if !stringSlicesEqual(authIDs, post.AuthMethods) {
+		return fmt.Errorf("auth_methods disagree with post_handshake.auth_methods")
 	}
 
 	dig, _ := m["caps_digest"].(string)
@@ -376,7 +376,7 @@ func validateCapabilityManifest(caps any, scenarios map[string]ScenarioResult) e
 		return fmt.Errorf("ACP-AUTH-001 must be PASS for capability manifest")
 	}
 	// Non-empty advertised auth is required for AUTH PASS path consistency with harness.
-	if len(authIDs) == 0 {
+	if len(authIDs) == 0 || len(post.AuthMethods) == 0 {
 		return fmt.Errorf("auth_methods empty contradicts ACP-AUTH-001 PASS")
 	}
 	return nil
@@ -442,17 +442,34 @@ func validatePostHandshake(m adapter.GrokACPFoundationManifest) error {
 	if strings.TrimSpace(m.HonestyNote) == "" {
 		return fmt.Errorf("honesty_note required")
 	}
-	// Explicit agent ACK / CapPause overclaims are never allowed from live harness alone.
+	// Explicit agent ACK / intervention-ack overclaims are never allowed from harness alone.
+	// CapPause may be true only when advertised in post caps; negotiated_level must still recompute.
 	if m.ExplicitAck {
 		return fmt.Errorf("explicit_ack must remain false")
 	}
 	if m.CapInterventionAck {
 		return fmt.Errorf("cap_intervention_ack must remain false without proof")
 	}
+	// Recompute level from the same boolean mapping as ManifestFromNegotiated (#218).
+	pm := protocol.CapabilityManifest{
+		AgentID:                "grok_build_acp",
+		Version:                adapter.GrokACPProfileV1,
+		SupportsEventStream:    m.CapEventStream,
+		SupportsAdviceDelivery: m.CapAdviceDelivery,
+		SupportsToolInspection: m.CapToolInspection,
+		SupportsDiffInspection: m.CapDiffInspection,
+		SupportsPause:          m.CapPause,
+		SupportsCancel:         m.CapCancel,
+		SupportsResume:         m.CapResume,
+	}
+	wantLevel := protocol.EvaluateAchievableLevel(&pm)
+	if m.NegotiatedLevel != wantLevel {
+		return fmt.Errorf("negotiated_level forged or stale (want %d from caps)", wantLevel)
+	}
 	return nil
 }
 
-// parseClosedAuthMethods accepts harness []string or []{id: string} objects; rejects dups/credentials.
+// parseClosedAuthMethods accepts harness []string or []{id: string} objects; rejects dups.
 func parseClosedAuthMethods(v any) ([]string, error) {
 	if v == nil {
 		return nil, fmt.Errorf("missing")

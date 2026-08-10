@@ -1025,12 +1025,14 @@ func TestGenerateLiveReport_OversizedPrivacyIncomplete(t *testing.T) {
 	if priv["complete"] == true {
 		t.Fatalf("oversized must be incomplete: %+v", priv)
 	}
-	// Must not have scanned the oversized file as complete content.
-	if sc, ok := asInt(priv["files_scanned"]); ok && sc > 0 && priv["files_skipped"] == 0 {
-		// if only huge file, scanned should be 0
-	}
 	if sk, ok := asInt(priv["files_skipped"]); !ok || sk < 1 {
 		t.Fatalf("expected files_skipped>=1 got %+v", priv)
+	}
+	if sc, ok := asInt(priv["files_scanned"]); ok && sc > 0 {
+		// Oversized-only dir may still scan 0; if other files present, skipped must still be set.
+		if sk, _ := asInt(priv["files_skipped"]); sk < 1 {
+			t.Fatalf("scanned without skips is not complete-or-fail: %+v", priv)
+		}
 	}
 	// Qualification cannot GO with incomplete privacy — disposition non-GO already.
 	if out.MandatoryOK {

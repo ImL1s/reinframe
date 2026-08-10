@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ImL1s/reinframe/pkg/adapter"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 
@@ -66,12 +67,44 @@ func cleanPrivacyScan() map[string]any {
 }
 
 func validCaps() map[string]any {
-	return map[string]any{
-		"pre_handshake":  map[string]any{"protocolVersion": 1},
-		"post_handshake": map[string]any{"agentName": "grok"},
-		"auth_methods":   []any{map[string]any{"id": "delegated"}},
-		"caps_digest":    "abc",
+	// Canonical harness shape from adapter (#218).
+	pre := mustFoundationMap(adapter.NewGrokACPFoundationManifest())
+	neg := adapter.GrokACPNegotiatedCaps{
+		ProtocolVersion: adapter.GrokACPProtocolVersion,
+		LoadSession:     true,
+		Cancel:          true,
+		AuthMethods:     []string{"cached_token"},
 	}
+	neg.CapsDigest = adapter.FormatGrokACPCapsDigest(
+		neg.LoadSession, neg.Pause, neg.Cancel, neg.Resume, neg.ToolInspection, neg.DiffInspection)
+	post := mustFoundationMap(adapter.ManifestFromNegotiated(neg))
+	return map[string]any{
+		"pre_handshake":  pre,
+		"post_handshake": post,
+		"auth_methods":   []any{"cached_token"},
+		"caps_digest":    neg.CapsDigest,
+	}
+}
+
+func mustFoundationMap(m adapter.GrokACPFoundationManifest) map[string]any {
+	b, err := json.Marshal(m)
+	if err != nil {
+		panic(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		panic(err)
+	}
+	return out
+}
+
+func mustDecodeFoundation(t *testing.T, m map[string]any) adapter.GrokACPFoundationManifest {
+	t.Helper()
+	out, err := decodeClosedFoundation(m)
+	if err != nil {
+		t.Fatalf("decode foundation: %v", err)
+	}
+	return out
 }
 
 // TestLiveQualification_PrivacyAndPreflight gates GO and LIMITED_GO (#215).
@@ -81,13 +114,14 @@ func TestLiveQualification_PrivacyAndPreflight(t *testing.T) {
 	priv := cleanPrivacyScan()
 	caps := validCaps()
 
-	got, msgs := liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", "deadbeef", "vcs", false)
+	fullRev := "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	got, msgs := liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", fullRev, "vcs", false)
 	if got != "GO" {
 		t.Fatalf("clean want GO got %s msgs=%v", got, msgs)
 	}
 
 	// LIMITED_GO also gated.
-	got, _ = liveQualification("LIMITED_GO", priv, caps, sc, true, false, false, "1.0.0", "deadbeef", "vcs", false)
+	got, _ = liveQualification("LIMITED_GO", priv, caps, sc, true, false, false, "1.0.0", fullRev, "vcs", false)
 	if got != "NO_GO" {
 		t.Fatalf("invalid preflight on LIMITED_GO want NO_GO got %s", got)
 	}
@@ -96,25 +130,25 @@ func TestLiveQualification_PrivacyAndPreflight(t *testing.T) {
 	inc := cleanPrivacyScan()
 	inc["complete"] = false
 	inc["files_skipped"] = 1
-	got, _ = liveQualification("GO", inc, caps, sc, true, true, true, "1.0.0", "deadbeef", "vcs", false)
+	got, _ = liveQualification("GO", inc, caps, sc, true, true, true, "1.0.0", fullRev, "vcs", false)
 	if got != "NO_GO" {
 		t.Fatalf("incomplete privacy want NO_GO got %s", got)
 	}
 
 	// Scalar caps rejected.
-	got, _ = liveQualification("GO", priv, "", sc, true, true, true, "1.0.0", "deadbeef", "vcs", false)
+	got, _ = liveQualification("GO", priv, "", sc, true, true, true, "1.0.0", fullRev, "vcs", false)
 	if got != "NO_GO" {
 		t.Fatalf("scalar caps want NO_GO got %s", got)
 	}
 
 	// Ambient commit unknown source rejected.
-	got, _ = liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", "deadbeef", "unknown", false)
+	got, _ = liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", fullRev, "unknown", false)
 	if got != "NO_GO" {
 		t.Fatalf("unknown commit src want NO_GO got %s", got)
 	}
 
 	// Dirty binary rejected.
-	got, _ = liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", "deadbeef", "vcs", true)
+	got, _ = liveQualification("GO", priv, caps, sc, true, true, true, "1.0.0", fullRev, "vcs", true)
 	if got != "NO_GO" {
 		t.Fatalf("dirty binary want NO_GO got %s", got)
 	}
@@ -175,6 +209,181 @@ func TestValidateCapabilityManifest_RejectsArbitrary(t *testing.T) {
 	}
 	if err := validateCapabilityManifest(validCaps(), sc); err != nil {
 		t.Fatalf("valid caps: %v", err)
+	}
+}
+
+// TestValidateCapabilityManifest_Issue218 covers false-GO provenance closure.
+func TestValidateCapabilityManifest_Issue218(t *testing.T) {
+	t.Parallel()
+	sc := fullGOScenarios()
+
+	// 1. Empty pre/post handshake objects cannot qualify.
+	empty := validCaps()
+	empty["pre_handshake"] = map[string]any{}
+	empty["post_handshake"] = map[string]any{}
+	if err := validateCapabilityManifest(empty, sc); err == nil {
+		t.Fatal("empty handshake objects must fail")
+	}
+	got, _ := liveQualification("GO", cleanPrivacyScan(), empty, sc, true, true, true, "1.0.0", strings.Repeat("a", 40), "vcs", false)
+	if got != "NO_GO" {
+		t.Fatalf("empty handshake want NO_GO got %s", got)
+	}
+
+	// 2. Arbitrary post-handshake fields cannot qualify.
+	arb := validCaps()
+	post := mustFoundationMap(adapter.ManifestFromNegotiated(adapter.GrokACPNegotiatedCaps{
+		ProtocolVersion: 1, LoadSession: true, Cancel: true, AuthMethods: []string{"cached_token"},
+	}))
+	post["agentName"] = "forged"
+	arb["post_handshake"] = post
+	if err := validateCapabilityManifest(arb, sc); err == nil {
+		t.Fatal("arbitrary post fields must fail")
+	}
+
+	// 3. Invalid/duplicate auth methods cannot qualify.
+	dup := validCaps()
+	dup["auth_methods"] = []any{"cached_token", "cached_token"}
+	if err := validateCapabilityManifest(dup, sc); err == nil {
+		t.Fatal("duplicate auth methods must fail")
+	}
+
+	// 4. Forged caps_digest cannot qualify.
+	forged := validCaps()
+	forged["caps_digest"] = "arbitrary"
+	if err := validateCapabilityManifest(forged, sc); err == nil {
+		t.Fatal("forged digest must fail")
+	}
+	// Also reject digest that does not match recomputed post facts.
+	forged2 := validCaps()
+	forged2["caps_digest"] = adapter.FormatGrokACPCapsDigest(false, false, false, false, false, false)
+	if err := validateCapabilityManifest(forged2, sc); err == nil {
+		t.Fatal("stale digest must fail")
+	}
+
+	// 5. Manifest/scenario contradiction cannot qualify.
+	scFail := fullGOScenarios()
+	scFail["ACP-INIT-001"] = ScenarioResult{ID: "ACP-INIT-001", Status: "FAIL"}
+	if err := validateCapabilityManifest(validCaps(), scFail); err == nil {
+		t.Fatal("INIT FAIL must contradict manifest")
+	}
+	scNR := fullGOScenarios()
+	scNR["ACP-AUTH-001"] = ScenarioResult{ID: "ACP-AUTH-001", Status: "NOT_RUN"}
+	if err := validateCapabilityManifest(validCaps(), scNR); err == nil {
+		t.Fatal("AUTH NOT_RUN must contradict manifest")
+	}
+
+	// Auth invent: post omits auth while top-level invents methods.
+	invent := validCaps()
+	postNoAuth := mustFoundationMap(adapter.ManifestFromNegotiated(adapter.GrokACPNegotiatedCaps{
+		ProtocolVersion: 1, LoadSession: true, Cancel: true,
+	}))
+	// Ensure post has empty auth_methods key omitted → empty after decode.
+	delete(postNoAuth, "auth_methods")
+	invent["post_handshake"] = postNoAuth
+	invent["auth_methods"] = []any{"forged_method"}
+	invent["caps_digest"] = adapter.CapsDigestFromFoundation(mustDecodeFoundation(t, postNoAuth))
+	if err := validateCapabilityManifest(invent, sc); err == nil {
+		t.Fatal("top-level auth invent with empty post auth must fail")
+	}
+
+	// Inflated negotiated_level with sparse caps must fail.
+	levelForge := validCaps()
+	postL := mustFoundationMap(adapter.ManifestFromNegotiated(adapter.GrokACPNegotiatedCaps{
+		ProtocolVersion: 1, LoadSession: true, Cancel: true, AuthMethods: []string{"cached_token"},
+	}))
+	postL["negotiated_level"] = float64(3)
+	levelForge["post_handshake"] = postL
+	levelForge["caps_digest"] = adapter.CapsDigestFromFoundation(mustDecodeFoundation(t, postL))
+	if err := validateCapabilityManifest(levelForge, sc); err == nil {
+		t.Fatal("forged negotiated_level=3 must fail")
+	}
+
+	// 6. Valid canonical manifest passes and digest is reproducible.
+	v := validCaps()
+	if err := validateCapabilityManifest(v, sc); err != nil {
+		t.Fatalf("valid: %v", err)
+	}
+	postM, err := decodeClosedFoundation(v["post_handshake"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v["caps_digest"] != adapter.CapsDigestFromFoundation(postM) {
+		t.Fatal("digest not reproducible from post_handshake")
+	}
+	got, _ = liveQualification("GO", cleanPrivacyScan(), v, sc, true, true, true, "1.0.0", strings.Repeat("b", 40), "vcs", false)
+	if got != "GO" {
+		t.Fatalf("valid canonical want GO got %s", got)
+	}
+}
+
+func TestBuildIdentity_Issue218(t *testing.T) {
+	t.Parallel()
+	// 7. Arbitrary short ldflags commit cannot qualify.
+	got, _ := liveQualification("GO", cleanPrivacyScan(), validCaps(), fullGOScenarios(),
+		true, true, true, "1.0.0", "foo", "ldflags", false)
+	if got != "NO_GO" {
+		t.Fatalf("short ldflags commit want NO_GO got %s", got)
+	}
+	// isFullVCSRevision rejects non-hex and short.
+	if isFullVCSRevision("foo") || isFullVCSRevision("deadbeef") || isFullVCSRevision(strings.Repeat("g", 40)) {
+		t.Fatal("malformed revisions must not pass isFullVCSRevision")
+	}
+	// 8. Dirty ldflags/build cannot qualify.
+	full := strings.Repeat("c", 40)
+	got, _ = liveQualification("GO", cleanPrivacyScan(), validCaps(), fullGOScenarios(),
+		true, true, true, "1.0.0", full, "ldflags", true)
+	if got != "NO_GO" {
+		t.Fatalf("dirty ldflags want NO_GO got %s", got)
+	}
+	// 9. Valid clean full VCS revision can qualify.
+	got, _ = liveQualification("GO", cleanPrivacyScan(), validCaps(), fullGOScenarios(),
+		true, true, true, "1.0.0", full, "vcs", false)
+	if got != "GO" {
+		t.Fatalf("clean full rev want GO got %s", got)
+	}
+	// SHA-256 full length also accepted.
+	sha256 := strings.Repeat("d", 64)
+	if !isFullVCSRevision(sha256) {
+		t.Fatal("64-hex should be accepted")
+	}
+}
+
+func TestReinframeBuildIdentity_LdflagsDirtyDefault(t *testing.T) {
+	// Not parallel: mutates package-level ldflags vars (avoid race with other tests).
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() {
+		reinframeCommit, reinframeDirty = prevC, prevD
+	})
+
+	// -X main.reinframeCommit=foo → dirty + non-full, cannot qualify.
+	reinframeCommit = "foo"
+	reinframeDirty = ""
+	rev, dirty, src := reinframeBuildIdentity()
+	if rev != "foo" || !dirty || src != "ldflags" {
+		t.Fatalf("foo ldflags: rev=%q dirty=%v src=%s", rev, dirty, src)
+	}
+
+	// Full SHA without dirty attestation → dirty.
+	full := "0123456789abcdef0123456789abcdef01234567"
+	reinframeCommit = full
+	reinframeDirty = ""
+	rev, dirty, src = reinframeBuildIdentity()
+	if rev != full || !dirty || src != "ldflags" {
+		t.Fatalf("unattested clean: rev=%q dirty=%v src=%s", rev, dirty, src)
+	}
+
+	// Explicit clean attestation.
+	reinframeDirty = "false"
+	rev, dirty, src = reinframeBuildIdentity()
+	if rev != full || dirty || src != "ldflags" {
+		t.Fatalf("attested clean: rev=%q dirty=%v src=%s", rev, dirty, src)
+	}
+
+	// Explicit dirty.
+	reinframeDirty = "true"
+	_, dirty, _ = reinframeBuildIdentity()
+	if !dirty {
+		t.Fatal("explicit dirty must be dirty")
 	}
 }
 

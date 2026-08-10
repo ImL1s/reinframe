@@ -842,7 +842,7 @@ func ParseGrokACPNegotiatedCaps(initResult json.RawMessage) (GrokACPNegotiatedCa
 			out.CancelMethod = "session/cancel"
 		}
 		// Compact non-secret digest of recognized booleans only.
-		out.CapsDigest = fmt.Sprintf("load=%t pause=%t cancel=%t resume=%t tool=%t diff=%t",
+		out.CapsDigest = FormatGrokACPCapsDigest(
 			out.LoadSession, out.Pause, out.Cancel, out.Resume, out.ToolInspection, out.DiffInspection)
 	}
 
@@ -876,6 +876,20 @@ func ParseGrokACPNegotiatedCapsMap(initResult map[string]any) (GrokACPNegotiated
 		return GrokACPNegotiatedCaps{}, err
 	}
 	return ParseGrokACPNegotiatedCaps(raw)
+}
+
+// FormatGrokACPCapsDigest returns the canonical non-secret capability digest string
+// used in acp_manifest.json and live qualification (#218).
+// Format is closed and versioned with the boolean field order; do not invent alternate digests.
+func FormatGrokACPCapsDigest(load, pause, cancel, resume, tool, diff bool) string {
+	return fmt.Sprintf("load=%t pause=%t cancel=%t resume=%t tool=%t diff=%t",
+		load, pause, cancel, resume, tool, diff)
+}
+
+// CapsDigestFromFoundation recomputes the digest from a post-handshake foundation claim.
+func CapsDigestFromFoundation(m GrokACPFoundationManifest) string {
+	return FormatGrokACPCapsDigest(
+		m.LoadSession, m.CapPause, m.CapCancel, m.CapResume, m.CapToolInspection, m.CapDiffInspection)
 }
 
 func boolCap(caps map[string]any, key string) bool {

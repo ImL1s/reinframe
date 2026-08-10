@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,6 +10,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/ImL1s/reinframe/pkg/adapter"
+	"github.com/ImL1s/reinframe/pkg/protocol"
 )
 
 func runReport(args []string) {
@@ -247,6 +251,9 @@ func liveQualification(disp string, privacy map[string]any, caps any, scenarios 
 	if commit == "" || commitSrc == "unknown" {
 		msgs = append(msgs, "qualification requires binary-bound reinframe_commit")
 	}
+	if commit != "" && !isFullVCSRevision(commit) {
+		msgs = append(msgs, "qualification requires full VCS revision (40/64 hex)")
+	}
 	if dirty {
 		msgs = append(msgs, "qualification forbids dirty (modified) binary worktree")
 	}
@@ -298,7 +305,8 @@ func asInt(v any) (int, bool) {
 	}
 }
 
-// validateCapabilityManifest requires the closed ACP harness object shape (#215).
+// validateCapabilityManifest requires the closed ACP harness object shape (#215/#218).
+// Empty handshake objects, arbitrary nested fields, and forged caps_digest are rejected.
 func validateCapabilityManifest(caps any, scenarios map[string]ScenarioResult) error {
 	if caps == nil {
 		return fmt.Errorf("missing")
@@ -323,25 +331,223 @@ func validateCapabilityManifest(caps any, scenarios map[string]ScenarioResult) e
 			return fmt.Errorf("missing required field %s", req)
 		}
 	}
-	// Non-empty negotiated facts.
-	if dig, _ := m["caps_digest"].(string); strings.TrimSpace(dig) == "" {
+
+	pre, err := decodeClosedFoundation(m["pre_handshake"])
+	if err != nil {
+		return fmt.Errorf("pre_handshake: %w", err)
+	}
+	post, err := decodeClosedFoundation(m["post_handshake"])
+	if err != nil {
+		return fmt.Errorf("post_handshake: %w", err)
+	}
+	if err := validatePreHandshake(pre); err != nil {
+		return fmt.Errorf("pre_handshake: %w", err)
+	}
+	if err := validatePostHandshake(post); err != nil {
+		return fmt.Errorf("post_handshake: %w", err)
+	}
+
+	authIDs, err := parseClosedAuthMethods(m["auth_methods"])
+	if err != nil {
+		return fmt.Errorf("auth_methods: %w", err)
+	}
+	// Top-level auth_methods must always match post-handshake (including empty).
+	// omitempty on post must not allow inventing top-level auth alone (#218 review).
+	if !stringSlicesEqual(authIDs, post.AuthMethods) {
+		return fmt.Errorf("auth_methods disagree with post_handshake.auth_methods")
+	}
+
+	dig, _ := m["caps_digest"].(string)
+	dig = strings.TrimSpace(dig)
+	if dig == "" {
 		return fmt.Errorf("caps_digest empty")
 	}
-	// auth_methods must be an array (may be empty for delegated auth but present).
-	if _, ok := m["auth_methods"].([]any); !ok {
-		// also accept []string from JSON decode as []any typically
-		if _, ok2 := m["auth_methods"].([]string); !ok2 {
-			return fmt.Errorf("auth_methods must be array")
-		}
+	// Recompute from negotiated post-handshake facts — never trust the supplied string alone.
+	want := adapter.CapsDigestFromFoundation(post)
+	if dig != want {
+		return fmt.Errorf("caps_digest forged or stale (want recomputed from post_handshake)")
 	}
-	// Cross-check: ACP-INIT and ACP-AUTH must not be FAIL for a valid manifest claim.
-	if sr, ok := scenarios["ACP-INIT-001"]; ok && sr.Status == "FAIL" {
-		return fmt.Errorf("ACP-INIT-001 FAIL contradicts capability manifest")
+
+	// Cross-check: valid manifest requires proven ACP init/auth scenarios.
+	if sr, ok := scenarios["ACP-INIT-001"]; !ok || sr.Status != "PASS" {
+		return fmt.Errorf("ACP-INIT-001 must be PASS for capability manifest")
 	}
-	if sr, ok := scenarios["ACP-AUTH-001"]; ok && sr.Status == "FAIL" {
-		return fmt.Errorf("ACP-AUTH-001 FAIL contradicts capability manifest")
+	if sr, ok := scenarios["ACP-AUTH-001"]; !ok || sr.Status != "PASS" {
+		return fmt.Errorf("ACP-AUTH-001 must be PASS for capability manifest")
+	}
+	// Non-empty advertised auth is required for AUTH PASS path consistency with harness.
+	if len(authIDs) == 0 || len(post.AuthMethods) == 0 {
+		return fmt.Errorf("auth_methods empty contradicts ACP-AUTH-001 PASS")
 	}
 	return nil
+}
+
+// decodeClosedFoundation unmarshals pre/post handshake with unknown fields rejected.
+func decodeClosedFoundation(v any) (adapter.GrokACPFoundationManifest, error) {
+	var zero adapter.GrokACPFoundationManifest
+	if v == nil {
+		return zero, fmt.Errorf("missing")
+	}
+	// Empty object {} is invalid for qualification (zero values fail validate*).
+	if m, ok := v.(map[string]any); ok && len(m) == 0 {
+		return zero, fmt.Errorf("empty object")
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return zero, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var out adapter.GrokACPFoundationManifest
+	if err := dec.Decode(&out); err != nil {
+		return zero, err
+	}
+	return out, nil
+}
+
+func validatePreHandshake(m adapter.GrokACPFoundationManifest) error {
+	if m.Profile != adapter.GrokACPProfileV1 {
+		return fmt.Errorf("profile must be %s", adapter.GrokACPProfileV1)
+	}
+	if m.ProtocolVersion != adapter.GrokACPProtocolVersion {
+		return fmt.Errorf("protocol_version must be %d", adapter.GrokACPProtocolVersion)
+	}
+	if m.NegotiatedLevel != -1 {
+		return fmt.Errorf("negotiated_level must be -1 pre-handshake")
+	}
+	if strings.TrimSpace(m.HonestyNote) == "" {
+		return fmt.Errorf("honesty_note required")
+	}
+	// Pre-handshake must not claim achieved capabilities.
+	if m.CapEventStream || m.CapToolInspection || m.CapAdviceDelivery || m.CapDiffInspection ||
+		m.CapPause || m.CapCancel || m.CapResume || m.CapInterventionAck || m.ExplicitAck || m.LoadSession {
+		return fmt.Errorf("pre-handshake must not claim achieved capabilities")
+	}
+	if len(m.AuthMethods) > 0 {
+		return fmt.Errorf("pre-handshake must not advertise auth_methods")
+	}
+	return nil
+}
+
+func validatePostHandshake(m adapter.GrokACPFoundationManifest) error {
+	if m.Profile != adapter.GrokACPProfileV1 {
+		return fmt.Errorf("profile must be %s", adapter.GrokACPProfileV1)
+	}
+	if m.ProtocolVersion != adapter.GrokACPProtocolVersion {
+		return fmt.Errorf("protocol_version must be %d", adapter.GrokACPProtocolVersion)
+	}
+	if m.NegotiatedLevel < -1 || m.NegotiatedLevel > 3 {
+		return fmt.Errorf("negotiated_level out of range")
+	}
+	if strings.TrimSpace(m.HonestyNote) == "" {
+		return fmt.Errorf("honesty_note required")
+	}
+	// Explicit agent ACK / intervention-ack overclaims are never allowed from harness alone.
+	// CapPause may be true only when advertised in post caps; negotiated_level must still recompute.
+	if m.ExplicitAck {
+		return fmt.Errorf("explicit_ack must remain false")
+	}
+	if m.CapInterventionAck {
+		return fmt.Errorf("cap_intervention_ack must remain false without proof")
+	}
+	// Recompute level from the same boolean mapping as ManifestFromNegotiated (#218).
+	pm := protocol.CapabilityManifest{
+		AgentID:                "grok_build_acp",
+		Version:                adapter.GrokACPProfileV1,
+		SupportsEventStream:    m.CapEventStream,
+		SupportsAdviceDelivery: m.CapAdviceDelivery,
+		SupportsToolInspection: m.CapToolInspection,
+		SupportsDiffInspection: m.CapDiffInspection,
+		SupportsPause:          m.CapPause,
+		SupportsCancel:         m.CapCancel,
+		SupportsResume:         m.CapResume,
+	}
+	wantLevel := protocol.EvaluateAchievableLevel(&pm)
+	if m.NegotiatedLevel != wantLevel {
+		return fmt.Errorf("negotiated_level forged or stale (want %d from caps)", wantLevel)
+	}
+	return nil
+}
+
+// parseClosedAuthMethods accepts harness []string or []{id: string} objects; rejects dups.
+func parseClosedAuthMethods(v any) ([]string, error) {
+	if v == nil {
+		return nil, fmt.Errorf("missing")
+	}
+	var items []any
+	switch t := v.(type) {
+	case []any:
+		items = t
+	case []string:
+		out := append([]string(nil), t...)
+		return normalizeAuthIDs(out)
+	default:
+		return nil, fmt.Errorf("must be array (got %T)", v)
+	}
+	if len(items) > adapter.MaxGrokACPAuthMethods {
+		return nil, fmt.Errorf("too many methods")
+	}
+	var ids []string
+	for _, item := range items {
+		switch x := item.(type) {
+		case string:
+			ids = append(ids, x)
+		case map[string]any:
+			// Only closed {id: "..."} (or methodId) — no credential keys.
+			for k := range x {
+				lk := strings.ToLower(k)
+				if lk != "id" && lk != "methodid" {
+					return nil, fmt.Errorf("auth method object allows only id")
+				}
+			}
+			id, _ := x["id"].(string)
+			if id == "" {
+				id, _ = x["methodId"].(string)
+			}
+			if id == "" {
+				return nil, fmt.Errorf("auth method object missing id")
+			}
+			ids = append(ids, id)
+		default:
+			return nil, fmt.Errorf("auth method entry unsupported type")
+		}
+	}
+	return normalizeAuthIDs(ids)
+}
+
+func normalizeAuthIDs(ids []string) ([]string, error) {
+	if len(ids) > adapter.MaxGrokACPAuthMethods {
+		return nil, fmt.Errorf("too many methods")
+	}
+	seen := make(map[string]struct{}, len(ids))
+	var out []string
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, fmt.Errorf("empty auth method id")
+		}
+		if len(id) > adapter.MaxGrokACPAuthMethodID {
+			return nil, fmt.Errorf("auth method id too long")
+		}
+		if _, dup := seen[id]; dup {
+			return nil, fmt.Errorf("duplicate auth method %q", id)
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 const maxPrivacyFileBytes = 1 << 20 // 1 MiB

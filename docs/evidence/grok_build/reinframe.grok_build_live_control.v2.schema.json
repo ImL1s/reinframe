@@ -156,17 +156,190 @@
       ],
       "properties": {
         "pre_handshake": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profile",
+            "protocol_version",
+            "cap_event_stream",
+            "cap_tool_inspection",
+            "cap_advice_delivery",
+            "cap_diff_inspection",
+            "cap_pause",
+            "cap_cancel",
+            "cap_resume",
+            "cap_intervention_ack",
+            "explicit_ack",
+            "load_session",
+            "negotiated_level",
+            "honesty_note"
+          ],
+          "properties": {
+            "profile": {
+              "type": "string",
+              "const": "reinframe.grok_build_acp.v1"
+            },
+            "protocol_version": {
+              "type": "integer",
+              "const": 1
+            },
+            "cap_event_stream": {
+              "type": "boolean"
+            },
+            "cap_tool_inspection": {
+              "type": "boolean"
+            },
+            "cap_advice_delivery": {
+              "type": "boolean"
+            },
+            "cap_diff_inspection": {
+              "type": "boolean"
+            },
+            "cap_pause": {
+              "type": "boolean"
+            },
+            "cap_cancel": {
+              "type": "boolean"
+            },
+            "cap_resume": {
+              "type": "boolean"
+            },
+            "cap_intervention_ack": {
+              "type": "boolean"
+            },
+            "explicit_ack": {
+              "type": "boolean"
+            },
+            "load_session": {
+              "type": "boolean"
+            },
+            "auth_methods": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "negotiated_level": {
+              "type": "integer",
+              "minimum": -1,
+              "maximum": 3
+            },
+            "honesty_note": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         },
         "post_handshake": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profile",
+            "protocol_version",
+            "cap_event_stream",
+            "cap_tool_inspection",
+            "cap_advice_delivery",
+            "cap_diff_inspection",
+            "cap_pause",
+            "cap_cancel",
+            "cap_resume",
+            "cap_intervention_ack",
+            "explicit_ack",
+            "load_session",
+            "negotiated_level",
+            "honesty_note"
+          ],
+          "properties": {
+            "profile": {
+              "type": "string",
+              "const": "reinframe.grok_build_acp.v1"
+            },
+            "protocol_version": {
+              "type": "integer",
+              "const": 1
+            },
+            "cap_event_stream": {
+              "type": "boolean"
+            },
+            "cap_tool_inspection": {
+              "type": "boolean"
+            },
+            "cap_advice_delivery": {
+              "type": "boolean"
+            },
+            "cap_diff_inspection": {
+              "type": "boolean"
+            },
+            "cap_pause": {
+              "type": "boolean"
+            },
+            "cap_cancel": {
+              "type": "boolean"
+            },
+            "cap_resume": {
+              "type": "boolean"
+            },
+            "cap_intervention_ack": {
+              "type": "boolean"
+            },
+            "explicit_ack": {
+              "type": "boolean"
+            },
+            "load_session": {
+              "type": "boolean"
+            },
+            "auth_methods": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "negotiated_level": {
+              "type": "integer",
+              "minimum": -1,
+              "maximum": 3
+            },
+            "honesty_note": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         },
         "auth_methods": {
-          "type": "array"
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                }
+              }
+            ]
+          }
         },
         "caps_digest": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^load=(true|false) pause=(true|false) cancel=(true|false) resume=(true|false) tool=(true|false) diff=(true|false)$"
         }
       }
     },

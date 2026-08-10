@@ -280,11 +280,12 @@ func runACP(args []string) {
 	}
 
 	_ = saveScenarioMap(evDir, scenarios)
+	// Digest always recomputed from post-handshake foundation (nil wire caps → empty dig would fail closed).
 	_ = writeJSON(filepath.Join(evDir, "acp_manifest.json"), map[string]any{
 		"pre_handshake":  pre,
 		"post_handshake": post,
 		"auth_methods":   neg.AuthMethods,
-		"caps_digest":    neg.CapsDigest,
+		"caps_digest":    adapter.CapsDigestFromFoundation(post),
 	})
 	fmt.Println(`{"ok":true,"action":"acp","scenarios":` + fmt.Sprintf("%d", len(scenarios)) + `}`)
 }

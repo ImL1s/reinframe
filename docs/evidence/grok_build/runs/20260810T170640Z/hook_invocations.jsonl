@@ -1,0 +1,48 @@
+{"at": "2026-08-10T17:07:07.191570Z", "event": "session_start", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:07.658800Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:13.019559Z", "event": "user_prompt_submit", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:13.053867Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:16.916841Z", "event": "stop", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:16.965032Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:17.020131Z", "event": "stop", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:17.058274Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:19.439532Z", "event": "session_start", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:19.506941Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:25.193916Z", "event": "user_prompt_submit", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:25.233124Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:29.219151Z", "event": "pre_tool_use", "tool": "run_terminal_command", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:29.262652Z", "event": "pretool_result", "decision": "allow", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:29.803628Z", "event": "post_tool_use", "tool": "run_terminal_command", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:29.841037Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:32.426708Z", "event": "stop", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:32.461117Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:32.511332Z", "event": "stop", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:32.547097Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:34.643418Z", "event": "session_start", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:34.699021Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:39.910819Z", "event": "user_prompt_submit", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:39.966594Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:07:45.270648Z", "event": "pre_tool_use", "tool": "run_terminal_command", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:45.313637Z", "event": "pretool_result", "decision": "deny", "exit": 0, "deny_json": true, "deny_exit2": false}
+{"at": "2026-08-10T17:07:45.845189Z", "event": "stop", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:07:45.880646Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-001"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-001"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-001"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-002"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-002"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-002"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-003"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-003"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-003"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-004"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-004"}
+{"event":"broken_hook_invoke","id":"HOOK-FAIL-004"}
+{"at": "2026-08-10T17:08:41.370235Z", "event": "session_start", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:08:41.422136Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:08:42.560450Z", "event": "user_prompt_submit", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:08:42.616496Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:08:43.162313Z", "event": "user_prompt_submit", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:08:43.217745Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}
+{"at": "2026-08-10T17:08:43.753495Z", "event": "user_prompt_submit", "tool": "", "session": true, "permissionMode": "bypassPermissions", "phase": "pre"}
+{"at": "2026-08-10T17:08:43.804778Z", "event": "pretool_result", "decision": "", "exit": 0, "deny_json": false, "deny_exit2": false}

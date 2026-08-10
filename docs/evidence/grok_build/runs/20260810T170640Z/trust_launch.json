@@ -1,0 +1,5 @@
+{
+  "exit": 0,
+  "stderr": "",
+  "stdout": "{\n  \"text\": \"TRUST_OK\",\n  \"stopReason\": \"end_turn\",\n  \"sessionId\": \"019feca4-682d-7181-9228-fc242426e232\",\n  \"requestId\": \"d1bbb2e4-938f-43c0-a24c-e62570ec047b\",\n  \"thought\": \"The user wants me to simply say \\\"TRUST_OK\\\" and stop. This is a straightforward request with no need for tools or further action.\",\n  \"usage\": {\n    \"input_tokens\": 48992,\n    \"cache_read_input_tokens\": 4992,\n    \"cache_cre…"
+}

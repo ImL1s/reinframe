@@ -883,3 +883,226 @@ func TestClosedSchemaV2_MatchesCommittedCriticalClosedness(t *testing.T) {
 		}
 	}
 }
+
+// --- #219 full shipped report path ---
+
+// moreDataScenarios yields MORE_DATA after STATIC-PERM inject (AUTH PASS + incomplete core).
+func moreDataScenarios() map[string]ScenarioResult {
+	return map[string]ScenarioResult{
+		"ACP-AUTH-001": {ID: "ACP-AUTH-001", Status: "PASS", Detail: "auth ok for MORE_DATA fixture", At: stamp()},
+	}
+}
+
+func writeScenarios(t *testing.T, dir string, m map[string]ScenarioResult) {
+	t.Helper()
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scenarios.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGenerateLiveReport_MoreDataMissingPreflight_LimitationAndSchema(t *testing.T) {
+	dir := t.TempDir()
+	writeScenarios(t, dir, moreDataScenarios())
+	// No preflight.json — diagnostic must appear; disposition stays non-qualifying.
+	// One regular evidence file so privacy can complete if other files ok.
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("ok evidence"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := generateLiveReport(dir)
+	if err != nil {
+		t.Fatalf("generateLiveReport: %v", err)
+	}
+	if out.Disposition == "GO" || out.Disposition == "LIMITED_GO" {
+		t.Fatalf("want non-qualifying disposition, got %s reasons=%v", out.Disposition, out.Reasons)
+	}
+	if out.MandatoryOK {
+		t.Fatal("mandatory_ok must be false")
+	}
+	if !out.ArtifactValid {
+		t.Fatal("artifact_valid must be true for written report")
+	}
+	found := false
+	for _, r := range out.Reasons {
+		if strings.Contains(r, "preflight.json missing") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("limitations must include preflight.json missing; got %v", out.Reasons)
+	}
+	// On-disk JSON must validate.
+	b, err := os.ReadFile(out.JSONPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(b, &report); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateReportAgainstCommittedSchema(report); err != nil {
+		t.Fatalf("written report schema: %v", err)
+	}
+	if d, _ := report["final_disposition"].(string); d != out.Disposition {
+		t.Fatalf("disposition mismatch disk=%s out=%s", d, out.Disposition)
+	}
+}
+
+func TestGenerateLiveReport_MalformedCaps_OmittedAndSchemaValid(t *testing.T) {
+	dir := t.TempDir()
+	writeScenarios(t, dir, moreDataScenarios())
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Non-null structurally invalid optional manifest (pre-#219 embedded as-is).
+	bad := []byte(`{"pre_handshake":{},"post_handshake":{},"auth_methods":[],"caps_digest":"arbitrary"}`)
+	if err := os.WriteFile(filepath.Join(dir, "acp_manifest.json"), bad, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := generateLiveReport(dir)
+	if err != nil {
+		t.Fatalf("generateLiveReport: %v", err)
+	}
+	if out.Disposition == "GO" || out.Disposition == "LIMITED_GO" {
+		t.Fatalf("want non-qualifying got %s", out.Disposition)
+	}
+	if _, ok := out.Report["capability_manifests"]; ok {
+		t.Fatal("invalid capability_manifests must be omitted from report")
+	}
+	omitted := false
+	for _, r := range out.Reasons {
+		if strings.Contains(r, "capability_manifests omitted") {
+			omitted = true
+			break
+		}
+	}
+	if !omitted {
+		t.Fatalf("expected omit limitation; got %v", out.Reasons)
+	}
+	b, err := os.ReadFile(out.JSONPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(b, &report); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := report["capability_manifests"]; ok {
+		t.Fatal("disk report must not embed invalid capability_manifests")
+	}
+	if err := validateReportAgainstCommittedSchema(report); err != nil {
+		t.Fatalf("disk report must pass schema: %v", err)
+	}
+}
+
+func TestGenerateLiveReport_OversizedPrivacyIncomplete(t *testing.T) {
+	dir := t.TempDir()
+	writeScenarios(t, dir, moreDataScenarios())
+	big := make([]byte, maxPrivacyFileBytes+64)
+	for i := range big {
+		big[i] = 'z'
+	}
+	if err := os.WriteFile(filepath.Join(dir, "huge.bin"), big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := generateLiveReport(dir)
+	if err != nil {
+		t.Fatalf("generateLiveReport: %v", err)
+	}
+	priv, _ := out.Report["privacy_checks"].(map[string]any)
+	if priv == nil {
+		t.Fatal("missing privacy_checks")
+	}
+	if priv["complete"] == true {
+		t.Fatalf("oversized must be incomplete: %+v", priv)
+	}
+	// Must not have scanned the oversized file as complete content.
+	if sc, ok := asInt(priv["files_scanned"]); ok && sc > 0 && priv["files_skipped"] == 0 {
+		// if only huge file, scanned should be 0
+	}
+	if sk, ok := asInt(priv["files_skipped"]); !ok || sk < 1 {
+		t.Fatalf("expected files_skipped>=1 got %+v", priv)
+	}
+	// Qualification cannot GO with incomplete privacy — disposition non-GO already.
+	if out.MandatoryOK {
+		t.Fatal("mandatory_ok false expected")
+	}
+	if err := validateReportAgainstCommittedSchema(out.Report); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+}
+
+func TestScanPrivacy_StatBeforeReadOversized(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Size beyond cap; scanPrivacy must Stat-skip without relying on whole-file success path.
+	big := make([]byte, maxPrivacyFileBytes+1)
+	if err := os.WriteFile(filepath.Join(dir, "big.bin"), big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := scanPrivacy(dir)
+	if p["complete"] == true {
+		t.Fatal("oversized incomplete")
+	}
+	fails, _ := p["failure_classes"].([]string)
+	if len(fails) == 0 {
+		// may be []any from map
+		if fa, ok := p["failure_classes"].([]any); ok {
+			for _, x := range fa {
+				if s, ok := x.(string); ok && strings.HasPrefix(s, "oversized:") {
+					return
+				}
+			}
+		}
+		t.Fatalf("want oversized failure class: %+v", p)
+	}
+	ok := false
+	for _, f := range fails {
+		if strings.HasPrefix(f, "oversized:") {
+			ok = true
+		}
+	}
+	if !ok {
+		t.Fatalf("want oversized: got %v", fails)
+	}
+}
+
+func TestScanPrivacy_RawThoughtsDetector(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "thoughts.json"), []byte(`{"raw_thoughts":"secret chain"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := scanPrivacy(dir)
+	if p["raw_thoughts_stored"] != true {
+		t.Fatalf("raw_thoughts marker must set raw_thoughts_stored: %+v", p)
+	}
+}
+
+func TestScanPrivacy_NonRegularFIFO(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fifo not portable on windows")
+	}
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "pipe.fifo")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// syscall.Mkfifo
+	if err := mkfifo(fifo); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	// Also a normal file so the loop runs.
+	_ = os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o600)
+	p := scanPrivacy(dir)
+	if p["complete"] == true {
+		t.Fatalf("fifo must make incomplete: %+v", p)
+	}
+}

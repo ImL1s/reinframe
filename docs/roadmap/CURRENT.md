@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-11) — **#201/#199/#200/#215/#218/#219 closed** on main; public Grok ranking disposition remains **MORE_DATA**; live v2 campaign `20260810T170640Z` is harness **NO_GO** (quota-contaminated: host 402 balance exhausted + ACP-SESSION Internal error; privacy errata for raw `thought` in trust_launch — see run `PRIVACY_ERRATA.md`); #168 MORE-DATA; no ranking  
+**Status:** current (2026-08-11) — **#201/#199/#200/#215/#218/#219 closed** on main; privacy follow-ups **#223/#224/#225** on main; public Grok ranking disposition remains **MORE_DATA**; latest clean-quota live v2 `20260811T073954Z` is harness **NO_GO** (primary limitation `HOOK-DENY-001 FAIL`; ACP-SESSION **PASS** / `session_visible`; no 402); prior `20260810T170640Z` remains immutable quota-contaminated NO_GO + privacy errata; #168 MORE-DATA; no ranking  
 
 
 **Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open.

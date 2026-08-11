@@ -1,0 +1,122 @@
+{
+  "ACP-AUTH-001": {
+    "id": "ACP-AUTH-001",
+    "status": "PASS",
+    "detail": "delegated auth methodId=cached_token headless=true no token field",
+    "at": "2026-08-11T07:46:44Z"
+  },
+  "ACP-CLEANUP-001": {
+    "id": "ACP-CLEANUP-001",
+    "status": "PASS",
+    "detail": "Close completed; owned PID 34348 not alive",
+    "at": "2026-08-11T07:47:31Z"
+  },
+  "ACP-INIT-001": {
+    "id": "ACP-INIT-001",
+    "status": "PASS",
+    "detail": "protocolVersion=1 post_level=0 load=true cancel=false auth=[cached_token grok.com]",
+    "at": "2026-08-11T07:46:44Z"
+  },
+  "ACP-OPTIONAL-001": {
+    "id": "ACP-OPTIONAL-001",
+    "status": "INCONCLUSIVE",
+    "detail": "loadSession negotiated but failed: grok acp: session/load: Invalid params",
+    "at": "2026-08-11T07:47:25Z"
+  },
+  "ACP-SESSION-001": {
+    "id": "ACP-SESSION-001",
+    "status": "PASS",
+    "detail": "session/new+prompt+post-prompt session-matched update; source-correlated session_visible",
+    "ack_layer": "session_visible",
+    "at": "2026-08-11T07:47:25Z",
+    "session_correlated": true,
+    "intervention_id": "issue167-live-advice-001",
+    "target_session_id": "019fefc9-c816-7233-99f4-07dc7074a7c0"
+  },
+  "ADVICE-DEDUP-001": {
+    "id": "ADVICE-DEDUP-001",
+    "status": "INCONCLUSIVE",
+    "detail": "second delivery accepted at transport; durable/business InterventionID suppression not proven in harness (#200)",
+    "at": "2026-08-11T07:47:27Z",
+    "intervention_id": "issue167-live-advice-001"
+  },
+  "CHALLENGE-001": {
+    "id": "CHALLENGE-001",
+    "status": "PASS",
+    "detail": "challenge text transported with ChallengeID preserved; #131 remains authoritative; no self-authorization claimed",
+    "at": "2026-08-11T07:47:29Z"
+  },
+  "HOOK-ALLOW-001": {
+    "id": "HOOK-ALLOW-001",
+    "status": "INCONCLUSIVE",
+    "detail": "file written but hook invocation not proven: exit_err=\u003cnil\u003e stdout_bytes=49067 stderr=",
+    "tool_name": "run_terminal_command",
+    "at": "2026-08-11T07:42:07Z"
+  },
+  "HOOK-DENY-001": {
+    "id": "HOOK-DENY-001",
+    "status": "FAIL",
+    "detail": "denied file exists — host did not enforce deny; exit_err=\u003cnil\u003e stdout_bytes=52047 stderr=",
+    "tool_name": "run_terminal_command",
+    "host_outcome": "not_enforced",
+    "at": "2026-08-11T07:43:01Z"
+  },
+  "HOOK-FAIL-001": {
+    "id": "HOOK-FAIL-001",
+    "status": "INCONCLUSIVE",
+    "detail": "marker written but broken-hook invocation not proven (may be untrusted skip); exit_err=\u003cnil\u003e stdout_bytes=53406 stderr=",
+    "host_outcome": "unknown",
+    "at": "2026-08-11T07:43:55Z"
+  },
+  "HOOK-FAIL-002": {
+    "id": "HOOK-FAIL-002",
+    "status": "INCONCLUSIVE",
+    "detail": "marker written but broken-hook invocation not proven (may be untrusted skip); exit_err=\u003cnil\u003e stdout_bytes=52788 stderr=",
+    "host_outcome": "unknown",
+    "at": "2026-08-11T07:44:52Z"
+  },
+  "HOOK-FAIL-003": {
+    "id": "HOOK-FAIL-003",
+    "status": "INCONCLUSIVE",
+    "detail": "marker written but broken-hook invocation not proven (may be untrusted skip); exit_err=\u003cnil\u003e stdout_bytes=52998 stderr=",
+    "host_outcome": "unknown",
+    "at": "2026-08-11T07:45:45Z"
+  },
+  "HOOK-FAIL-004": {
+    "id": "HOOK-FAIL-004",
+    "status": "INCONCLUSIVE",
+    "detail": "marker written but broken-hook invocation not proven (may be untrusted skip); exit_err=\u003cnil\u003e stdout_bytes=53558 stderr=",
+    "host_outcome": "unknown",
+    "at": "2026-08-11T07:46:43Z"
+  },
+  "HOOK-MAP-001": {
+    "id": "HOOK-MAP-001",
+    "status": "INCONCLUSIVE",
+    "detail": "no tools observed in hook invocation log",
+    "at": "2026-08-11T07:43:01Z"
+  },
+  "HOOK-UNINSTALL-001": {
+    "id": "HOOK-UNINSTALL-001",
+    "status": "PASS",
+    "detail": "reinframe-owned hooks removed",
+    "at": "2026-08-11T07:46:43Z"
+  },
+  "TRUST-001": {
+    "id": "TRUST-001",
+    "status": "PASS",
+    "detail": "launched with --trust; doctor_ok=true",
+    "at": "2026-08-11T07:41:12Z"
+  },
+  "TRUST-RESTORE-001": {
+    "id": "TRUST-RESTORE-001",
+    "status": "PASS",
+    "detail": "restored command doctor_ok=true",
+    "at": "2026-08-11T07:41:12Z"
+  },
+  "TRUST-STALE-001": {
+    "id": "TRUST-STALE-001",
+    "status": "INCONCLUSIVE",
+    "detail": "command reinstalled; TrustStale=false msgs=valid reinframe grok hooks foundation",
+    "at": "2026-08-11T07:41:12Z"
+  }
+}

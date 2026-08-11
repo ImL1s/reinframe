@@ -21,7 +21,18 @@
 ## Live pin (Grok #167)
 
 - Historical v1 evidence: `docs/evidence/grok_build/issue-167-live-grok-1.0.0-3cd0d0cbcebe-stable-darwin-2026-08-08.json`
-- Current-main v2 live campaign (main `3a218bd…`, run `20260810T170640Z`):  
+- Clean-quota re-run (main `694e09d…` post-#225, run `20260811T073954Z`):  
+  `docs/evidence/grok_build/runs/20260811T073954Z/`  
+  - Grok profile: `grok 1.0.0 (3cd0d0cbcebe)` darwin/arm64  
+  - Harness disposition: **NO_GO** (mechanical; primary limitation `HOOK-DENY-001 FAIL` — host deny not enforced / fail-open)  
+  - Not quota-contaminated (no 402 / balance exhausted in campaign log)  
+  - **ACP-SESSION-001 PASS** with source-correlated **session_visible**; **CHALLENGE-001 PASS**  
+  - Privacy: `privacy.complete=true`, `raw_thoughts_stored=false`; `trust_launch` closed allowlist (hashed IDs; no raw `thought`)  
+  - Scenario counts: PASS 8 · FAIL 1 · INCONCLUSIVE 9 · NOT_RUN 1  
+  - Strongest proven ACK: **session_visible** (`explicit_claimed=false`)  
+  - Optional residual: `ACP-OPTIONAL-001` `session/load: Invalid params` (INCONCLUSIVE; not first-order NO_GO)  
+  - Ranking still blocked by matched-host gaps: **#164 Codex**, **#120 Claude**
+- Prior v2 campaign (main `3a218bd…`, run `20260810T170640Z`):  
   `docs/evidence/grok_build/runs/20260810T170640Z/`  
   - Grok profile: `grok 1.0.0 (3cd0d0cbcebe)` darwin/arm64  
   - Harness disposition: **NO_GO** (mechanical; primary limitation `ACP-SESSION-001 FAIL` — `session/prompt` Internal error; `CHALLENGE-001` also FAIL)  

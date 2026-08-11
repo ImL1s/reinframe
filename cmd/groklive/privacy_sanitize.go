@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -26,16 +27,19 @@ var forbiddenReasoningKeys = map[string]struct{}{
 	"internal_monologue": {},
 }
 
-// Matches JSON object key syntax for forbidden names, including common escape layers.
-// Requires a following colon so prose/array values like "thought" alone do not match.
-var forbiddenKeyColon = func() *regexp.Regexp {
-	// thought|thoughts|... as a key before ':'
+// forbiddenQuotedKeyColon matches only complete quoted JSON keys (optional
+// backslash-escape layers around the quotes) followed by a colon.
+// Quotes are required — bare `thought:` or suffix keys like mascot/cotton never match.
+var forbiddenQuotedKeyColon = func() *regexp.Regexp {
 	names := make([]string, 0, len(forbiddenReasoningKeys))
 	for k := range forbiddenReasoningKeys {
 		names = append(names, regexp.QuoteMeta(k))
 	}
-	// (?:\\*")?name(?:\\*")?\s*:
-	pat := `(?i)(?:\\*")?(?:` + strings.Join(names, "|") + `)(?:\\*")?\s*:`
+	sort.Strings(names)
+	// Required quotes around the exact key; optional backslash layers before each quote.
+	// Examples: "thought":   \"thought\":   \\"thought\\":
+	// Never optional-quote / bare-name forms (avoids mascot/cotton/prose false positives).
+	pat := `(?i)(?:\\)*"(?:` + strings.Join(names, "|") + `)(?:\\)*"\s*:`
 	return regexp.MustCompile(pat)
 }()
 
@@ -112,21 +116,26 @@ func sha256Hex(s string) string {
 }
 
 // contentHasPrivateReasoning reports private reasoning material in evidence bytes.
-// Walks JSON (including string values that themselves contain JSON) and also checks
-// escaped key forms in raw text for nested stdout captures.
+//
+// Valid JSON: parse first and walk actual object keys only (no prose regex).
+// Nested JSON-in-string: recurse only when the complete trimmed string parses
+// as a JSON object or array.
+// Non-JSON fallback: only fully quoted keys + colon (optional backslash layers).
 func contentHasPrivateReasoning(b []byte) bool {
 	if len(b) == 0 {
 		return false
 	}
-	// Fast path: forbidden names only when used as JSON keys (… "thought": …).
-	if forbiddenKeyColon.Match(b) {
-		return true
-	}
+	trimmed := bytesTrimSpace(b)
 	var v any
-	if err := json.Unmarshal(b, &v); err != nil {
-		return false
+	if err := json.Unmarshal(trimmed, &v); err == nil {
+		return walkJSONForPrivateReasoning(v, 0)
 	}
-	return walkJSONForPrivateReasoning(v, 0)
+	// Malformed / non-JSON: require complete quoted key boundaries.
+	return forbiddenQuotedKeyColon.Match(trimmed)
+}
+
+func bytesTrimSpace(b []byte) []byte {
+	return []byte(strings.TrimSpace(string(b)))
 }
 
 func normalizeReasoningKey(k string) string {
@@ -178,17 +187,13 @@ func walkJSONForPrivateReasoning(v any, depth int) bool {
 		if s == "" {
 			return false
 		}
-		// Nested JSON in string fields (stdout payloads).
+		// Only recurse when the complete string is a JSON object/array.
+		// Do not regex-scan ordinary prose string values.
 		if (strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[")) && len(s) < 1<<20 {
 			var inner any
 			if json.Unmarshal([]byte(s), &inner) == nil {
-				if walkJSONForPrivateReasoning(inner, depth+1) {
-					return true
-				}
+				return walkJSONForPrivateReasoning(inner, depth+1)
 			}
-		}
-		if forbiddenKeyColon.MatchString(s) {
-			return true
 		}
 	}
 	return false

@@ -125,3 +125,80 @@ func TestScanPrivacy_DetectsThoughtInTrustLaunchShape(t *testing.T) {
 		t.Fatalf("scanPrivacy must set raw_thoughts_stored for nested thought: %+v", p)
 	}
 }
+
+func TestContentHasPrivateReasoning_ExactQuotedKeyOnly(t *testing.T) {
+	t.Parallel()
+	// Mandatory true cases
+	trueCases := []string{
+		`{"thought":"secret"}`,
+		`{"reasoning_content":"secret"}`,
+		`{"reasoning-content":"secret"}`,
+		`{"nested":{"private_reasoning":"secret"}}`,
+		`{"stdout":"{\"thought\":\"secret\"}"}`,
+		`{"thought" : "secret"}`,
+	}
+	for _, tc := range trueCases {
+		if !contentHasPrivateReasoning([]byte(tc)) {
+			t.Fatalf("want true for exact key case: %s", tc)
+		}
+	}
+	// Non-JSON but fully quoted key + colon (escaped layers)
+	escaped := []string{
+		`\"thought\":\"secret\"`,
+		`\\"thought\\": \"secret\"`,
+	}
+	for _, tc := range escaped {
+		if !contentHasPrivateReasoning([]byte(tc)) {
+			t.Fatalf("want true for escaped quoted key: %s", tc)
+		}
+	}
+}
+
+func TestContentHasPrivateReasoning_DoesNotMatchKeySuffix(t *testing.T) {
+	t.Parallel()
+	falseCases := []string{
+		`{"mascot":"x"}`,
+		`{"not_reasoning":"x"}`,
+		`{"cotton":"x"}`,
+		`{"reasoning_note":"x"}`,
+	}
+	for _, tc := range falseCases {
+		if contentHasPrivateReasoning([]byte(tc)) {
+			t.Fatalf("suffix/partial key must not match: %s", tc)
+		}
+	}
+}
+
+func TestContentHasPrivateReasoning_DoesNotMatchProseValue(t *testing.T) {
+	t.Parallel()
+	falseCases := []string{
+		`{"note":"a thought: experiment"}`,
+		`{"note":"the key \"thought\": is forbidden"}`,
+		`["thought"]`,
+		`thought: prose`,
+	}
+	for _, tc := range falseCases {
+		if contentHasPrivateReasoning([]byte(tc)) {
+			t.Fatalf("prose/array value must not match: %s", tc)
+		}
+	}
+}
+
+func TestContentHasPrivateReasoning_EscapedNestedJSON(t *testing.T) {
+	t.Parallel()
+	// Outer JSON with nested JSON string containing a real thought key.
+	outer := map[string]any{
+		"stdout": `{"thought":"secret"}`,
+	}
+	b, err := json.Marshal(outer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contentHasPrivateReasoning(b) {
+		t.Fatalf("nested JSON-in-string must detect thought key: %s", string(b))
+	}
+	// Escaped form as raw non-JSON text (trust capture residue)
+	if !contentHasPrivateReasoning([]byte(`{\"thought\":\"secret\"}`)) {
+		t.Fatal("escaped quoted thought key must match fallback")
+	}
+}

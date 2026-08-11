@@ -23,3 +23,12 @@ Public product disposition for ranking (#168) remains **MORE_DATA** (Grok-only l
 No live #108 E2E, exactly-once, CapPause/Level 2, or multi-host ranking is claimed from this run.
 
 Historical v1 evidence remains under `docs/evidence/grok_build/issue-167-live-grok-1.0.0-*` and `HISTORICAL_v1.md`.
+
+
+## Privacy errata (post-merge correction)
+
+See `PRIVACY_ERRATA.md` / `PRIVACY_ERRATA.json`.
+
+- Original `privacy.complete=true` / `raw_thoughts_stored=false` on the formal report was a **false negative**: `trust_launch.json` retained host `thought` inside escaped stdout.
+- `trust_launch.json` has been replaced with a closed allowlist capture; **mechanical `NO_GO` is unchanged**.
+- This run is **quota-contaminated** (Grok 402 balance exhausted observed mid-campaign); do not treat ACP Internal error alone as a proven Reinframe SessionPrompt shape bug without a clean re-run.

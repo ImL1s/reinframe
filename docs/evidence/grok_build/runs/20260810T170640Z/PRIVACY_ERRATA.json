@@ -1,0 +1,35 @@
+{
+  "schema": "reinframe.evidence_errata.v1",
+  "run_id": "20260810T170640Z",
+  "path": "docs/evidence/grok_build/runs/20260810T170640Z",
+  "original_main": "4a96d603e83cc787cc2e48c467b5c036dc41dfa7",
+  "original_pr": 222,
+  "mechanical_disposition_unchanged": "NO_GO",
+  "privacy": {
+    "original_claim": {
+      "complete": true,
+      "raw_thoughts_stored": false,
+      "files_skipped": 0
+    },
+    "status": "REVOKED_INVALID",
+    "reason": "trust_launch.json embedded Grok host private-reasoning field (and session/request identities) inside escaped stdout JSON; detector only matched a closed key list and missed the host field.",
+    "fields_removed": [
+      "trust_launch.stdout raw body",
+      "host private-reasoning field",
+      "session identity plaintext",
+      "request identity plaintext"
+    ],
+    "replacement": "trust_launch closed allowlist (text/stop_reason/hashed ids/usage only)"
+  },
+  "quota_contamination": {
+    "observed": true,
+    "evidence": "Grok Build live CLI reported 402 Payment Required / usage balance exhausted during the same campaign; hook-failure scenarios and session/prompt Internal error are contaminated and must not be read as pure ACP request-shape proof.",
+    "classification": "quota-contaminated NO_GO run"
+  },
+  "product_claims": {
+    "explicit_ack": false,
+    "level2_cap_pause": false,
+    "ranking": false,
+    "live_108_e2e": false
+  }
+}

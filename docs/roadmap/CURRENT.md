@@ -1,6 +1,7 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-10) — **#201/#199/#200/#215/#218/#219 closed** on main; public Grok ranking disposition remains **MORE_DATA**; latest live v2 campaign on tip `3a218bd` produced harness **NO_GO** (ACP-SESSION prompt Internal error) under `docs/evidence/grok_build/runs/20260810T170640Z/`; #168 MORE-DATA; no ranking  
+**Status:** current (2026-08-11) — **#201/#199/#200/#215/#218/#219 closed** on main; public Grok ranking disposition remains **MORE_DATA**; live v2 campaign `20260810T170640Z` is harness **NO_GO** (quota-contaminated: host 402 balance exhausted + ACP-SESSION Internal error; privacy errata for raw `thought` in trust_launch — see run `PRIVACY_ERRATA.md`); #168 MORE-DATA; no ranking  
+
 
 **Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open.
 

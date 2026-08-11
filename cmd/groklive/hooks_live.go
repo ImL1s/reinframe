@@ -130,11 +130,20 @@ exit "$EC"
 	trustCmd.Stdout = &trustOut
 	trustCmd.Stderr = &trustErr
 	_ = trustCmd.Run()
-	_ = writeJSON(filepath.Join(evDir, "trust_launch.json"), map[string]any{
-		"exit":   trustCmd.ProcessState.ExitCode(),
-		"stdout": boundStr(redactSecrets(trustOut.String()), 400),
-		"stderr": boundStr(redactSecrets(trustErr.String()), 400),
-	})
+	// Closed allowlist only — never persist raw host stdout (may embed thought/sessionId).
+	trustRec := sanitizeTrustLaunchCapture(trustCmd.ProcessState.ExitCode(), trustOut.String(), trustErr.String())
+	if err := validateEvidencePrivacyRejects("trust_launch", trustRec); err != nil {
+		// Fail closed: write minimal exit-only record rather than private material.
+		trustRec = map[string]any{
+			"schema":     "reinframe.trust_launch.v1",
+			"exit":       trustCmd.ProcessState.ExitCode(),
+			"capture":    "closed_allowlist",
+			"stdout_raw": false,
+			"stderr_raw": false,
+			"error":      err.Error(),
+		}
+	}
+	_ = writeJSON(filepath.Join(evDir, "trust_launch.json"), trustRec)
 	doc2, errDoc2 := mgr.Doctor()
 	_ = writeJSON(filepath.Join(evDir, "hooks_doctor_post_trust.json"), doc2)
 	if errDoc2 != nil {

@@ -1,0 +1,49 @@
+{
+  "acp_initialize_probe": {
+    "detail": "initialize returned protocolVersion 1",
+    "ok": true
+  },
+  "at": "2026-08-11T07:40:21Z",
+  "binary": "/Users/iml1s/.local/bin/grok",
+  "blocker": null,
+  "probes": [
+    {
+      "command": "uname -a",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "Darwin MacBook-Pro-5.local 25.4.0 Darwin Kernel Version 25.4.0: Thu Mar 19 19:33:25 PDT 2026; root:xnu-12377.101.15~1/RELEASE_ARM64_T6041 arm64\n"
+    },
+    {
+      "command": "go version",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "go version go1.26.0 darwin/arm64\n"
+    },
+    {
+      "command": "ls -l /Users/iml1s/.local/bin/grok",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "lrwxr-xr-x@ 1 iml1s  staff  27 Jun 18 00:14 /Users/iml1s/.local/bin/grok -\u003e /Users/iml1s/.grok/bin/grok\n"
+    },
+    {
+      "command": "/Users/iml1s/.local/bin/grok --version",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "grok 1.0.0 (3cd0d0cbcebe)\n"
+    },
+    {
+      "command": "/Users/iml1s/.local/bin/grok --no-auto-update --help",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "Grok Build TUI\n\nUsage: grok [OPTIONS] [PROMPT] [COMMAND]\n\nArguments:\n  [PROMPT]\n          Initial prompt for the interactive session, e.g. `grok \"fix the bug\"` or `grok --worktree=feat \"create this feature\"`\n\nOptions:\n      --agent \u003cNAME\u003e\n          Agent name or definition file path\n\n      --agents \u003cJSON\u003e\n          Inline subagent definitions as JSON\n\n      --allow \u003cRULE\u003e\n          Permission allow rule (compat alias: --allowedTools)\n\n      --always-approve\n          Auto-approve all tool executions\n\n  -c, --continue\n          Continue the most recent session for the current working directory\n\n      --cwd \u003cCWD\u003e\n          Working directory\n\n      --debug\n          Enable debug logging\n\n      --debug-file \u003cFILE\u003e\n          Write debug logs to FILE\n\n      --deny \u003cRULE\u003e\n          Permission deny rule (compat alias: --disallowedTools)\n\n      --disable-web-search\n          Disable web search and web fetch tools\n\n      --disallowed-tools \u003cTOOLS\u003e\n          Built-in tools to remove (comma-separated)\n\n      --experimental-memory\n          Enable cross-session memory\n\n      --fork-session\n          When resuming (`--resume` / `--continue`), create a new session ID instead of reusing the original (optionally set via `--session-id`)\n\n      --fullscreen\n          Open in the standard fullscreen TUI for this session, overriding a config `[ui] screen_mode = \"minimal\"` preference. Session-scoped only — does not write config. Fullscreen-vs-inline still follows the alt-screen policy (--no-alt-…"
+    },
+    {
+      "command": "/Users/iml1s/.local/bin/grok --no-auto-update agent stdio --help",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "Run the agent over stdio\n\nUsage: grok agent stdio [OPTIONS]\n\nOptions:\n      --debug                 Enable debug logging\n      --debug-file \u003cFILE\u003e     Write debug logs to FILE\n  -h, --help                  Print help\n      --leader-socket \u003cPATH\u003e  Use a custom leader socket path instead of the default `~/.grok/leader.sock`\n"
+    }
+  ],
+  "usable": true,
+  "version": "grok 1.0.0 (3cd0d0cbcebe)"
+}

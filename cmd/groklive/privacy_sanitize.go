@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -187,16 +188,37 @@ func walkJSONForPrivateReasoning(v any, depth int) bool {
 		if s == "" {
 			return false
 		}
-		// Only recurse when the complete string is a JSON object/array.
-		// Do not regex-scan ordinary prose string values.
-		if (strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[")) && len(s) < 1<<20 {
-			var inner any
-			if json.Unmarshal([]byte(s), &inner) == nil {
-				return walkJSONForPrivateReasoning(inner, depth+1)
+		// Only recurse when the complete string is (or unescapes to) a JSON object/array.
+		// Do not regex-scan ordinary prose string values (avoids \"thought\": prose FPs).
+		if len(s) < 1<<20 {
+			if walkParsedJSONString(s, depth+1) {
+				return true
+			}
+			// One JSON-string unescape layer for multiply-escaped embeds:
+			// {\"thought\":\"secret\"} → {"thought":"secret"} then walk keys.
+			// Prose like: the key \"thought\": is forbidden → unescapes to prose, not object.
+			if unq, err := strconv.Unquote(`"` + s + `"`); err == nil {
+				unq = strings.TrimSpace(unq)
+				if unq != s && walkParsedJSONString(unq, depth+1) {
+					return true
+				}
 			}
 		}
 	}
 	return false
+}
+
+// walkParsedJSONString returns true when s is a complete JSON object/array that
+// contains a forbidden reasoning key (recursive walk).
+func walkParsedJSONString(s string, depth int) bool {
+	if !strings.HasPrefix(s, "{") && !strings.HasPrefix(s, "[") {
+		return false
+	}
+	var inner any
+	if json.Unmarshal([]byte(s), &inner) != nil {
+		return false
+	}
+	return walkJSONForPrivateReasoning(inner, depth)
 }
 
 // validateEvidencePrivacyRejects reports an error if payload must not be written as evidence.
@@ -208,8 +230,12 @@ func validateEvidencePrivacyRejects(label string, payload any) error {
 	if contentHasPrivateReasoning(b) {
 		return fmt.Errorf("%s: refuses to write private reasoning / thought fields", label)
 	}
-	// Reject unhashed identity keys and raw stdout anywhere in the tree.
-	if containsForbiddenEvidenceShape(payload) {
+	// Walk via JSON round-trip so struct tags (target_session_id, sessionId, …) are checked.
+	var as any
+	if err := json.Unmarshal(b, &as); err != nil {
+		return fmt.Errorf("%s: privacy reparse: %w", label, err)
+	}
+	if containsForbiddenEvidenceShape(as) {
 		return fmt.Errorf("%s: refuses unhashed identity or raw stdout fields", label)
 	}
 	return nil
@@ -222,6 +248,11 @@ func containsForbiddenEvidenceShape(v any) bool {
 			switch k {
 			case "sessionId", "session_id", "requestId", "request_id", "stdout":
 				return true
+			case "target_session_id":
+				// Public evidence may only carry a full SHA-256 hex (64 chars), never a UUID.
+				if s, ok := child.(string); ok && s != "" && !isSHA256Hex(s) {
+					return true
+				}
 			}
 			if containsForbiddenEvidenceShape(child) {
 				return true
@@ -235,4 +266,17 @@ func containsForbiddenEvidenceShape(v any) bool {
 		}
 	}
 	return false
+}
+
+// isSHA256Hex reports a lowercase/uppercase 64-char hex digest.
+func isSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+	return true
 }

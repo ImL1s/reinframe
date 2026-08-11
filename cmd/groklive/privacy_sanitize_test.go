@@ -202,3 +202,32 @@ func TestContentHasPrivateReasoning_EscapedNestedJSON(t *testing.T) {
 		t.Fatal("escaped quoted thought key must match fallback")
 	}
 }
+
+func TestContentHasPrivateReasoning_MultiplyEscapedInsideJSONString(t *testing.T) {
+	t.Parallel()
+	// Outer object whose string value is one JSON-escape layer of {"thought":"secret"}.
+	// After outer parse the string is: {\"thought\":\"secret\"} — not valid JSON until unquoted.
+	outer := `{"payload":"{\\\"thought\\\":\\\"secret\\\"}"}`
+	if !contentHasPrivateReasoning([]byte(outer)) {
+		t.Fatalf("multiply-escaped thought key inside JSON string must be detected: %s", outer)
+	}
+	// Prose with escaped quotes must still be false (unescapes to non-object prose).
+	if contentHasPrivateReasoning([]byte(`{"note":"the key \"thought\": is forbidden"}`)) {
+		t.Fatal("prose with quoted thought must remain false")
+	}
+}
+
+func TestValidateEvidencePrivacyRejects_UnhashedTargetSessionID(t *testing.T) {
+	t.Parallel()
+	payload := map[string]any{
+		"id":                "ACP-SESSION-001",
+		"target_session_id": "019fefc9-c816-7233-99f4-07dc7074a7c0",
+	}
+	if err := validateEvidencePrivacyRejects("scenario", payload); err == nil {
+		t.Fatal("plaintext UUID target_session_id must be rejected")
+	}
+	payload["target_session_id"] = sha256Hex("019fefc9-c816-7233-99f4-07dc7074a7c0")
+	if err := validateEvidencePrivacyRejects("scenario", payload); err != nil {
+		t.Fatalf("hashed target_session_id must be allowed: %v", err)
+	}
+}

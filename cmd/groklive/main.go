@@ -138,7 +138,7 @@ type ScenarioResult struct {
 	SessionCorrelated bool `json:"session_correlated,omitempty"`
 	// InterventionID bound into the scenario when relevant.
 	InterventionID string `json:"intervention_id,omitempty"`
-	// TargetSessionID for ACP scenarios.
+	// TargetSessionID is the SHA-256 hex of the host session id (never plaintext UUID).
 	TargetSessionID string `json:"target_session_id,omitempty"`
 	// DedupSuppressed: second same InterventionID was suppressed at business layer.
 	DedupSuppressed bool `json:"dedup_suppressed,omitempty"`

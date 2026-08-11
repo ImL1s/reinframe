@@ -25,9 +25,11 @@
   `docs/evidence/grok_build/runs/20260810T170640Z/`  
   - Grok profile: `grok 1.0.0 (3cd0d0cbcebe)` darwin/arm64  
   - Harness disposition: **NO_GO** (mechanical; primary limitation `ACP-SESSION-001 FAIL` — `session/prompt` Internal error; `CHALLENGE-001` also FAIL)  
+  - Classification: **quota-contaminated NO_GO** (host CLI also reported **402 usage balance exhausted** mid-run; do not treat Internal error alone as proven ACP request-shape failure without a clean re-probe)  
+  - Privacy: original formal report `privacy.complete=true` / `raw_thoughts_stored=false` was a **false negative** (raw Grok `thought` in `trust_launch` stdout); see `PRIVACY_ERRATA.md` — disposition not upgraded  
   - Scenario counts: PASS 9 · FAIL 2 · INCONCLUSIVE 7 · NOT_RUN 1  
   - Strongest proven ACK: **transport** only (`explicit_claimed=false`; not source-correlated session_visible)  
-  - Remaining matched-host gaps for ranking: **#164 Codex**, **#120 Claude** (and Grok session/prompt reliability for GO)
+  - Remaining matched-host gaps for ranking: **#164 Codex**, **#120 Claude** (and Grok balance + session/prompt reliability for GO)
 - Sample size: n=1 OS (darwin/arm64) for both pins
 - API: `evaluation.AttachLiveGrok167Lane` / `DefaultLiveGrok167Pin` (historical pin path)
 

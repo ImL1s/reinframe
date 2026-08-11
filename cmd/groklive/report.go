@@ -696,26 +696,27 @@ const (
 	maxPrivacyTotalBytes = 8 << 20 // 8 MiB aggregate scanned content
 )
 
-// Closed substrings that indicate private reasoning envelopes were persisted (#219).
+// rawThoughtsMarkers kept for documentation; detection uses contentHasPrivateReasoning.
 var rawThoughtsMarkers = []string{
 	`"raw_thoughts"`,
 	`"private_reasoning"`,
 	`"thinking_blocks"`,
 	`"reasoning_content"`,
 	`"encrypted_content"`,
+	`"thought"`, // Grok host field (also nested/escaped)
 }
 
 // scanPrivacy is a complete-or-fail privacy scan of the flat evidence directory (#215/#219).
 // Only regular files are content-scanned; size is checked before full load via Stat + LimitReader.
 func scanPrivacy(evDir string) map[string]any {
 	out := map[string]any{
-		"method":                                    "complete_or_fail_flat_scan",
-		"complete":                                  false,
-		"files_seen":                                0,
-		"files_scanned":                             0,
-		"files_skipped":                             0,
-		"bytes_scanned":                             0,
-		"auth_json_read":                            false,
+		"method":         "complete_or_fail_flat_scan",
+		"complete":       false,
+		"files_seen":     0,
+		"files_scanned":  0,
+		"files_skipped":  0,
+		"bytes_scanned":  0,
+		"auth_json_read": false,
 		"auth_json_path_seen_in_honesty_notes_only": false,
 		"auth_json_path_leak_suspected":             false,
 		"token_fields_in_auth_envelope":             false,
@@ -825,11 +826,9 @@ func scanPrivacy(evDir string) map[string]any {
 				hits++
 			}
 		}
-		for _, m := range rawThoughtsMarkers {
-			if strings.Contains(s, m) {
-				rawThoughts = true
-				break
-			}
+		// Nested JSON + escaped keys (e.g. trust_launch stdout embedding "thought").
+		if contentHasPrivateReasoning(b) {
+			rawThoughts = true
 		}
 	}
 	out["files_seen"] = seen
@@ -929,4 +928,3 @@ func renderMD(report map[string]any, disp, ack, ver, osName string, reasons []st
 	_ = report
 	return b.String()
 }
-

@@ -39,3 +39,8 @@ Scenario statuses and disposition were **not** hand-edited to a stronger result.
 - Historical v1 and prior v2 run `20260810T170640Z` are **not** overwritten.
 
 Report JSON/MD regenerated once with a correctly ldflags-bound `groklive` binary (`-X main.reinframeCommit` / `-X main.reinframeDirty=false`) after the live phases completed; scenarios themselves are the live harness output.
+
+
+## Privacy errata (session identity)
+
+Post-merge correction: `target_session_id` values in `scenarios.json` and the formal report were **plaintext host session UUIDs**. They have been replaced with **SHA-256 hex** digests of the original UUID. Mechanical disposition (**NO_GO** / HOOK-DENY-001) is unchanged. Future harness builds hash session IDs before write (`sha256Hex(sid)`).

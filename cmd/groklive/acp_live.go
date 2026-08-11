@@ -177,10 +177,11 @@ func runACP(args []string) {
 				}
 			}
 			sr := ScenarioResult{
-				ID:              "ACP-SESSION-001",
-				At:              stamp(),
-				InterventionID:  "issue167-live-advice-001",
-				TargetSessionID: sid,
+				ID:             "ACP-SESSION-001",
+				At:             stamp(),
+				InterventionID: "issue167-live-advice-001",
+				// Never store plaintext host session UUIDs in public evidence.
+				TargetSessionID: sha256Hex(sid),
 			}
 			if saw && sessionMatched {
 				sr.Status = "PASS"

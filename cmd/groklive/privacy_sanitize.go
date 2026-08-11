@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -25,6 +26,19 @@ var forbiddenReasoningKeys = map[string]struct{}{
 	"internal_monologue": {},
 }
 
+// Matches JSON object key syntax for forbidden names, including common escape layers.
+// Requires a following colon so prose/array values like "thought" alone do not match.
+var forbiddenKeyColon = func() *regexp.Regexp {
+	// thought|thoughts|... as a key before ':'
+	names := make([]string, 0, len(forbiddenReasoningKeys))
+	for k := range forbiddenReasoningKeys {
+		names = append(names, regexp.QuoteMeta(k))
+	}
+	// (?:\\*")?name(?:\\*")?\s*:
+	pat := `(?i)(?:\\*")?(?:` + strings.Join(names, "|") + `)(?:\\*")?\s*:`
+	return regexp.MustCompile(pat)
+}()
+
 // sanitizeTrustLaunchCapture builds a closed allowlist trust_launch record.
 // Never persists raw host stdout/stderr that may embed thought/session/request material.
 func sanitizeTrustLaunchCapture(exitCode int, stdout, stderr string) map[string]any {
@@ -37,7 +51,6 @@ func sanitizeTrustLaunchCapture(exitCode int, stdout, stderr string) map[string]
 		"text":        "",
 		"stop_reason": "",
 	}
-	// Usage is optional closed numeric map only.
 	usageOut := map[string]any{}
 
 	// Prefer structured parse of stdout as Grok --output-format json.
@@ -72,24 +85,18 @@ func sanitizeTrustLaunchCapture(exitCode int, stdout, stderr string) map[string]
 		}
 		// Explicitly never copy thought / reasoning keys even if present.
 	} else if strings.TrimSpace(stdout) != "" {
-		// Non-JSON: only length + hash of redacted bytes — never raw body.
+		// Non-JSON: length + hash only — never copy unstructured body into text.
 		red := redactSecrets(stdout)
 		out["stdout_bytes"] = len(stdout)
 		out["stdout_sha256"] = sha256Hex(red)
-		// Best-effort plain text extract if it looks short and has no forbidden markers.
-		if !contentHasPrivateReasoning([]byte(red)) && len(red) <= 80 {
-			out["text"] = boundStr(red, 80)
-		}
 	}
 
 	if strings.TrimSpace(stderr) != "" {
+		// Never copy unstructured stderr diagnostics into the record.
 		red := redactSecrets(stderr)
-		// Keep only a short bounded diagnostic if free of private reasoning keys.
-		if !contentHasPrivateReasoning([]byte(red)) {
-			out["stderr_text"] = boundStr(red, 200)
-		} else {
-			out["stderr_bytes"] = len(stderr)
-			out["stderr_sha256"] = sha256Hex(red)
+		out["stderr_bytes"] = len(stderr)
+		out["stderr_sha256"] = sha256Hex(red)
+		if contentHasPrivateReasoning([]byte(red)) {
 			out["stderr_redacted_private"] = true
 		}
 	}
@@ -111,8 +118,8 @@ func contentHasPrivateReasoning(b []byte) bool {
 	if len(b) == 0 {
 		return false
 	}
-	// Fast path: plain or escaped forbidden keys (covers nested stdout JSON text).
-	if hasEscapedForbiddenReasoningKey(string(b)) {
+	// Fast path: forbidden names only when used as JSON keys (… "thought": …).
+	if forbiddenKeyColon.Match(b) {
 		return true
 	}
 	var v any
@@ -122,36 +129,37 @@ func contentHasPrivateReasoning(b []byte) bool {
 	return walkJSONForPrivateReasoning(v, 0)
 }
 
-func hasEscapedForbiddenReasoningKey(s string) bool {
-	// Match \"thought\" and \\"thought\\" variants inside nested encodings.
-	low := strings.ToLower(s)
-	for k := range forbiddenReasoningKeys {
-		if strings.Contains(low, `\"`+k+`\"`) || strings.Contains(low, `\\"`+k+`\\"`) {
-			return true
-		}
-		// Also bare "thought" after JSON string unescape layers in raw file text.
-		if strings.Contains(low, `"`+k+`"`) {
-			return true
+func normalizeReasoningKey(k string) string {
+	lk := strings.ToLower(strings.TrimSpace(k))
+	var b strings.Builder
+	for _, r := range lk {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		case r == '_' || r == '-' || r == ' ' || r == '.':
+			// Canonical underscore form so reasoning-content matches reasoning_content.
+			if b.Len() > 0 {
+				b.WriteByte('_')
+			}
 		}
 	}
-	return false
+	// Collapse repeated underscores.
+	s := b.String()
+	for strings.Contains(s, "__") {
+		s = strings.ReplaceAll(s, "__", "_")
+	}
+	return strings.Trim(s, "_")
 }
 
 func walkJSONForPrivateReasoning(v any, depth int) bool {
 	if depth > 32 {
-		return false
+		// Fail closed: deep nesting is treated as private-reasoning risk.
+		return true
 	}
 	switch t := v.(type) {
 	case map[string]any:
 		for k, child := range t {
-			lk := strings.ToLower(strings.TrimSpace(k))
-			// Normalize separators.
-			lk = strings.Map(func(r rune) rune {
-				if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
-					return r
-				}
-				return -1
-			}, lk)
+			lk := normalizeReasoningKey(k)
 			if _, bad := forbiddenReasoningKeys[lk]; bad {
 				return true
 			}
@@ -179,7 +187,7 @@ func walkJSONForPrivateReasoning(v any, depth int) bool {
 				}
 			}
 		}
-		if hasEscapedForbiddenReasoningKey(s) {
+		if forbiddenKeyColon.MatchString(s) {
 			return true
 		}
 	}

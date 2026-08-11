@@ -79,6 +79,35 @@ func TestContentHasPrivateReasoning_TopLevelThought(t *testing.T) {
 	}
 }
 
+func TestContentHasPrivateReasoning_KeyPositionOnly(t *testing.T) {
+	t.Parallel()
+	// Prose / array value must not trip the detector.
+	if contentHasPrivateReasoning([]byte(`{"note":"the word thought appears here"}`)) {
+		t.Fatal("prose must not match")
+	}
+	if contentHasPrivateReasoning([]byte(`{"fields":["thought"]}`)) {
+		t.Fatal("array value must not match as key")
+	}
+	// Hyphenated key normalizes to underscore form.
+	if !contentHasPrivateReasoning([]byte(`{"reasoning-content":"x"}`)) {
+		t.Fatal("reasoning-content key must match")
+	}
+}
+
+func TestSanitizeTrustLaunch_NonJSONDoesNotCopyBody(t *testing.T) {
+	t.Parallel()
+	out := sanitizeTrustLaunchCapture(1, "requestId=req-123 short fail", "boom")
+	if out["text"] != "" {
+		t.Fatalf("non-JSON body must not be copied into text: %v", out["text"])
+	}
+	if _, ok := out["stdout_sha256"]; !ok {
+		t.Fatal("expected stdout_sha256")
+	}
+	if _, ok := out["stderr_text"]; ok {
+		t.Fatal("stderr_text must not be set for unstructured stderr")
+	}
+}
+
 func TestScanPrivacy_DetectsThoughtInTrustLaunchShape(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

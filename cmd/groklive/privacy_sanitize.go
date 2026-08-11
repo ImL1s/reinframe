@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode"
 )
@@ -194,10 +193,11 @@ func walkJSONForPrivateReasoning(v any, depth int) bool {
 			if walkParsedJSONString(s, depth+1) {
 				return true
 			}
-			// One JSON-string unescape layer for multiply-escaped embeds:
+			// One JSON-string unescape layer for multiply-escaped embeds.
+			// Use encoding/json (not strconv.Unquote) so valid JSON escapes like \/ work.
 			// {\"thought\":\"secret\"} → {"thought":"secret"} then walk keys.
 			// Prose like: the key \"thought\": is forbidden → unescapes to prose, not object.
-			if unq, err := strconv.Unquote(`"` + s + `"`); err == nil {
+			if unq, ok := jsonUnescapeStringLayer(s); ok {
 				unq = strings.TrimSpace(unq)
 				if unq != s && walkParsedJSONString(unq, depth+1) {
 					return true
@@ -206,6 +206,28 @@ func walkJSONForPrivateReasoning(v any, depth int) bool {
 		}
 	}
 	return false
+}
+
+// jsonUnescapeStringLayer applies one JSON string-unescape layer to s.
+// s is treated as the interior of a JSON string (already decoded once by outer parse,
+// but still containing JSON escape sequences such as \" or \/).
+func jsonUnescapeStringLayer(s string) (string, bool) {
+	if s == "" || len(s) >= 1<<20 {
+		return "", false
+	}
+	// Prefer wrapping as a JSON string document and decoding with encoding/json
+	// so JSON-only escapes (e.g. \/) are accepted — strconv.Unquote rejects them.
+	var out string
+	if err := json.Unmarshal([]byte(`"`+s+`"`), &out); err == nil {
+		return out, true
+	}
+	// If s is already a complete quoted JSON string value, decode directly.
+	if strings.HasPrefix(s, `"`) {
+		if err := json.Unmarshal([]byte(s), &out); err == nil {
+			return out, true
+		}
+	}
+	return "", false
 }
 
 // walkParsedJSONString returns true when s is a complete JSON object/array that

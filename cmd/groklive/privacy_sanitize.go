@@ -195,22 +195,31 @@ func validateEvidencePrivacyRejects(label string, payload any) error {
 	if contentHasPrivateReasoning(b) {
 		return fmt.Errorf("%s: refuses to write private reasoning / thought fields", label)
 	}
-	// Unhashed session/request identity keys at top-level of maps.
-	if m, ok := payload.(map[string]any); ok {
-		for _, k := range []string{"sessionId", "session_id", "requestId", "request_id"} {
-			if v, ok := m[k]; ok {
-				if s, ok := v.(string); ok && s != "" && !strings.HasPrefix(k, "session_id_sha") {
-					// Allow only hashed keys we emit.
-					if k == "sessionId" || k == "session_id" || k == "requestId" || k == "request_id" {
-						return fmt.Errorf("%s: refuses unhashed identity field %s", label, k)
-					}
-				}
-			}
-		}
-		// Nested raw stdout forbidden.
-		if _, ok := m["stdout"]; ok {
-			return fmt.Errorf("%s: refuses raw stdout field", label)
-		}
+	// Reject unhashed identity keys and raw stdout anywhere in the tree.
+	if containsForbiddenEvidenceShape(payload) {
+		return fmt.Errorf("%s: refuses unhashed identity or raw stdout fields", label)
 	}
 	return nil
+}
+
+func containsForbiddenEvidenceShape(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, child := range t {
+			switch k {
+			case "sessionId", "session_id", "requestId", "request_id", "stdout":
+				return true
+			}
+			if containsForbiddenEvidenceShape(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range t {
+			if containsForbiddenEvidenceShape(child) {
+				return true
+			}
+		}
+	}
+	return false
 }

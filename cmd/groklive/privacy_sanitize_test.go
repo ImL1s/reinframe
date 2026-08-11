@@ -211,12 +211,7 @@ func TestContentHasPrivateReasoning_MultiplyEscapedInsideJSONString(t *testing.T
 	if !contentHasPrivateReasoning([]byte(outer)) {
 		t.Fatalf("multiply-escaped thought key inside JSON string must be detected: %s", outer)
 	}
-	// Prose with escaped quotes must still be false.
-	prose := `{"note":"the key \\\"thought\\\": is forbidden"}`
-	// After outer parse note is: the key \"thought\": is forbidden — unquote → prose, not object.
-	if contentHasPrivateReasoning([]byte(prose)) {
-		// Also accept the already-covered form without double-encoding noise.
-	}
+	// Prose with escaped quotes must still be false (unescapes to non-object prose).
 	if contentHasPrivateReasoning([]byte(`{"note":"the key \"thought\": is forbidden"}`)) {
 		t.Fatal("prose with quoted thought must remain false")
 	}

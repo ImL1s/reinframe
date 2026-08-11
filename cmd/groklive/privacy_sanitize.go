@@ -211,7 +211,7 @@ func walkJSONForPrivateReasoning(v any, depth int) bool {
 // walkParsedJSONString returns true when s is a complete JSON object/array that
 // contains a forbidden reasoning key (recursive walk).
 func walkParsedJSONString(s string, depth int) bool {
-	if !(strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[")) {
+	if !strings.HasPrefix(s, "{") && !strings.HasPrefix(s, "[") {
 		return false
 	}
 	var inner any

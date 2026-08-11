@@ -696,16 +696,6 @@ const (
 	maxPrivacyTotalBytes = 8 << 20 // 8 MiB aggregate scanned content
 )
 
-// rawThoughtsMarkers kept for documentation; detection uses contentHasPrivateReasoning.
-var rawThoughtsMarkers = []string{
-	`"raw_thoughts"`,
-	`"private_reasoning"`,
-	`"thinking_blocks"`,
-	`"reasoning_content"`,
-	`"encrypted_content"`,
-	`"thought"`, // Grok host field (also nested/escaped)
-}
-
 // scanPrivacy is a complete-or-fail privacy scan of the flat evidence directory (#215/#219).
 // Only regular files are content-scanned; size is checked before full load via Stat + LimitReader.
 func scanPrivacy(evDir string) map[string]any {

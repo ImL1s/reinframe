@@ -139,7 +139,20 @@ func bytesTrimSpace(b []byte) []byte {
 }
 
 func normalizeReasoningKey(k string) string {
-	lk := strings.ToLower(strings.TrimSpace(k))
+	k = strings.TrimSpace(k)
+	// Split camelCase / PascalCase so reasoningContent → reasoning_content.
+	var split strings.Builder
+	runes := []rune(k)
+	for i, r := range runes {
+		if i > 0 && unicode.IsUpper(r) {
+			prev := runes[i-1]
+			if unicode.IsLower(prev) || unicode.IsDigit(prev) {
+				split.WriteByte('_')
+			}
+		}
+		split.WriteRune(r)
+	}
+	lk := strings.ToLower(split.String())
 	var b strings.Builder
 	for _, r := range lk {
 		switch {
@@ -264,25 +277,36 @@ func validateEvidencePrivacyRejects(label string, payload any) error {
 }
 
 func containsForbiddenEvidenceShape(v any) bool {
+	return containsForbiddenEvidenceShapeDepth(v, 0)
+}
+
+func containsForbiddenEvidenceShapeDepth(v any, depth int) bool {
+	if depth > 32 {
+		// Fail closed on pathological nesting.
+		return true
+	}
 	switch t := v.(type) {
 	case map[string]any:
 		for k, child := range t {
-			switch k {
-			case "sessionId", "session_id", "requestId", "request_id", "stdout":
+			nk := normalizeReasoningKey(k)
+			switch nk {
+			case "sessionid", "session_id", "requestid", "request_id", "stdout":
+				// Any plaintext identity / raw stdout field name (case/format variants).
 				return true
 			case "target_session_id":
 				// Public evidence may only carry a full SHA-256 hex (64 chars), never a UUID.
-				if s, ok := child.(string); ok && s != "" && !isSHA256Hex(s) {
+				s, ok := child.(string)
+				if !ok || s == "" || !isSHA256Hex(s) {
 					return true
 				}
 			}
-			if containsForbiddenEvidenceShape(child) {
+			if containsForbiddenEvidenceShapeDepth(child, depth+1) {
 				return true
 			}
 		}
 	case []any:
 		for _, child := range t {
-			if containsForbiddenEvidenceShape(child) {
+			if containsForbiddenEvidenceShapeDepth(child, depth+1) {
 				return true
 			}
 		}

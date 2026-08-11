@@ -12,12 +12,12 @@
       "files_skipped": 0
     },
     "status": "REVOKED_INVALID",
-    "reason": "trust_launch.json embedded Grok host field thought (and sessionId/requestId) inside escaped stdout JSON; detector only matched a closed list of keys and missed thought.",
+    "reason": "trust_launch.json embedded Grok host private-reasoning field (and session/request identities) inside escaped stdout JSON; detector only matched a closed key list and missed the host field.",
     "fields_removed": [
       "trust_launch.stdout raw body",
-      "thought",
-      "sessionId plaintext",
-      "requestId plaintext"
+      "host private-reasoning field",
+      "session identity plaintext",
+      "request identity plaintext"
     ],
     "replacement": "trust_launch closed allowlist (text/stop_reason/hashed ids/usage only)"
   },

@@ -2060,6 +2060,90 @@ func TestGenerateLiveReport_MissingPlatformFields_Demotes(t *testing.T) {
 	}
 }
 
+// Pro R27 P1: portable sidecar enables load when private cache is empty (cross-host).
+func TestLiveScanContext_PortableSidecarCrossCache(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	// Host A cache.
+	cacheA := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cacheA, nil }
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "evidence")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+	if _, err := os.Stat(filepath.Join(dir, liveScanContextPortableFile)); err != nil {
+		t.Fatalf("portable sidecar missing: %v", err)
+	}
+
+	// Host B: clean cache; copy evidence (including portable sidecar).
+	cacheB := t.TempDir()
+	privateCacheRootFn = func() (string, error) { return cacheB, nil }
+	copied := filepath.Join(t.TempDir(), "evidence-copy")
+	// Recursive copy of evidence.
+	if err := copyDirForTest(dir, copied); err != nil {
+		t.Fatal(err)
+	}
+	// Ensure private cache B has no context files.
+	h, ok, why := loadLiveScanContext(copied)
+	if !ok || h == "" {
+		t.Fatalf("portable sidecar must enable cross-cache load: ok=%v why=%s", ok, why)
+	}
+}
+
+func copyDirForTest(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return err
+	}
+	ents, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range ents {
+		s := filepath.Join(src, e.Name())
+		d := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyDirForTest(s, d); err != nil {
+				return err
+			}
+			continue
+		}
+		b, err := os.ReadFile(s)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(d, b, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Pro R27 P2: hostname "v1" must not rewrite schema suffix reinframe.*.v1.
+func TestHostnameToken_DoesNotCorruptSchemaVersionSuffix(t *testing.T) {
+	t.Parallel()
+	schema := `{"schema":"reinframe.live_identity.v1","other":"reinframe.live_scan_context.v1"}`
+	if hostnameTokenPresent(schema, "v1") {
+		t.Fatal("schema .v1 suffix must not be a hostname token")
+	}
+	out := redactHostnameToken(schema, "v1")
+	if strings.Contains(out, "[HOSTNAME]") || !strings.Contains(out, "live_identity.v1") {
+		t.Fatalf("schema corrupted by host v1: %s", out)
+	}
+	// Free-text v1 still redacts.
+	free := "host v1 ready"
+	if !hostnameTokenPresent(free, "v1") {
+		t.Fatal("standalone v1 must still match")
+	}
+}
+
 // Pro R26 P1: scan context keyed by scan_context_id only — evidence rename still loads.
 func TestLiveScanContext_SurvivesEvidenceRename(t *testing.T) {
 	prevC, prevD := reinframeCommit, reinframeDirty

@@ -833,9 +833,10 @@ func scanPrivacy(evDir string) map[string]any {
 			fails = append(fails, "nested_directory:"+e.Name())
 			continue
 		}
-		// Control-plane hostname token store: never count as evidence content.
-		// Scrubbed after formal report generation (Pro R17 P1 publication hygiene).
-		if e.Name() == liveScanContextFile {
+		// Control-plane hostname token stores: never count as evidence content.
+		// Legacy public name is scrubbed after formal report; portable sidecar is
+		// private transfer state (Pro R17/R27).
+		if e.Name() == liveScanContextFile || e.Name() == liveScanContextPortableFile {
 			continue
 		}
 		full := filepath.Join(evDir, e.Name())
@@ -1088,6 +1089,9 @@ const liveGrokExeSchema = "reinframe.live_grok_executable.v1"
 const (
 	liveScanContextSchema = "reinframe.live_scan_context.v1"
 	liveScanContextFile   = "live_scan_context.json"
+	// Portable private sidecar travels with evidence for cross-host re-eval (Pro R27 P1).
+	// Skipped by privacy scan; not a public evidence claim.
+	liveScanContextPortableFile = ".live_scan_context.private.json"
 )
 
 // liveIdentity holds a verified live-executor identity (never the report generator).
@@ -1375,7 +1379,16 @@ func writeLiveScanContext(evDir, scanContextID string) error {
 		return err
 	}
 	_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
-	return os.WriteFile(path, b, 0o600)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return err
+	}
+	// Portable sidecar: same bytes, travels with evidence for another report-generator
+	// host's load path (Pro R27 P1). Privacy scan skips this name; not public content.
+	portable := filepath.Join(evDir, liveScanContextPortableFile)
+	if err := os.WriteFile(portable, b, 0o600); err != nil {
+		return fmt.Errorf("writeLiveScanContext: portable sidecar: %w", err)
+	}
+	return nil
 }
 
 type liveScanContextDoc struct {
@@ -1427,10 +1440,27 @@ func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string)
 		}
 		doc, ok2, why := tryLoad(path)
 		if !ok2 {
-			// Also try legacy in-evidence with ID match (migrate).
+			// Portable sidecar (cross-host re-eval) then legacy in-evidence.
+			portable := filepath.Join(evDir, liveScanContextPortableFile)
+			docP, okP, whyP := tryLoad(portable)
+			if okP {
+				if docP.ID != expectedID {
+					return "", false, "scan_context_id mismatch (portable)"
+				}
+				// Import into this host's private cache for subsequent loads.
+				if b, rErr := os.ReadFile(portable); rErr == nil {
+					if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr == nil {
+						_ = os.WriteFile(path, b, 0o600)
+					}
+				}
+				return docP.Hostname, true, ""
+			}
 			legacy := filepath.Join(evDir, liveScanContextFile)
 			doc2, ok3, _ := tryLoad(legacy)
 			if !ok3 {
+				if whyP != "" && whyP != "missing" {
+					return "", false, why + "; portable:" + whyP
+				}
 				return "", false, why
 			}
 			if doc2.ID != expectedID {

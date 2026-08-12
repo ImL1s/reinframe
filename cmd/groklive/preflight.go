@@ -293,10 +293,11 @@ func redactLocalIdentity(s string) string {
 // matching FQDNs like build-01.corp.example.com when host is build-01 (Pro R21 P1).
 // Case-insensitive: Windows/DNS hostnames often vary in case in tool output (Pro R14 P1).
 func hostnameTokenRE(host string) *regexp.Regexp {
-	// Left boundary excludes letter/digit/underscore/hyphen (not bare mid-identifier).
+	// Left boundary excludes letter/digit/underscore/hyphen/dot so schema suffixes
+	// like reinframe.live_identity.v1 are never treated as host "v1" (Pro R27 P2).
 	// Middle: optional FQDN suffix labels + optional DNS root trailing dot (Pro R23).
 	// Right: end or non-DNS char (RE2 has no lookaround).
-	return regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_-])` + regexp.QuoteMeta(host) +
+	return regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_.-])` + regexp.QuoteMeta(host) +
 		`((?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*)\.?([^A-Za-z0-9_.-]|$)`)
 }
 

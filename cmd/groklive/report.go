@@ -947,8 +947,9 @@ func scanPrivacy(evDir string) map[string]any {
 			fails = append(fails, "local_identity:"+e.Name())
 		}
 		// Filenames also publish identity (Pro R35 P1): build-01.log with clean body
-		// must not allow privacy.complete=true.
-		if contentHasLocalIdentityLeak(e.Name(), scanHosts...) {
+		// must not allow privacy.complete=true. Exempt closed harness-owned basenames
+		// so hostname=preflight does not false-flag preflight.json (Pro R41 P2).
+		if !isHarnessOwnedEvidenceFilename(e.Name()) && contentHasLocalIdentityLeak(e.Name(), scanHosts...) {
 			hits++
 			fails = append(fails, "local_identity_filename:"+e.Name())
 		}
@@ -1041,6 +1042,28 @@ func blankClosedStructuredEnumValues(s string) string {
 		}
 		return m
 	})
+}
+
+// isHarnessOwnedEvidenceFilename reports closed basenames written by groklive itself.
+// These must not be treated as host tokens when the machine hostname collides with the
+// basename stem (Pro R41 P2: hostname=preflight must not flag preflight.json).
+// User-supplied names (e.g. preflight.log) remain scannable.
+func isHarnessOwnedEvidenceFilename(name string) bool {
+	base := filepath.Base(name)
+	switch base {
+	case "preflight.json", "scenarios.json", "live_identity.json",
+		"live_grok_executable.json", "live_grokhooks_executable.json",
+		"hook_invocations.jsonl", "trust_launch.json", "acp_manifest.json",
+		"hooks_doctor_pre_trust.json", "hooks_doctor_post_trust.json",
+		"reinframe.grok_build_live_control.v2.schema.json",
+		"RUN.md", "PRIVACY_ERRATA.md", "SUPERSEDED.md":
+		return true
+	}
+	// Formal report / RUN artifacts from the generator.
+	if strings.HasPrefix(base, "issue-") && (strings.HasSuffix(base, ".json") || strings.HasSuffix(base, ".md")) {
+		return true
+	}
+	return false
 }
 
 // contentHasLocalIdentityLeak reports home/tmp absolute paths or .local hostnames in evidence.
@@ -1790,26 +1813,26 @@ func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string)
 				if under, cErr := pathContainedIn(inAbs, filepath.Clean(evAbs)); cErr == nil && under {
 					return "", false, "scan-context-in must be outside evidence directory"
 				}
-				docIn, okIn, whyIn := tryLoad(inAbs)
-				if okIn {
-					if docIn.ID != expectedID {
-						return "", false, "scan_context_id mismatch (import)"
-					}
-					// Import into this host private cache — fail-closed and no-follow
-					// (Pro R40 P2: discarded os.WriteFile followed pre-planted cache symlink).
-					b, rErr := os.ReadFile(inAbs)
-					if rErr != nil {
-						return "", false, "scan-context-in read: " + rErr.Error()
-					}
-					if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr != nil {
-						return "", false, "scan-context-in cache mkdir: " + mkErr.Error()
-					}
-					if wErr := safeWriteFile(path, b, 0o600); wErr != nil {
-						return "", false, "scan-context-in cache write: " + wErr.Error()
-					}
-					return docIn.Hostname, true, ""
+				// Single-read binding (Pro R41 P2): parse and persist the same bytes.
+				b, rErr := os.ReadFile(inAbs)
+				if rErr != nil {
+					return "", false, why + "; import read: " + rErr.Error()
 				}
-				return "", false, why + "; import:" + whyIn
+				docIn, okIn, whyIn := parseLiveScanContextBytes(b)
+				if !okIn {
+					return "", false, why + "; import:" + whyIn
+				}
+				if docIn.ID != expectedID {
+					return "", false, "scan_context_id mismatch (import)"
+				}
+				if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr != nil {
+					return "", false, "scan-context-in cache mkdir: " + mkErr.Error()
+				}
+				// Fail-closed no-follow write (Pro R40 P2).
+				if wErr := safeWriteFile(path, b, 0o600); wErr != nil {
+					return "", false, "scan-context-in cache write: " + wErr.Error()
+				}
+				return docIn.Hostname, true, ""
 			}
 			// In-evidence control files are publication violations, not load sources.
 			return "", false, why

@@ -65,10 +65,24 @@ func runACP(args []string) {
 	if err != nil {
 		set("ACP-INIT-001", "FAIL", "start: "+err.Error(), nil)
 		_ = saveScenarioMap(evDir, scenarios)
+		// Post-start fail path: reverify binding before process exit (Pro R41 P2).
+		// fail() uses os.Exit and would skip deferred Close/reverify.
+		if reErr := ensureGrokExecutableIdentity(evDir, grok); reErr != nil {
+			fmt.Fprintln(os.Stderr, "groklive acp: live_grok_executable post-probe: "+reErr.Error())
+		}
 		fail(err)
 	}
 	// Capture PID before any close for orphan proof.
 	ownedPID := client.ProcessPID()
+	// exitFail closes client, re-verifies executable binding, then fails.
+	// Required because fail() → os.Exit skips defers (Pro R41 P2).
+	exitFail := func(err error) {
+		_ = client.Close()
+		if reErr := ensureGrokExecutableIdentity(evDir, grok); reErr != nil {
+			fmt.Fprintln(os.Stderr, "groklive acp: live_grok_executable post-probe: "+reErr.Error())
+		}
+		fail(err)
+	}
 	defer func() { _ = client.Close() }()
 
 	// ACP-INIT-001
@@ -78,7 +92,7 @@ func runACP(args []string) {
 	if err != nil {
 		set("ACP-INIT-001", "FAIL", err.Error(), nil)
 		_ = saveScenarioMap(evDir, scenarios)
-		fail(err)
+		exitFail(err)
 	}
 	pv, _ := initRes["protocolVersion"].(float64)
 	neg := client.Negotiated()

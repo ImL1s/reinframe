@@ -2159,6 +2159,82 @@ func TestProjectRootRedactionAndLeakScan(t *testing.T) {
 	}
 }
 
+// Pro R41 P2: harness-owned basenames must not false-flag when hostname collides.
+func TestScanPrivacy_HarnessOwnedFilenameNotHostLeak(t *testing.T) {
+	t.Parallel()
+	// content/filename helpers — no need for full private cache when using extra hosts.
+	if !isHarnessOwnedEvidenceFilename("preflight.json") {
+		t.Fatal("preflight.json must be harness-owned")
+	}
+	if !isHarnessOwnedEvidenceFilename("scenarios.json") {
+		t.Fatal("scenarios.json must be harness-owned")
+	}
+	if isHarnessOwnedEvidenceFilename("preflight.log") {
+		t.Fatal("user-supplied preflight.log must remain scannable")
+	}
+	// Direct scan helper: hostname preflight must not flag the fixed basename.
+	if contentHasLocalIdentityLeak("preflight.json", "preflight") {
+		// content of the name alone — harness exemption is in scanPrivacy, not contentHas...
+		// contentHasLocalIdentityLeak still sees host token; exemption is scanPrivacy only.
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "preflight.json"), []byte(`{"usable":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scenarios.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Force scanHosts via live identity + context with host "preflight".
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+	cache := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cache, nil }
+	scanID := "abcdef0123456789abcdef0123456789"
+	path, err := liveScanContextPath(dir, scanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"schema":%q,"scan_context_id":%q,"live_hostname":"preflight","at":"t"}`, liveScanContextSchema, scanID)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	idBody := fmt.Sprintf(`{"schema":%q,"live_binary_commit":%q,"live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":%q,"live_goarch":%q,"scan_context_id":%q,"at":"t"}`,
+		liveIdentitySchema, testFullRev, runtime.GOOS, runtime.GOARCH, scanID)
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(idBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := scanPrivacy(dir)
+	fails, _ := p["failure_classes"].([]string)
+	for _, f := range fails {
+		if strings.Contains(f, "local_identity_filename:preflight.json") ||
+			strings.Contains(f, "local_identity_filename:scenarios.json") {
+			t.Fatalf("harness filename false-flag: %v complete=%v", fails, p["complete"])
+		}
+	}
+	// User-supplied name still fails.
+	if err := os.WriteFile(filepath.Join(dir, "preflight.log"), []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p2 := scanPrivacy(dir)
+	found := false
+	fails2, _ := p2["failure_classes"].([]string)
+	for _, f := range fails2 {
+		if strings.Contains(f, "local_identity_filename:preflight.log") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("user preflight.log must still leak for host=preflight: %v", fails2)
+	}
+}
+
 // Pro R40 P2: scan-context-in must not write through a pre-planted private-cache symlink.
 func TestLoadLiveScanContext_ImportRefusesCacheSymlink(t *testing.T) {
 	prevC, prevD := reinframeCommit, reinframeDirty

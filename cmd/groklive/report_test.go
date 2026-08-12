@@ -1564,30 +1564,105 @@ func TestContentHasLocalIdentityLeak_UsesLiveHostname(t *testing.T) {
 func TestPrivacyScanHostnames_FromLiveScanContext(t *testing.T) {
 	dir := t.TempDir()
 	if err := writeLiveScanContext(dir); err != nil {
-		t.Fatal(err)
+		t.Skipf("cannot bind scan context: %v", err)
 	}
-	hosts := privacyScanHostnames(dir)
+	live, ok, why := loadLiveScanContext(dir)
+	if !ok {
+		t.Fatalf("loadLiveScanContext: %s", why)
+	}
+	hosts := privacyScanHostnames(dir, live, true)
 	if len(hosts) == 0 {
 		t.Fatal("expected at least generator or live hostname")
 	}
-	// live_scan_context is skipped by scanPrivacy content walk — residual live host
-	// in another file must still fail complete.
-	live := ""
-	b, _ := os.ReadFile(filepath.Join(dir, liveScanContextFile))
-	var m map[string]any
-	_ = json.Unmarshal(b, &m)
-	if h, _ := m["live_hostname"].(string); h != "" {
-		live = h
-	}
-	if live == "" || live == "localhost" {
-		t.Skip("no usable live hostname on this host")
-	}
+	// Residual live host in another file must fail complete (context itself not counted as seen).
 	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("host token "+live+" in evidence"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Without live_identity, missing context is not forced — but with residual host token still fails.
 	p := scanPrivacy(dir)
 	if complete, _ := p["complete"].(bool); complete {
 		t.Fatalf("residual live hostname must fail complete: %+v", p)
+	}
+}
+
+func TestScanPrivacy_IdentityWithoutContext_Incomplete(t *testing.T) {
+	dir := t.TempDir()
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+	// Deliberately no live_scan_context.json
+	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("clean evidence"), 0o600)
+	p := scanPrivacy(dir)
+	if complete, _ := p["complete"].(bool); complete {
+		t.Fatalf("identity without context must not complete: %+v", p)
+	}
+	found := false
+	if fails, ok := p["failure_classes"].([]string); ok {
+		for _, f := range fails {
+			if strings.Contains(f, "live_scan_context") {
+				found = true
+			}
+		}
+	}
+	// failure_classes may be []any after JSON round-trip; check raw map
+	if !found {
+		raw, _ := json.Marshal(p["failure_classes"])
+		if !strings.Contains(string(raw), "live_scan_context") {
+			t.Fatalf("want live_scan_context failure; got %+v", p)
+		}
+	}
+}
+
+func TestScanPrivacy_ContextNotCountedAsSeen(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeLiveScanContext(dir); err != nil {
+		t.Skipf("hostname: %v", err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("clean evidence body"), 0o600)
+	// No live_identity → context not mandatory; only note.txt is evidence.
+	p := scanPrivacy(dir)
+	seen, _ := p["files_seen"].(int)
+	scanned, _ := p["files_scanned"].(int)
+	if seen != 1 || scanned != 1 {
+		// JSON numbers may be float64 if ever re-encoded; handle both
+		if sf, ok := p["files_seen"].(float64); ok {
+			seen = int(sf)
+		}
+		if sc, ok := p["files_scanned"].(float64); ok {
+			scanned = int(sc)
+		}
+	}
+	if seen != 1 || scanned != 1 {
+		t.Fatalf("context must not inflate seen/scanned; got seen=%v scanned=%v full=%+v", p["files_seen"], p["files_scanned"], p)
+	}
+	if complete, _ := p["complete"].(bool); !complete {
+		t.Fatalf("clean single file + context control should complete: %+v", p)
+	}
+}
+
+func TestScrubLiveScanContext_RemovesBareHostname(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeLiveScanContext(dir); err != nil {
+		t.Skipf("hostname: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, liveScanContextFile)); err != nil {
+		t.Fatal(err)
+	}
+	scrubLiveScanContext(dir)
+	if _, err := os.Stat(filepath.Join(dir, liveScanContextFile)); !os.IsNotExist(err) {
+		t.Fatal("scrub must remove live_scan_context.json")
+	}
+}
+
+func TestEnsureLiveIdentity_RequiresScanContext(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+	// fixture writes identity without scan context
+	if err := ensureLiveIdentity(dir); err == nil {
+		t.Fatal("existing identity without scan context must fail ensureLiveIdentity")
 	}
 }
 

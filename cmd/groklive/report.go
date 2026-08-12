@@ -351,6 +351,11 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		return liveReportOutcome{}, fmt.Errorf("write schema: %w", err)
 	}
 
+	// Remove bare-hostname control file so publishable evidence packages do not
+	// ship raw host identity (Pro R17 P1). Re-run needs ensureLiveIdentity/live
+	// phases to re-create context.
+	scrubLiveScanContext(evDir)
+
 	exit := 0
 	if disp == "NO_GO" {
 		exit = 1
@@ -786,10 +791,18 @@ func scanPrivacy(evDir string) map[string]any {
 		"secret_pattern_hits":                       0,
 		"failure_classes":                           []string{},
 	}
-	// Hostnames for leak detection: report-generator host PLUS live executor host
-	// recorded at campaign time (Codex GraphQL P1: derived report on another machine
-	// must still flag residual live hostnames without a .local suffix).
-	scanHosts := privacyScanHostnames(evDir)
+	// Live scan context: fail-closed when live_identity is present (Pro R17 P1).
+	// Control file is not counted in files_seen/scanned (scrubbed after report; not
+	// published evidence). Hostname is used only for residual leak detection.
+	var fails []string
+	ctxHost, ctxOK, ctxWhy := loadLiveScanContext(evDir)
+	idPath := filepath.Join(evDir, "live_identity.json")
+	if st, err := os.Stat(idPath); err == nil && !st.IsDir() {
+		if !ctxOK {
+			fails = append(fails, "live_scan_context:"+ctxWhy)
+		}
+	}
+	scanHosts := privacyScanHostnames(evDir, ctxHost, ctxOK)
 	entries, err := os.ReadDir(evDir)
 	if err != nil {
 		out["error"] = err.Error()
@@ -804,7 +817,6 @@ func scanPrivacy(evDir string) map[string]any {
 	scanned := 0
 	skipped := 0
 	totalBytes := 0
-	var fails []string
 	for _, e := range entries {
 		// Evidence dir is flat: nested directories forbid complete qualification.
 		if e.IsDir() {
@@ -813,10 +825,9 @@ func scanPrivacy(evDir string) map[string]any {
 			fails = append(fails, "nested_directory:"+e.Name())
 			continue
 		}
-		// Metadata used only to feed hostname scan tokens — not published evidence.
-		// Skip content scan so the stored live hostname itself is not a self-leak.
+		// Control-plane hostname token store: never count as evidence content.
+		// Scrubbed after formal report generation (Pro R17 P1 publication hygiene).
 		if e.Name() == liveScanContextFile {
-			seen++
 			continue
 		}
 		full := filepath.Join(evDir, e.Name())
@@ -1097,15 +1108,15 @@ func isValidGOARCH(s string) bool {
 
 // writeLiveScanContext records the live host's hostname without writeJSON redaction
 // so a later derived report on another machine can still scan for that token.
+// Empty hostname is refused (Pro R17 P1: no empty fail-open context).
 func writeLiveScanContext(evDir string) error {
 	h, err := os.Hostname()
 	if err != nil {
-		h = ""
+		return fmt.Errorf("writeLiveScanContext: hostname: %w", err)
 	}
 	h = strings.TrimSpace(h)
-	if h == "" {
-		// Still write an empty record so report can see context was attempted.
-		h = ""
+	if h == "" || h == "localhost" {
+		return fmt.Errorf("writeLiveScanContext: empty/localhost hostname cannot bind live scan context")
 	}
 	if err := os.MkdirAll(evDir, 0o700); err != nil {
 		return err
@@ -1121,29 +1132,63 @@ func writeLiveScanContext(evDir string) error {
 	return os.WriteFile(filepath.Join(evDir, liveScanContextFile), b, 0o600)
 }
 
-// privacyScanHostnames returns generator + live-executor hostnames for leak checks.
-func privacyScanHostnames(evDir string) []string {
+// loadLiveScanContext validates live_scan_context.json (fail-closed).
+func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string) {
+	path := filepath.Join(evDir, liveScanContextFile)
+	st, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, "missing"
+		}
+		return "", false, "unreadable: " + err.Error()
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		return "", false, "symlink"
+	}
+	if !st.Mode().IsRegular() {
+		return "", false, "not regular file"
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", false, "unreadable: " + err.Error()
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return "", false, "malformed"
+	}
+	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveScanContextSchema {
+		return "", false, "schema invalid"
+	}
+	h, okH := m["live_hostname"].(string)
+	h = strings.TrimSpace(h)
+	if !okH || h == "" || h == "localhost" {
+		return "", false, "live_hostname empty"
+	}
+	return h, true, ""
+}
+
+// privacyScanHostnames returns generator + validated live-executor hostnames.
+func privacyScanHostnames(evDir string, ctxHost string, ctxOK bool) []string {
 	var out []string
 	if h, err := os.Hostname(); err == nil {
 		if t := strings.TrimSpace(h); t != "" {
 			out = append(out, t)
 		}
 	}
-	b, err := os.ReadFile(filepath.Join(evDir, liveScanContextFile))
-	if err != nil {
+	if ctxOK && strings.TrimSpace(ctxHost) != "" {
+		out = append(out, strings.TrimSpace(ctxHost))
 		return out
 	}
-	var m map[string]any
-	if json.Unmarshal(b, &m) != nil {
-		return out
-	}
-	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveScanContextSchema {
-		return out
-	}
-	if h, _ := m["live_hostname"].(string); strings.TrimSpace(h) != "" {
-		out = append(out, strings.TrimSpace(h))
-	}
+	// Fail-closed path: do not silently invent live host from a bad file.
+	// Callers that need live host must require ctxOK separately.
+	_ = evDir
 	return out
+}
+
+// scrubLiveScanContext removes the bare-hostname control file after report privacy
+// so publishable evidence packages do not ship raw host identity (Pro R17 P1).
+func scrubLiveScanContext(evDir string) {
+	_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
 }
 
 // writeLiveIdentity records the live executor binary identity for later report provenance.
@@ -1195,6 +1240,10 @@ func ensureLiveIdentity(evDir string) error {
 		if id.GOOS != "" && id.GOARCH != "" && (id.GOOS != runtime.GOOS || id.GOARCH != runtime.GOARCH) {
 			return fmt.Errorf("ensureLiveIdentity: live platform mismatch (live=%s/%s; current=%s/%s)",
 				id.GOOS, id.GOARCH, runtime.GOOS, runtime.GOARCH)
+		}
+		// Sidecar is mandatory with live_identity (Pro R17 P1: no identity-without-context).
+		if _, ok, why := loadLiveScanContext(evDir); !ok {
+			return fmt.Errorf("ensureLiveIdentity: live_scan_context: %s", why)
 		}
 		return nil
 	}

@@ -2159,6 +2159,76 @@ func TestProjectRootRedactionAndLeakScan(t *testing.T) {
 	}
 }
 
+// Pro R40 P2: scan-context-in must not write through a pre-planted private-cache symlink.
+func TestLoadLiveScanContext_ImportRefusesCacheSymlink(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() {
+		reinframeCommit, reinframeDirty = prevC, prevD
+		scanContextOutPath = ""
+		scanContextInPath = ""
+	})
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	// Host A: create campaign + export.
+	cacheA := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cacheA, nil }
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "evidence")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(parent, "ctx-export.json")
+	scanContextOutPath = external
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+	scanContextOutPath = ""
+
+	id := loadLiveIdentity(dir)
+	if !id.OK || id.ScanContextID == "" {
+		t.Fatalf("identity: ok=%v id=%s", id.OK, id.ScanContextID)
+	}
+
+	// Host B: empty cache + dangling symlink at deterministic private path.
+	cacheB := t.TempDir()
+	privateCacheRootFn = func() (string, error) { return cacheB, nil }
+	copied := filepath.Join(t.TempDir(), "evidence-copy")
+	if err := os.MkdirAll(copied, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	idBytes, err := os.ReadFile(filepath.Join(dir, "live_identity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(copied, "live_identity.json"), idBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path, err := liveScanContextPath(copied, id.ScanContextID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "hijacked-cache.json")
+	if err := os.Symlink(outside, path); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	scanContextInPath = external
+	h, ok, why := loadLiveScanContext(copied)
+	if ok {
+		t.Fatalf("import through cache symlink must fail closed; got host=%q why=%s", h, why)
+	}
+	if !strings.Contains(why, "cache write") && !strings.Contains(why, "symlink") {
+		t.Fatalf("want cache write/symlink failure; why=%s", why)
+	}
+	if _, stErr := os.Stat(outside); !os.IsNotExist(stErr) {
+		t.Fatalf("external target must remain absent: %v", stErr)
+	}
+}
+
 // Pro R39 skeptic / Codex P2: predictable OUT.tmp must not follow a pre-planted symlink.
 func TestWriteScanContextOut_RejectsPredictableTmpSymlink(t *testing.T) {
 	prevC, prevD := reinframeCommit, reinframeDirty

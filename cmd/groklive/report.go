@@ -1795,11 +1795,17 @@ func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string)
 					if docIn.ID != expectedID {
 						return "", false, "scan_context_id mismatch (import)"
 					}
-					// Import into this host private cache.
-					if b, rErr := os.ReadFile(inAbs); rErr == nil {
-						if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr == nil {
-							_ = os.WriteFile(path, b, 0o600)
-						}
+					// Import into this host private cache — fail-closed and no-follow
+					// (Pro R40 P2: discarded os.WriteFile followed pre-planted cache symlink).
+					b, rErr := os.ReadFile(inAbs)
+					if rErr != nil {
+						return "", false, "scan-context-in read: " + rErr.Error()
+					}
+					if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr != nil {
+						return "", false, "scan-context-in cache mkdir: " + mkErr.Error()
+					}
+					if wErr := safeWriteFile(path, b, 0o600); wErr != nil {
+						return "", false, "scan-context-in cache write: " + wErr.Error()
 					}
 					return docIn.Hostname, true, ""
 				}

@@ -1360,7 +1360,7 @@ func darwinPathCaseInsensitive() bool {
 			darwinCaseFold = false
 			return
 		}
-		defer os.RemoveAll(dir)
+		defer func() { _ = os.RemoveAll(dir) }()
 		// Create "a"; if Stat("A") succeeds on the same entry, volume folds case.
 		p := filepath.Join(dir, "a")
 		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {

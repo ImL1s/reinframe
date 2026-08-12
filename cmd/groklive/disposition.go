@@ -553,10 +553,11 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 			}
 		}
 	}
-	// Recompute disposition and require match.
+	// Scenario ceiling from evaluateDisposition: final may only demote
+	// (privacy / live identity / executable binds), never promote (Pro R22 P2).
 	want, _ := evaluateDisposition(scenarios)
-	if disp != want {
-		errs = append(errs, "final_disposition mismatches evaluateDisposition want="+want+" got="+disp)
+	if dispositionRank(disp) > dispositionRank(want) {
+		errs = append(errs, "final_disposition above scenario ceiling want<="+want+" got="+disp)
 	}
 	// GO forbidden without correlation proofs.
 	if disp == "GO" {
@@ -581,4 +582,20 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 		}
 	}
 	return errs
+}
+
+// dispositionRank is higher for better outcomes (GO best). Used for monotonic checks.
+func dispositionRank(d string) int {
+	switch d {
+	case "GO":
+		return 3
+	case "LIMITED_GO":
+		return 2
+	case "MORE_DATA":
+		return 1
+	case "NO_GO":
+		return 0
+	default:
+		return -1
+	}
 }

@@ -284,24 +284,60 @@ func hostnameTokenRE(host string) *regexp.Regexp {
 		`((?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*)([^A-Za-z0-9_.-]|$)`)
 }
 
+// hostnameCandidates returns the bound host plus its first DNS label when the bound
+// value is an FQDN (Pro R22 P1: short probe output must match bound FQDN).
+func hostnameCandidates(host string) []string {
+	host = strings.TrimSpace(host)
+	host = strings.TrimSuffix(host, ".")
+	if host == "" || host == "localhost" {
+		return nil
+	}
+	out := []string{host}
+	if i := strings.IndexByte(host, '.'); i > 0 {
+		short := host[:i]
+		if short != "" && short != host {
+			out = append(out, short)
+		}
+	}
+	return out
+}
+
 // hostnameTokenPresent reports whether host appears as a token (not a substring of
 // a larger identifier). Used by both redaction and privacy scan (Codex P2).
+// Matches short↔FQDN in both directions (Pro R21/R22).
 func hostnameTokenPresent(s, host string) bool {
 	if s == "" || host == "" {
 		return false
 	}
-	return hostnameTokenRE(host).MatchString(s)
+	for _, h := range hostnameCandidates(host) {
+		if hostnameTokenRE(h).MatchString(s) {
+			return true
+		}
+	}
+	return false
 }
 
 // redactHostnameToken replaces a runtime hostname only as a whole token so short
 // hostnames cannot mutate JSON keys or schema ids (Pro R10 P2). FQDN forms of the
-// short name are replaced with [HOSTNAME] (Pro R21 P1).
+// short name are replaced with [HOSTNAME] (Pro R21/R22). Longer candidates first.
 func redactHostnameToken(s, host string) string {
 	if s == "" || host == "" {
 		return s
 	}
-	// ${1}=left boundary, ${3}=right boundary (preserve), FQDN body dropped into placeholder.
-	return hostnameTokenRE(host).ReplaceAllString(s, `${1}[HOSTNAME]${3}`)
+	cands := hostnameCandidates(host)
+	// Longer first so FQDN is rewritten before its short label would double-hit.
+	for i := 0; i < len(cands); i++ {
+		for j := i + 1; j < len(cands); j++ {
+			if len(cands[j]) > len(cands[i]) {
+				cands[i], cands[j] = cands[j], cands[i]
+			}
+		}
+	}
+	for _, h := range cands {
+		// ${1}=left boundary, ${3}=right boundary (preserve), FQDN body → placeholder.
+		s = hostnameTokenRE(h).ReplaceAllString(s, `${1}[HOSTNAME]${3}`)
+	}
+	return s
 }
 
 // redactLocalAccountNames rewrites env account names only as path segments.

@@ -1329,8 +1329,9 @@ func TestGenerateLiveReport_MissingLiveIdentity_DemotesGO(t *testing.T) {
 	if c, _ := prov["live_binary_commit"].(string); c != "" {
 		t.Fatalf("live_binary_commit must stay empty without identity, got %q", c)
 	}
-	if d, _ := prov["derived"].(bool); d {
-		t.Fatal("derived must be false when live identity invalid")
+	// Pro R22: incomplete identity must not claim derived=false (unknown ≠ same).
+	if d, _ := prov["derived"].(bool); !d {
+		t.Fatal("derived must be true when live identity invalid")
 	}
 	gen, _ := prov["report_generator_commit"].(string)
 	if gen != testFullRev {
@@ -1755,12 +1756,20 @@ func TestHostnameToken_MatchesFQDNFirstLabel(t *testing.T) {
 	if !hostnameTokenPresent("node build-01.corp.example.com up", host) {
 		t.Fatal("short hostname must match as first FQDN label")
 	}
+	// Reverse: bound FQDN, evidence short name (Pro R22 P1).
+	if !hostnameTokenPresent("uname build-01", "build-01.corp.example.com") {
+		t.Fatal("bound FQDN must match short probe hostname")
+	}
 	if hostnameTokenPresent("reinframe.grok_build.v1", "build") {
 		t.Fatal("must not match inside schema id grok_build")
 	}
 	out := redactHostnameToken("host=build-01.corp.example.com", host)
 	if strings.Contains(out, "build-01") || !strings.Contains(out, "[HOSTNAME]") {
 		t.Fatalf("FQDN redaction: %s", out)
+	}
+	out2 := redactHostnameToken("probe build-01 ready", "build-01.corp.example.com")
+	if strings.Contains(out2, "build-01") || !strings.Contains(out2, "[HOSTNAME]") {
+		t.Fatalf("short redaction under bound FQDN: %s", out2)
 	}
 }
 

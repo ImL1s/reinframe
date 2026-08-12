@@ -351,10 +351,14 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		return liveReportOutcome{}, fmt.Errorf("write schema: %w", err)
 	}
 
-	// Remove bare-hostname control file so publishable evidence packages do not
-	// ship raw host identity (Pro R17 P1). Re-run needs ensureLiveIdentity/live
-	// phases to re-create context.
-	scrubLiveScanContext(evDir)
+	// Strip any legacy in-evidence bare-hostname control file. Private cache
+	// context is kept so standalone report re-runs remain possible (Pro R18).
+	if err := scrubLegacyInEvidenceScanContext(evDir); err != nil {
+		_ = os.Remove(jsonPath)
+		_ = os.Remove(mdPath)
+		_ = os.Remove(schemaPath)
+		return liveReportOutcome{}, fmt.Errorf("scrub legacy live_scan_context from evidence: %w", err)
+	}
 
 	exit := 0
 	if disp == "NO_GO" {
@@ -1106,35 +1110,120 @@ func isValidGOARCH(s string) bool {
 	}
 }
 
-// writeLiveScanContext records the live host's hostname without writeJSON redaction
-// so a later derived report on another machine can still scan for that token.
-// Empty hostname is refused (Pro R17 P1: no empty fail-open context).
+// liveScanContextPath returns the private (non-evidence) path for the bare live
+// hostname control file. Evidence dirs stay publishable; re-report still works
+// because context is keyed by absolute evidence path (Pro R18 P1/P2).
+func liveScanContextPath(evDir string) (string, error) {
+	abs, err := filepath.Abs(evDir)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	sum := sha256.Sum256([]byte(abs))
+	base, err := os.UserCacheDir()
+	if err != nil || strings.TrimSpace(base) == "" {
+		// Durable-enough fallback under user config, not the evidence tree.
+		base, err = os.UserConfigDir()
+		if err != nil || strings.TrimSpace(base) == "" {
+			return "", fmt.Errorf("liveScanContextPath: no user cache/config dir")
+		}
+	}
+	dir := filepath.Join(base, "reinframe-groklive", "live_scan_context")
+	return filepath.Join(dir, hex.EncodeToString(sum[:16])+".json"), nil
+}
+
+// writeLiveScanContext records the live host's hostname outside the evidence
+// directory (no writeJSON redaction; private control path only).
+// Empty / localhost / single-char hostnames are refused (Pro R17/R18).
 func writeLiveScanContext(evDir string) error {
 	h, err := os.Hostname()
 	if err != nil {
 		return fmt.Errorf("writeLiveScanContext: hostname: %w", err)
 	}
 	h = strings.TrimSpace(h)
-	if h == "" || h == "localhost" {
-		return fmt.Errorf("writeLiveScanContext: empty/localhost hostname cannot bind live scan context")
+	if h == "" || h == "localhost" || len(h) <= 1 {
+		return fmt.Errorf("writeLiveScanContext: empty/localhost/short hostname cannot bind live scan context")
 	}
-	if err := os.MkdirAll(evDir, 0o700); err != nil {
+	path, err := liveScanContextPath(evDir)
+	if err != nil {
+		return fmt.Errorf("writeLiveScanContext: path: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
+	}
+	evAbs := evDir
+	if a, e := filepath.Abs(evDir); e == nil {
+		evAbs = a
 	}
 	b, err := json.MarshalIndent(map[string]any{
 		"schema":        liveScanContextSchema,
 		"live_hostname": h,
+		"evidence_dir":  filepath.Clean(evAbs),
 		"at":            stamp(),
 	}, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(evDir, liveScanContextFile), b, 0o600)
+	// Best-effort: remove any legacy in-evidence control file so packages stay clean.
+	_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
+	return os.WriteFile(path, b, 0o600)
 }
 
-// loadLiveScanContext validates live_scan_context.json (fail-closed).
+// parseLiveScanContextBytes validates a live_scan_context document body.
+func parseLiveScanContextBytes(b []byte) (hostname string, ok bool, reason string) {
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return "", false, "malformed"
+	}
+	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveScanContextSchema {
+		return "", false, "schema invalid"
+	}
+	h, okH := m["live_hostname"].(string)
+	h = strings.TrimSpace(h)
+	if !okH || h == "" || h == "localhost" || len(h) <= 1 {
+		return "", false, "live_hostname empty"
+	}
+	return h, true, ""
+}
+
+// loadLiveScanContext validates the private scan context (fail-closed).
+// Prefer the private cache path; migrate once from a legacy in-evidence file.
 func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string) {
-	path := filepath.Join(evDir, liveScanContextFile)
+	path, pathErr := liveScanContextPath(evDir)
+	if pathErr == nil {
+		h, ok2, why := loadLiveScanContextFile(path)
+		if ok2 {
+			// Drop legacy in-evidence copy if present (publish hygiene).
+			_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
+			return h, true, ""
+		}
+		// Private file present but invalid → fail closed (no silent legacy fallback).
+		if why != "missing" {
+			return "", false, why
+		}
+	}
+	// Legacy in-evidence path: accept once, migrate to private, then delete legacy.
+	legacy := filepath.Join(evDir, liveScanContextFile)
+	h, ok2, why := loadLiveScanContextFile(legacy)
+	if !ok2 {
+		if pathErr != nil {
+			return "", false, "private path: " + pathErr.Error()
+		}
+		return "", false, why
+	}
+	if pathErr == nil {
+		if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr == nil {
+			if b, rErr := os.ReadFile(legacy); rErr == nil {
+				if wErr := os.WriteFile(path, b, 0o600); wErr == nil {
+					_ = os.Remove(legacy)
+				}
+			}
+		}
+	}
+	return h, true, ""
+}
+
+func loadLiveScanContextFile(path string) (hostname string, ok bool, reason string) {
 	st, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1152,19 +1241,7 @@ func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string)
 	if err != nil {
 		return "", false, "unreadable: " + err.Error()
 	}
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		return "", false, "malformed"
-	}
-	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveScanContextSchema {
-		return "", false, "schema invalid"
-	}
-	h, okH := m["live_hostname"].(string)
-	h = strings.TrimSpace(h)
-	if !okH || h == "" || h == "localhost" {
-		return "", false, "live_hostname empty"
-	}
-	return h, true, ""
+	return parseLiveScanContextBytes(b)
 }
 
 // privacyScanHostnames returns generator + validated live-executor hostnames.
@@ -1180,15 +1257,26 @@ func privacyScanHostnames(evDir string, ctxHost string, ctxOK bool) []string {
 		return out
 	}
 	// Fail-closed path: do not silently invent live host from a bad file.
-	// Callers that need live host must require ctxOK separately.
 	_ = evDir
 	return out
 }
 
-// scrubLiveScanContext removes the bare-hostname control file after report privacy
-// so publishable evidence packages do not ship raw host identity (Pro R17 P1).
-func scrubLiveScanContext(evDir string) {
-	_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
+// scrubLegacyInEvidenceScanContext removes any leftover bare-hostname control file
+// from the evidence directory (legacy location). Private cache path is retained
+// so report re-runs still work (Pro R18 P1/P2).
+func scrubLegacyInEvidenceScanContext(evDir string) error {
+	path := filepath.Join(evDir, liveScanContextFile)
+	err := os.Remove(path)
+	if err == nil || os.IsNotExist(err) {
+		// Verify absent.
+		if _, stErr := os.Lstat(path); stErr == nil {
+			return fmt.Errorf("scrubLegacyInEvidenceScanContext: %s still present after remove", liveScanContextFile)
+		} else if !os.IsNotExist(stErr) {
+			return fmt.Errorf("scrubLegacyInEvidenceScanContext: verify: %w", stErr)
+		}
+		return nil
+	}
+	return fmt.Errorf("scrubLegacyInEvidenceScanContext: %w", err)
 }
 
 // writeLiveIdentity records the live executor binary identity for later report provenance.

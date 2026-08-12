@@ -1618,11 +1618,11 @@ func TestScanPrivacy_ContextNotCountedAsSeen(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("clean evidence body"), 0o600)
 	// No live_identity → context not mandatory; only note.txt is evidence.
+	// Context lives outside evidence so it cannot inflate files_seen.
 	p := scanPrivacy(dir)
 	seen, _ := p["files_seen"].(int)
 	scanned, _ := p["files_scanned"].(int)
 	if seen != 1 || scanned != 1 {
-		// JSON numbers may be float64 if ever re-encoded; handle both
 		if sf, ok := p["files_seen"].(float64); ok {
 			seen = int(sf)
 		}
@@ -1634,21 +1634,87 @@ func TestScanPrivacy_ContextNotCountedAsSeen(t *testing.T) {
 		t.Fatalf("context must not inflate seen/scanned; got seen=%v scanned=%v full=%+v", p["files_seen"], p["files_scanned"], p)
 	}
 	if complete, _ := p["complete"].(bool); !complete {
-		t.Fatalf("clean single file + context control should complete: %+v", p)
+		t.Fatalf("clean single file + private context should complete: %+v", p)
 	}
 }
 
-func TestScrubLiveScanContext_RemovesBareHostname(t *testing.T) {
+func TestGenerateLiveReport_ReReportKeepsPrivateContext(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+	if err := writeLiveScanContext(dir); err != nil {
+		t.Skipf("hostname: %v", err)
+	}
+	// Minimal evidence so report can run (will demote for other gates, but must not
+	// destroy private context).
+	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("ok"), 0o600)
+	if _, err := generateLiveReport(dir); err != nil {
+		t.Fatalf("first report: %v", err)
+	}
+	// No bare hostname in evidence after report.
+	if _, err := os.Stat(filepath.Join(dir, liveScanContextFile)); !os.IsNotExist(err) {
+		t.Fatal("evidence must not retain live_scan_context.json after report")
+	}
+	// Private context still available for a second report pass.
+	if _, ok, why := loadLiveScanContext(dir); !ok {
+		t.Fatalf("re-report context missing after first report: %s", why)
+	}
+	if _, err := generateLiveReport(dir); err != nil {
+		t.Fatalf("second report: %v", err)
+	}
+}
+
+func TestLiveScanContext_StoredOutsideEvidence(t *testing.T) {
 	dir := t.TempDir()
 	if err := writeLiveScanContext(dir); err != nil {
 		t.Skipf("hostname: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, liveScanContextFile)); err != nil {
+	// Bare hostname must not land inside the evidence tree.
+	if _, err := os.Stat(filepath.Join(dir, liveScanContextFile)); !os.IsNotExist(err) {
+		t.Fatal("live_scan_context.json must not be written into evidence-out")
+	}
+	h, ok, why := loadLiveScanContext(dir)
+	if !ok || h == "" {
+		t.Fatalf("private context load failed: ok=%v why=%s", ok, why)
+	}
+	// Legacy in-evidence file is scrubbed after report / on write.
+	if err := os.WriteFile(filepath.Join(dir, liveScanContextFile), []byte(`{"schema":"`+liveScanContextSchema+`","live_hostname":"legacy-host"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	scrubLiveScanContext(dir)
+	if err := scrubLegacyInEvidenceScanContext(dir); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(filepath.Join(dir, liveScanContextFile)); !os.IsNotExist(err) {
-		t.Fatal("scrub must remove live_scan_context.json")
+		t.Fatal("legacy scrub must remove in-evidence control file")
+	}
+	// Private context still loads for re-report.
+	if _, ok, _ := loadLiveScanContext(dir); !ok {
+		t.Fatal("private context must survive evidence scrub for re-report")
+	}
+}
+
+func TestScrubLegacyInEvidence_PropagatesFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, liveScanContextFile)
+	if err := os.WriteFile(path, []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Make evidence dir read-only so Remove fails (permission).
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if err := scrubLegacyInEvidenceScanContext(dir); err == nil {
+		// Some platforms may still allow owner delete; force verify path.
+		// If remove succeeded, the test cannot assert failure — skip.
+		if _, stErr := os.Lstat(path); os.IsNotExist(stErr) {
+			t.Skip("platform allowed remove despite chmod 0555; cannot force scrub failure")
+		}
+		t.Fatal("scrub must fail when evidence dir is not writable")
 	}
 }
 

@@ -1725,6 +1725,63 @@ func TestLiveScanContext_RejectsCacheInsideEvidence(t *testing.T) {
 	}
 }
 
+func TestLiveScanContext_RejectsCaseAliasCacheRoot(t *testing.T) {
+	// Pro R20 P1: on case-insensitive volumes, Evidence vs eVIDENCE must still
+	// be treated as the same tree.
+	base := t.TempDir()
+	// Create two absolute spellings that differ only by case of the last component.
+	lower := filepath.Join(base, "evidence")
+	if err := os.MkdirAll(lower, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Probe whether the volume is case-insensitive.
+	alt := filepath.Join(base, "EvIdEnCe")
+	if _, err := os.Stat(alt); err != nil {
+		// Case-sensitive volume: create a hard link via symlink with different name
+		// only if Stat fails — then we can't prove APFS alias here.
+		// Still exercise equalFoldPath via privateCacheRootFn returning alt spelling
+		// of the same path string transformed only if Stat(alt) works.
+		t.Logf("volume appears case-sensitive (stat %s: %v); using equalFold synthetic", alt, err)
+		// Synthetic: privateCacheRootFn returns strings.ToUpper of lower if that path
+		// exists via EqualFold — on case-sensitive FS create sibling with SameFile
+		// by using lower for both after rewriting equalFold only path check.
+		// Fall back: set cache root to lower with different Abs presentation.
+		prev := privateCacheRootFn
+		t.Cleanup(func() { privateCacheRootFn = prev })
+		// Use a path that equalFold matches: upper-case each rune of lower.
+		upper := strings.ToUpper(lower)
+		if upper == lower {
+			t.Skip("path has no case variance")
+		}
+		// On case-sensitive FS, ToUpper path may not exist — force via SameFile
+		// by pointing cache root at lower and evidence at a symlink with mixed case.
+		// Create mixed-case symlink if supported.
+		if err := os.Symlink(lower, alt); err != nil {
+			t.Skipf("cannot create case-variant symlink: %v", err)
+		}
+		privateCacheRootFn = func() (string, error) { return alt, nil }
+		id, err := newScanContextID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeLiveScanContext(lower, id); err == nil {
+			t.Fatal("write must fail when cache root is a same-file alias of evidence")
+		}
+		return
+	}
+	// Case-insensitive: alt and lower are the same directory.
+	prev := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prev })
+	privateCacheRootFn = func() (string, error) { return alt, nil }
+	id, err := newScanContextID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLiveScanContext(lower, id); err == nil {
+		t.Fatal("write must fail when cache root is case-alias of evidence")
+	}
+}
+
 func TestLiveScanContext_StaleCampaignID_Rejected(t *testing.T) {
 	dir := t.TempDir()
 	// Campaign A

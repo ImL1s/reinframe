@@ -1108,59 +1108,70 @@ func newScanContextID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// pathContainedIn reports whether child is equal to parent or a nested path under it
-// after Abs + symlink resolution (handles macOS /var → /private/var).
+// pathContainedIn reports whether child is equal to parent or nested under it.
+// Uses filesystem identity (os.SameFile) so case-insensitive volumes and
+// macOS /var→/private/var aliases cannot bypass the check (Pro R20 P1).
 func pathContainedIn(child, parent string) (bool, error) {
 	pAbs, err := filepath.Abs(parent)
 	if err != nil {
 		return false, err
 	}
-	if pEval, err := filepath.EvalSymlinks(pAbs); err == nil {
-		pAbs = pEval
-	} else {
-		pAbs = filepath.Clean(pAbs)
+	pAbs = filepath.Clean(pAbs)
+	pInfo, err := os.Stat(pAbs)
+	if err != nil {
+		// Parent must exist for a meaningful containment decision.
+		return false, err
 	}
 	cAbs, err := filepath.Abs(child)
 	if err != nil {
 		return false, err
 	}
 	cAbs = filepath.Clean(cAbs)
-	if cEval, err := filepath.EvalSymlinks(cAbs); err == nil {
-		cAbs = cEval
-	} else {
-		// Resolve the longest existing ancestor, then re-join the suffix.
-		suffix := ""
-		cur := cAbs
-		for {
-			if e, err := filepath.EvalSymlinks(cur); err == nil {
-				if suffix == "" {
-					cAbs = e
-				} else {
-					cAbs = filepath.Join(e, suffix)
-				}
-				break
+
+	// Walk child's existing ancestor chain; SameFile against parent.
+	cur := cAbs
+	for {
+		if info, err := os.Stat(cur); err == nil {
+			if os.SameFile(info, pInfo) {
+				return true, nil
 			}
-			dir := filepath.Dir(cur)
-			if dir == cur {
-				break
-			}
-			base := filepath.Base(cur)
-			if suffix == "" {
-				suffix = base
-			} else {
-				suffix = filepath.Join(base, suffix)
-			}
-			cur = dir
 		}
+		// Also try EvalSymlinks on this ancestor for /var vs /private/var.
+		if eval, err := filepath.EvalSymlinks(cur); err == nil && eval != cur {
+			if info, err := os.Stat(eval); err == nil && os.SameFile(info, pInfo) {
+				return true, nil
+			}
+		}
+		next := filepath.Dir(cur)
+		if next == cur {
+			break
+		}
+		cur = next
 	}
-	rel, err := filepath.Rel(pAbs, cAbs)
-	if err != nil {
-		return false, err
-	}
-	if rel == "." {
+	// Lexical fallback only when child does not yet exist and no ancestor matched:
+	// still compare cleaned absolute strings case-insensitively for the common
+	// APFS trap (Evidence vs eVIDENCE) without requiring the path to exist.
+	if equalFoldPath(cAbs, pAbs) {
 		return true, nil
 	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)), nil
+	sep := string(os.PathSeparator)
+	// Case-insensitive prefix (APFS default on macOS).
+	if len(cAbs) > len(pAbs) && equalFoldPath(cAbs[:len(pAbs)], pAbs) {
+		// Next rune must be separator.
+		if strings.HasPrefix(strings.ToLower(cAbs), strings.ToLower(pAbs)+sep) ||
+			strings.HasPrefix(cAbs, pAbs+sep) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func equalFoldPath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	// filepath on Windows is already case-insensitive in many APIs; use EqualFold.
+	return strings.EqualFold(a, b)
 }
 
 // isValidGOOS / isValidGOARCH reject path traversal and non-platform tokens before
@@ -1207,20 +1218,24 @@ func liveScanContextPath(evDir, scanContextID string) (string, error) {
 	}
 	dir := filepath.Join(base, "reinframe-groklive", "live_scan_context")
 	path := filepath.Join(dir, hex.EncodeToString(sum[:16])+".json")
-	// Containment: never write private control inside evidence (Pro R19 P1).
-	under, err := pathContainedIn(path, abs)
-	if err != nil {
+	// Containment: never write private control inside evidence (Pro R19/R20).
+	if under, err := pathContainedIn(path, abs); err != nil {
 		return "", fmt.Errorf("liveScanContextPath: containment: %w", err)
-	}
-	if under {
+	} else if under {
 		return "", fmt.Errorf("liveScanContextPath: private path %s is inside evidence %s", path, abs)
 	}
-	under, err = pathContainedIn(dir, abs)
-	if err != nil {
+	if under, err := pathContainedIn(dir, abs); err != nil {
 		return "", fmt.Errorf("liveScanContextPath: dir containment: %w", err)
-	}
-	if under {
+	} else if under {
 		return "", fmt.Errorf("liveScanContextPath: private dir %s is inside evidence %s", dir, abs)
+	}
+	if under, err := pathContainedIn(base, abs); err != nil {
+		// base may not exist yet — ignore missing; equalFold still runs inside pathContainedIn for abs paths
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("liveScanContextPath: base containment: %w", err)
+		}
+	} else if under {
+		return "", fmt.Errorf("liveScanContextPath: private cache root %s is inside evidence %s", base, abs)
 	}
 	return path, nil
 }
@@ -1243,16 +1258,22 @@ func writeLiveScanContext(evDir, scanContextID string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	// Re-check containment after directory creation (SameFile now applies).
 	evAbs := evDir
 	if a, e := filepath.Abs(evDir); e == nil {
 		evAbs = a
 	}
+	if under, err := pathContainedIn(path, evAbs); err != nil {
+		return fmt.Errorf("writeLiveScanContext: post-mkdir containment: %w", err)
+	} else if under {
+		return fmt.Errorf("writeLiveScanContext: private path inside evidence after mkdir")
+	}
 	b, err := json.MarshalIndent(map[string]any{
-		"schema":           liveScanContextSchema,
-		"scan_context_id":  scanContextID,
-		"live_hostname":    h,
-		"evidence_dir":     filepath.Clean(evAbs),
-		"at":               stamp(),
+		"schema":          liveScanContextSchema,
+		"scan_context_id": scanContextID,
+		"live_hostname":   h,
+		"evidence_dir":    filepath.Clean(evAbs),
+		"at":              stamp(),
 	}, "", "  ")
 	if err != nil {
 		return err

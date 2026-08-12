@@ -1212,6 +1212,8 @@ func TestParseLiveIdentityJSON_RejectsPartialAndMalformed(t *testing.T) {
 		{"empty_goos", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"","live_goarch":"arm64"}`},
 		{"empty_goarch", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"darwin","live_goarch":""}`},
 		{"goos_null", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":null,"live_goarch":"arm64"}`},
+		{"goos_traversal", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"../../../outside","live_goarch":"arm64"}`},
+		{"goarch_slash", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"darwin","live_goarch":"arm/64"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1537,6 +1539,56 @@ func TestEnsureGrokhooksExecutable_HomePathRedaction_AllowsRebind(t *testing.T) 
 	}
 	if err := ensureGrokhooksExecutable(evDir, helper); err == nil {
 		t.Fatal("content swap must fail rebind")
+	}
+}
+
+func TestContentHasLocalIdentityLeak_UsesLiveHostname(t *testing.T) {
+	t.Parallel()
+	// Generator hostname alone would miss a residual live host token.
+	liveHost := "ci-runner-xyz-99"
+	if contentHasLocalIdentityLeak("ok no host") {
+		t.Fatal("clean string must not leak")
+	}
+	if contentHasLocalIdentityLeak("uname says "+liveHost+" ready") {
+		// Without extra hostname, only .local / generator host trigger.
+		// liveHost should not match generator unless coincidence.
+	}
+	if !contentHasLocalIdentityLeak("uname says "+liveHost+" ready", liveHost) {
+		t.Fatal("extra live hostname must be scanned")
+	}
+	// Placeholders strip before match.
+	if contentHasLocalIdentityLeak("host=[HOSTNAME]", liveHost) {
+		t.Fatal("placeholder only must not leak")
+	}
+}
+
+func TestPrivacyScanHostnames_FromLiveScanContext(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeLiveScanContext(dir); err != nil {
+		t.Fatal(err)
+	}
+	hosts := privacyScanHostnames(dir)
+	if len(hosts) == 0 {
+		t.Fatal("expected at least generator or live hostname")
+	}
+	// live_scan_context is skipped by scanPrivacy content walk — residual live host
+	// in another file must still fail complete.
+	live := ""
+	b, _ := os.ReadFile(filepath.Join(dir, liveScanContextFile))
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	if h, _ := m["live_hostname"].(string); h != "" {
+		live = h
+	}
+	if live == "" || live == "localhost" {
+		t.Skip("no usable live hostname on this host")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("host token "+live+" in evidence"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := scanPrivacy(dir)
+	if complete, _ := p["complete"].(bool); complete {
+		t.Fatalf("residual live hostname must fail complete: %+v", p)
 	}
 }
 

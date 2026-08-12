@@ -138,11 +138,15 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	// Campaign platform from live_identity when bound; never silently rename with generator GOOS.
 	osName := liveID.GOOS
 	liveArch := liveID.GOARCH
-	if osName == "" {
+	if osName == "" || !isValidGOOS(osName) {
 		osName = runtime.GOOS
 	}
-	if liveArch == "" {
+	if liveArch == "" || !isValidGOARCH(liveArch) {
 		liveArch = runtime.GOARCH
+	}
+	// Final path-component guard (basename must never contain separators).
+	if !isValidGOOS(osName) {
+		osName = "unknown"
 	}
 	if !liveID.OK {
 		reasons = append(reasons, liveID.Err)
@@ -782,6 +786,10 @@ func scanPrivacy(evDir string) map[string]any {
 		"secret_pattern_hits":                       0,
 		"failure_classes":                           []string{},
 	}
+	// Hostnames for leak detection: report-generator host PLUS live executor host
+	// recorded at campaign time (Codex GraphQL P1: derived report on another machine
+	// must still flag residual live hostnames without a .local suffix).
+	scanHosts := privacyScanHostnames(evDir)
 	entries, err := os.ReadDir(evDir)
 	if err != nil {
 		out["error"] = err.Error()
@@ -803,6 +811,12 @@ func scanPrivacy(evDir string) map[string]any {
 			seen++
 			skipped++
 			fails = append(fails, "nested_directory:"+e.Name())
+			continue
+		}
+		// Metadata used only to feed hostname scan tokens — not published evidence.
+		// Skip content scan so the stored live hostname itself is not a self-leak.
+		if e.Name() == liveScanContextFile {
+			seen++
 			continue
 		}
 		full := filepath.Join(evDir, e.Name())
@@ -889,7 +903,7 @@ func scanPrivacy(evDir string) map[string]any {
 			rawThoughts = true
 		}
 		// Local host identity / absolute paths (#168 / GPT P1-C).
-		if contentHasLocalIdentityLeak(s) {
+		if contentHasLocalIdentityLeak(s, scanHosts...) {
 			hits++
 			fails = append(fails, "local_identity:"+e.Name())
 		}
@@ -913,7 +927,8 @@ func scanPrivacy(evDir string) map[string]any {
 
 // contentHasLocalIdentityLeak reports home/tmp absolute paths or .local hostnames in evidence.
 // Covers Unix and Windows (including JSON-escaped backslashes after Marshal).
-func contentHasLocalIdentityLeak(s string) bool {
+// extraHostnames are additional hosts to token-scan (live executor hostname on derived reports).
+func contentHasLocalIdentityLeak(s string, extraHostnames ...string) bool {
 	if s == "" {
 		return false
 	}
@@ -934,17 +949,29 @@ func contentHasLocalIdentityLeak(s string) bool {
 	if localHostname.MatchString(s) {
 		return true
 	}
-	// Runtime hostname without .local suffix (Linux CI / containers).
+	// Hostnames without .local suffix (Linux CI / containers / live executor).
 	// Always strip [HOSTNAME] placeholders first so mixed placeholder+raw fails (Codex P1).
 	// Match token boundaries only — unrestricted Contains false-flags schema ids when
 	// hostname is a common word like "build" (Codex P2 on tip 608cdcc).
+	hosts := make([]string, 0, 2+len(extraHostnames))
 	if h, err := os.Hostname(); err == nil {
+		hosts = append(hosts, h)
+	}
+	hosts = append(hosts, extraHostnames...)
+	strippedHost := strings.ReplaceAll(s, "[HOSTNAME]", "")
+	seenH := map[string]struct{}{}
+	for _, h := range hosts {
 		h = strings.TrimSpace(h)
-		if h != "" && h != "localhost" && len(h) > 1 {
-			strippedHost := strings.ReplaceAll(s, "[HOSTNAME]", "")
-			if hostnameTokenPresent(strippedHost, h) {
-				return true
-			}
+		if h == "" || h == "localhost" || len(h) <= 1 {
+			continue
+		}
+		key := strings.ToLower(h)
+		if _, dup := seenH[key]; dup {
+			continue
+		}
+		seenH[key] = struct{}{}
+		if hostnameTokenPresent(strippedHost, h) {
+			return true
 		}
 	}
 	// Unhashed temp paths (Unix /tmp and Windows Temp). Strip [TMP:…] placeholders first
@@ -1025,6 +1052,13 @@ const liveIdentitySchema = "reinframe.live_identity.v1"
 // liveGrokExeSchema seals the external Grok CLI binary content binding for a run.
 const liveGrokExeSchema = "reinframe.live_grok_executable.v1"
 
+// liveScanContextSchema / file hold the live-executor hostname for privacy scan only
+// (not redacted, excluded from content scan so it cannot self-leak).
+const (
+	liveScanContextSchema = "reinframe.live_scan_context.v1"
+	liveScanContextFile   = "live_scan_context.json"
+)
+
 // liveIdentity holds a verified live-executor identity (never the report generator).
 type liveIdentity struct {
 	Commit string
@@ -1036,11 +1070,93 @@ type liveIdentity struct {
 	Err    string // non-empty when OK is false
 }
 
+// isValidGOOS / isValidGOARCH reject path traversal and non-platform tokens before
+// live_goos/live_goarch are used in report basenames (Codex GraphQL P2 on #230).
+func isValidGOOS(s string) bool {
+	switch strings.TrimSpace(s) {
+	case "aix", "android", "darwin", "dragonfly", "freebsd", "hurd", "illumos",
+		"ios", "js", "linux", "nacl", "netbsd", "openbsd", "plan9", "solaris",
+		"wasip1", "windows", "zos":
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidGOARCH(s string) bool {
+	switch strings.TrimSpace(s) {
+	case "386", "amd64", "amd64p32", "arm", "arm64", "arm64be", "armbe",
+		"loong64", "mips", "mips64", "mips64le", "mips64p32", "mips64p32le",
+		"mipsle", "ppc", "ppc64", "ppc64le", "riscv", "riscv64", "s390",
+		"s390x", "sparc", "sparc64", "wasm":
+		return true
+	default:
+		return false
+	}
+}
+
+// writeLiveScanContext records the live host's hostname without writeJSON redaction
+// so a later derived report on another machine can still scan for that token.
+func writeLiveScanContext(evDir string) error {
+	h, err := os.Hostname()
+	if err != nil {
+		h = ""
+	}
+	h = strings.TrimSpace(h)
+	if h == "" {
+		// Still write an empty record so report can see context was attempted.
+		h = ""
+	}
+	if err := os.MkdirAll(evDir, 0o700); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(map[string]any{
+		"schema":        liveScanContextSchema,
+		"live_hostname": h,
+		"at":            stamp(),
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(evDir, liveScanContextFile), b, 0o600)
+}
+
+// privacyScanHostnames returns generator + live-executor hostnames for leak checks.
+func privacyScanHostnames(evDir string) []string {
+	var out []string
+	if h, err := os.Hostname(); err == nil {
+		if t := strings.TrimSpace(h); t != "" {
+			out = append(out, t)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(evDir, liveScanContextFile))
+	if err != nil {
+		return out
+	}
+	var m map[string]any
+	if json.Unmarshal(b, &m) != nil {
+		return out
+	}
+	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveScanContextSchema {
+		return out
+	}
+	if h, _ := m["live_hostname"].(string); strings.TrimSpace(h) != "" {
+		out = append(out, strings.TrimSpace(h))
+	}
+	return out
+}
+
 // writeLiveIdentity records the live executor binary identity for later report provenance.
 func writeLiveIdentity(evDir string) error {
 	rev, dirty, src := reinframeBuildIdentity()
 	if rev == "" || src == "unknown" || !isFullVCSRevision(rev) {
 		return fmt.Errorf("writeLiveIdentity: current binary lacks qualifying identity (rev=%q src=%s)", rev, src)
+	}
+	if !isValidGOOS(runtime.GOOS) || !isValidGOARCH(runtime.GOARCH) {
+		return fmt.Errorf("writeLiveIdentity: unexpected runtime platform %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	if err := writeLiveScanContext(evDir); err != nil {
+		return fmt.Errorf("writeLiveIdentity: scan context: %w", err)
 	}
 	return writeJSON(filepath.Join(evDir, "live_identity.json"), map[string]any{
 		"schema":                 liveIdentitySchema,
@@ -1165,6 +1281,13 @@ func parseLiveIdentityJSON(b []byte) (liveIdentity, error) {
 	}
 	if !okGOARCH || goarch == "" {
 		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_goarch")
+	}
+	// Reject path traversal / non-GOOS tokens before basename use (Codex #230 P2).
+	if !isValidGOOS(goos) {
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_goos %q not a known GOOS", goos)
+	}
+	if !isValidGOARCH(goarch) {
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_goarch %q not a known GOARCH", goarch)
 	}
 	return liveIdentity{Commit: commit, Dirty: dirty, Src: src, GOOS: goos, GOARCH: goarch, OK: true}, nil
 }

@@ -949,7 +949,9 @@ func scanPrivacy(evDir string) map[string]any {
 		// Filenames also publish identity (Pro R35 P1): build-01.log with clean body
 		// must not allow privacy.complete=true. Exempt closed harness-owned basenames
 		// so hostname=preflight does not false-flag preflight.json (Pro R41 P2).
-		if !isHarnessOwnedEvidenceFilename(e.Name()) && contentHasLocalIdentityLeak(e.Name(), scanHosts...) {
+		// Filename-specific host matching treats '-' as a boundary so
+		// issue-167-live-v2-build-01.json still flags host build-01 (Pro R43 P1).
+		if !isHarnessOwnedEvidenceFilename(e.Name()) && filenameHasLocalIdentityLeak(e.Name(), scanHosts...) {
 			hits++
 			fails = append(fails, "local_identity_filename:"+e.Name())
 		}
@@ -1044,6 +1046,56 @@ func blankClosedStructuredEnumValues(s string) string {
 	})
 }
 
+// filenameHasLocalIdentityLeak reports host tokens in basenames. Unlike free-text
+// content matching (where '-' is a DNS-label character), filenames treat hyphen as a
+// component boundary so "…-build-01.json" matches host "build-01" (Pro R43 P1).
+func filenameHasLocalIdentityLeak(name string, extraHostnames ...string) bool {
+	if name == "" {
+		return false
+	}
+	// Path/home leaks in names are unexpected but fail closed via the free-text path.
+	if contentHasLocalIdentityLeak(name, extraHostnames...) {
+		return true
+	}
+	hosts := make([]string, 0, 2+len(extraHostnames))
+	if h, err := os.Hostname(); err == nil {
+		if t := strings.TrimSpace(h); t != "" {
+			hosts = append(hosts, t)
+		}
+	}
+	hosts = append(hosts, extraHostnames...)
+	seen := map[string]struct{}{}
+	for _, h := range hosts {
+		h = strings.TrimSpace(h)
+		if h == "" || h == "localhost" || len(h) <= 1 {
+			continue
+		}
+		key := strings.ToLower(h)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		for _, cand := range hostnameCandidates(h) {
+			if filenameHostTokenPresent(name, cand) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// filenameHostTokenPresent matches host as a path/filename component where '-', '_',
+// and '.' are all component separators (stricter than free-text DNS-token matching).
+func filenameHostTokenPresent(s, host string) bool {
+	host = strings.TrimSpace(host)
+	if s == "" || host == "" {
+		return false
+	}
+	// RE2: left = start or non-alnum; right = end or non-alnum (hyphen is a boundary).
+	re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])` + regexp.QuoteMeta(host) + `([^A-Za-z0-9]|$)`)
+	return re.MatchString(s)
+}
+
 // isHarnessOwnedEvidenceFilename reports closed basenames written by groklive itself.
 // These must not be treated as host tokens when the machine hostname collides with the
 // basename stem (Pro R41 P2: hostname=preflight must not flag preflight.json).
@@ -1059,20 +1111,20 @@ func isHarnessOwnedEvidenceFilename(name string) bool {
 		"RUN.md", "PRIVACY_ERRATA.md", "SUPERSEDED.md":
 		return true
 	}
-	// Formal reports from generateLiveReport only:
-	// issue-167-live-v2-<version>-<os>-<YYYY-MM-DD>.{json,md}
-	// Not arbitrary issue-* (Pro R42 P2: issue-[build-01].json must still scan).
-	if strings.HasPrefix(base, "issue-167-live-v2-") {
-		if strings.HasSuffix(base, ".json") || strings.HasSuffix(base, ".md") {
-			// Generator basenames never include host-token delimiters like [].
-			if strings.ContainsAny(base, "[]{}()") {
-				return false
-			}
-			return true
-		}
-	}
-	return false
+	// Formal reports from generateLiveReport only — full shape (Pro R43 P1):
+	// issue-167-live-v2-<sanitizeVersion>-<goos|unknown>-<YYYY-MM-DD>.{json,md}
+	// Prefix alone is insufficient (issue-167-live-v2-build-01.json must still scan).
+	return formalLiveReportBasenameRE.MatchString(base)
 }
+
+// formalLiveReportBasenameRE matches only basenames the report generator emits.
+// Version segment is sanitized [A-Za-z0-9._-]+; platform is known GOOS or "unknown";
+// date is UTC YYYY-MM-DD.
+var formalLiveReportBasenameRE = regexp.MustCompile(
+	`^issue-167-live-v2-[A-Za-z0-9._-]{1,48}-` +
+		`(?:unknown|aix|android|darwin|dragonfly|freebsd|hurd|illumos|ios|js|linux|nacl|netbsd|openbsd|plan9|solaris|wasip1|windows|zos)-` +
+		`\d{4}-\d{2}-\d{2}\.(?:json|md)$`,
+)
 
 // contentHasLocalIdentityLeak reports home/tmp absolute paths or .local hostnames in evidence.
 // Covers Unix and Windows (including JSON-escaped backslashes after Marshal).

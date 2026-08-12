@@ -2244,6 +2244,9 @@ func TestScanPrivacy_IssuePrefixNotBroadExempt(t *testing.T) {
 	if !isHarnessOwnedEvidenceFilename("issue-167-live-v2-grok-1.0.0-darwin-2026-08-12.json") {
 		t.Fatal("canonical formal report basename must be harness-owned")
 	}
+	if isHarnessOwnedEvidenceFilename("issue-167-live-v2-build-01.json") {
+		t.Fatal("malformed formal-prefix name with embedded host must not be harness-owned")
+	}
 	dir := t.TempDir()
 	live := "build-01"
 	if err := os.WriteFile(filepath.Join(dir, "issue-["+live+"].json"), []byte(`{"ok":true}`), 0o600); err != nil {
@@ -2287,6 +2290,59 @@ func TestScanPrivacy_IssuePrefixNotBroadExempt(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("want local_identity_filename for issue-[build-01].json; got %v", fails)
+	}
+}
+
+// Pro R43 P1: issue-167-live-v2-build-01.json must still scan (overbroad formal prefix).
+func TestScanPrivacy_FormalPrefixHostEmbedStillLeaks(t *testing.T) {
+	// Not parallel: mutates privateCacheRootFn.
+	dir := t.TempDir()
+	live := "build-01"
+	name := "issue-167-live-v2-" + live + ".json"
+	if isHarnessOwnedEvidenceFilename(name) {
+		t.Fatal("must not treat host-embedded formal-prefix name as harness-owned")
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(`{"ok":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+	cache := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cache, nil }
+	scanID := "abcdef0123456789abcdef0123456789"
+	path, err := liveScanContextPath(dir, scanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"schema":%q,"scan_context_id":%q,"live_hostname":%q,"at":"t"}`, liveScanContextSchema, scanID, live)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	idBody := fmt.Sprintf(`{"schema":%q,"live_binary_commit":%q,"live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":%q,"live_goarch":%q,"scan_context_id":%q,"at":"t"}`,
+		liveIdentitySchema, testFullRev, runtime.GOOS, runtime.GOARCH, scanID)
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(idBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := scanPrivacy(dir)
+	if p["complete"] == true {
+		t.Fatalf("must not complete with host in formal-prefix filename: %+v", p)
+	}
+	found := false
+	fails, _ := p["failure_classes"].([]string)
+	for _, f := range fails {
+		if strings.Contains(f, "local_identity_filename:"+name) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("want local_identity_filename:%s; got %v", name, fails)
 	}
 }
 

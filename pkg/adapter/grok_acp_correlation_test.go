@@ -384,6 +384,34 @@ func TestUpdateStrongCorrelation_RequiresSessionUpdateMethod(t *testing.T) {
 	if ok {
 		t.Fatalf("malformed top-level _method must fail closed even with valid params._method: why=%s", why)
 	}
+	// Pro R26 P2: methodless JSON-RPC envelope must not shape-fall through.
+	uEnv := map[string]any{
+		"jsonrpc": "2.0",
+		"params": map[string]any{
+			"sessionUpdate":  "agent_message_chunk",
+			"interventionId": "iv-1",
+			"requestId":      float64(42),
+		},
+		"sessionId":      "s1",
+		"interventionId": "iv-1",
+		"requestId":      float64(42),
+		"sessionUpdate":  "agent_message_chunk",
+	}
+	ok, why = UpdateStrongCorrelation(uEnv, "iv-1", "", 42)
+	if ok {
+		t.Fatalf("methodless JSON-RPC envelope must not correlate: why=%s", why)
+	}
+	// Unwrapped body without envelope markers still OK.
+	uUnwrapped := map[string]any{
+		"sessionId":      "s1",
+		"interventionId": "iv-1",
+		"requestId":      float64(42),
+		"sessionUpdate":  "agent_message_chunk",
+	}
+	ok, why = UpdateStrongCorrelation(uUnwrapped, "iv-1", "", 42)
+	if !ok {
+		t.Fatalf("unwrapped sessionUpdate body should still correlate: why=%s", why)
+	}
 }
 
 func TestUpdateStrongCorrelation_IgnoresAgentContentSpoof(t *testing.T) {

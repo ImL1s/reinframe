@@ -1083,6 +1083,12 @@ func isSessionUpdateNotification(u map[string]any) bool {
 		return accepted == "session/update"
 	}
 
+	// Methodless JSON-RPC-shaped envelopes must fail closed (Pro R26 P2):
+	// shape fallback is only for unwrapped update bodies, not incomplete envelopes.
+	if jsonRPCEnvelopeWithoutMethod(u) {
+		return false
+	}
+
 	// Unwrapped fixtures/tests without a method field: accept only when the body
 	// looks like a session/update (sessionUpdate key present).
 	if _, ok := u["sessionUpdate"]; ok {
@@ -1101,6 +1107,45 @@ func isSessionUpdateNotification(u map[string]any) bool {
 	if up, _ := u["update"].(map[string]any); up != nil {
 		if _, ok := up["sessionUpdate"]; ok {
 			return true
+		}
+	}
+	return false
+}
+
+// jsonRPCEnvelopeWithoutMethod reports incomplete JSON-RPC envelopes that have
+// envelope markers but no method/_method (Pro R26 P2).
+func jsonRPCEnvelopeWithoutMethod(u map[string]any) bool {
+	if u == nil {
+		return false
+	}
+	if _, ok := u["jsonrpc"]; ok {
+		return true
+	}
+	if _, ok := u["result"]; ok {
+		return true
+	}
+	if _, ok := u["error"]; ok {
+		return true
+	}
+	// id + params without sessionUpdate at top level is envelope-shaped.
+	if _, hasID := u["id"]; hasID {
+		if _, hasParams := u["params"]; hasParams {
+			if _, topSU := u["sessionUpdate"]; !topSU {
+				return true
+			}
+		}
+	}
+	// Bare params object carrying nested sessionUpdate (no top-level sessionUpdate).
+	if p, ok := u["params"].(map[string]any); ok {
+		if _, topSU := u["sessionUpdate"]; !topSU {
+			if _, nested := p["sessionUpdate"]; nested {
+				return true
+			}
+			if up, ok := p["update"].(map[string]any); ok {
+				if _, nested := up["sessionUpdate"]; nested {
+					return true
+				}
+			}
 		}
 	}
 	return false

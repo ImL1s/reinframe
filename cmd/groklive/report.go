@@ -944,6 +944,15 @@ func scanPrivacy(evDir string) map[string]any {
 	return out
 }
 
+// structuredJSONEnumValueRE blanks closed enum/platform JSON string values so a
+// hostname that collides with GOOS/GOARCH/schema tokens (e.g. "linux") cannot
+// false-positive privacy leaks on structured provenance fields (Pro R26 P2).
+// Free-text fields (stdout/stderr/detail) are left intact for residual scan.
+var structuredJSONEnumValueRE = regexp.MustCompile(
+	`"(?:goos|goarch|live_goos|live_goarch|report_generator_goos|report_generator_goarch|` +
+		`final_disposition|disposition|strongest_proven|status|class|src|` +
+		`live_binary_commit_src|report_generator_commit_src|schema)"\s*:\s*"[^"]*"`)
+
 // contentHasLocalIdentityLeak reports home/tmp absolute paths or .local hostnames in evidence.
 // Covers Unix and Windows (including JSON-escaped backslashes after Marshal).
 // extraHostnames are additional hosts to token-scan (live executor hostname on derived reports).
@@ -972,12 +981,15 @@ func contentHasLocalIdentityLeak(s string, extraHostnames ...string) bool {
 	// Always strip [HOSTNAME] placeholders first so mixed placeholder+raw fails (Codex P1).
 	// Match token boundaries only — unrestricted Contains false-flags schema ids when
 	// hostname is a common word like "build" (Codex P2 on tip 608cdcc).
+	// Blank closed structured enum/platform values before hostname token scan so a
+	// host named "linux"/"go" does not false-flag goos/disposition fields (Pro R26 P2).
 	hosts := make([]string, 0, 2+len(extraHostnames))
 	if h, err := os.Hostname(); err == nil {
 		hosts = append(hosts, h)
 	}
 	hosts = append(hosts, extraHostnames...)
 	strippedHost := strings.ReplaceAll(s, "[HOSTNAME]", "")
+	strippedHost = structuredJSONEnumValueRE.ReplaceAllString(strippedHost, `"":""`)
 	seenH := map[string]struct{}{}
 	for _, h := range hosts {
 		h = strings.TrimSpace(h)
@@ -1280,7 +1292,9 @@ func isValidGOARCH(s string) bool {
 }
 
 // liveScanContextPath returns the private path for the bare live hostname control
-// file, keyed by evidence path + campaign scan_context_id (Pro R18/R19).
+// file, keyed by high-entropy scan_context_id only (Pro R26 P1).
+// Evidence absolute path is intentionally NOT part of the key so rename/move of
+// the evidence directory on the same host still resolves the same context.
 // Rejects paths that resolve under the evidence directory (XDG_CACHE_HOME traps).
 func liveScanContextPath(evDir, scanContextID string) (string, error) {
 	if strings.TrimSpace(scanContextID) == "" || len(scanContextID) < 16 {
@@ -1291,7 +1305,9 @@ func liveScanContextPath(evDir, scanContextID string) (string, error) {
 		return "", err
 	}
 	abs = filepath.Clean(abs)
-	sum := sha256.Sum256([]byte(abs + "\n" + scanContextID))
+	// Portable key: scan_context_id alone (v2). Prior v1 mixed abs(evDir) and could
+	// not survive evidence rename/copy on the same machine (Pro R26 P1).
+	sum := sha256.Sum256([]byte("live_scan_context.v2\n" + scanContextID))
 	base, err := privateCacheRootFn()
 	if err != nil || strings.TrimSpace(base) == "" {
 		return "", fmt.Errorf("liveScanContextPath: cache root: %w", err)
@@ -1747,11 +1763,14 @@ func ensureGrokExecutableIdentity(evDir, grokExe string) error {
 		}
 		return nil
 	}
+	// Never publish raw absolute paths in public evidence (Pro R26 P1): basename +
+	// path digest are diagnostic only; content SHA-256 is the bind.
 	return writeJSON(path, map[string]any{
-		"schema":                  liveGrokExeSchema,
-		"grok_executable_path":    abs,
-		"grok_executable_sha256":  sum,
-		"at":                      stamp(),
+		"schema":                       liveGrokExeSchema,
+		"grok_executable_basename":     filepath.Base(abs),
+		"grok_executable_path_sha256":  sha256Hex(abs),
+		"grok_executable_sha256":       sum,
+		"at":                           stamp(),
 	})
 }
 
@@ -1830,11 +1849,13 @@ func ensureGrokhooksExecutable(evDir, hooksExe string) error {
 		// same contract as ensureGrokExecutableIdentity.
 		return nil
 	}
+	// Never publish raw absolute paths (Pro R26 P1).
 	return writeJSON(path, map[string]any{
-		"schema":                       liveGrokhooksSchema,
-		"grokhooks_executable_path":    abs,
-		"grokhooks_executable_sha256":  sum,
-		"at":                           stamp(),
+		"schema":                          liveGrokhooksSchema,
+		"grokhooks_executable_basename":   filepath.Base(abs),
+		"grokhooks_executable_path_sha256": sha256Hex(abs),
+		"grokhooks_executable_sha256":     sum,
+		"at":                              stamp(),
 	})
 }
 

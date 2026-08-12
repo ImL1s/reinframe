@@ -2060,6 +2060,89 @@ func TestGenerateLiveReport_MissingPlatformFields_Demotes(t *testing.T) {
 	}
 }
 
+// Pro R26 P1: scan context keyed by scan_context_id only — evidence rename still loads.
+func TestLiveScanContext_SurvivesEvidenceRename(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "evidence-a")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+	// Capture scan id from identity.
+	id := loadLiveIdentity(dir)
+	if !id.OK || id.ScanContextID == "" {
+		t.Fatalf("fixture identity: %+v", id)
+	}
+	// Rename evidence directory; private context must still resolve (id-only key).
+	moved := filepath.Join(parent, "evidence-b-renamed")
+	if err := os.Rename(dir, moved); err != nil {
+		t.Fatal(err)
+	}
+	h, ok, why := loadLiveScanContext(moved)
+	if !ok || h == "" {
+		t.Fatalf("rename must preserve private context: ok=%v why=%s", ok, why)
+	}
+}
+
+// Pro R26 P1: public binding artifacts must not embed raw absolute paths.
+func TestExecutableBinding_NoRawAbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	// Fake executable under a non-HOME path.
+	exe := filepath.Join(dir, "tools", "company-alice", "grok-bin")
+	if err := os.MkdirAll(filepath.Dir(exe), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho fake\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ev := filepath.Join(dir, "evidence")
+	if err := os.MkdirAll(ev, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureGrokExecutableIdentity(ev, exe); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(ev, "live_grok_executable.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(b)
+	if strings.Contains(raw, "company-alice") || strings.Contains(raw, exe) {
+		t.Fatalf("raw absolute path leaked into binding: %s", raw)
+	}
+	if !strings.Contains(raw, "grok_executable_basename") || !strings.Contains(raw, "grok_executable_path_sha256") {
+		t.Fatalf("want basename+path digest fields: %s", raw)
+	}
+	if ok, why := loadLiveGrokExecutableOK(ev); !ok {
+		t.Fatalf("binding must still validate: %s", why)
+	}
+}
+
+// Pro R26 P2: structured goos/goarch values must not false-flag hostname "linux".
+func TestContentHasLocalIdentityLeak_IgnoresStructuredPlatformValues(t *testing.T) {
+	t.Parallel()
+	structured := `{
+  "goos": "linux",
+  "live_goos": "linux",
+  "report_generator_goos": "linux",
+  "goarch": "amd64",
+  "final_disposition": "NO_GO",
+  "schema": "reinframe.grok_build_live_control.v2"
+}`
+	if contentHasLocalIdentityLeak(structured, "linux") {
+		t.Fatal("structured platform enums must not count as hostname leak for host=linux")
+	}
+	// Free-text residual still fails.
+	if !contentHasLocalIdentityLeak(`uname says linux is ready`, "linux") {
+		t.Fatal("free-text hostname must still leak")
+	}
+}
+
 // Pro R25 P2: executable binding digests must be SHA-256 hex, not merely len==64.
 func TestLoadLiveExecutable_RequiresSHA256Hex(t *testing.T) {
 	t.Parallel()

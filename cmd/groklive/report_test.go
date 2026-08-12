@@ -2060,6 +2060,54 @@ func TestGenerateLiveReport_MissingPlatformFields_Demotes(t *testing.T) {
 	}
 }
 
+// Pro R30 P2: resume existing identity with --scan-context-out must still export.
+func TestEnsureLiveIdentity_ExportsScanContextOnResume(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() {
+		reinframeCommit, reinframeDirty = prevC, prevD
+		scanContextOutPath = ""
+		scanContextInPath = ""
+	})
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	cache := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cache, nil }
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "evidence")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// First create without export.
+	scanContextOutPath = ""
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+
+	external := filepath.Join(parent, "resume-export.json")
+	if _, err := os.Stat(external); !os.IsNotExist(err) {
+		t.Fatal("export must not exist before resume")
+	}
+	scanContextOutPath = external
+	if err := ensureLiveIdentity(dir); err != nil {
+		t.Fatalf("resume ensureLiveIdentity: %v", err)
+	}
+	b, err := os.ReadFile(external)
+	if err != nil {
+		t.Fatalf("resume must write --scan-context-out: %v", err)
+	}
+	doc, ok, why := parseLiveScanContextBytes(b)
+	if !ok || doc.Hostname == "" {
+		t.Fatalf("exported scan context invalid: ok=%v why=%s", ok, why)
+	}
+	// Fail-closed: requested export path under evidence must error.
+	scanContextOutPath = filepath.Join(dir, "bad-export.json")
+	if err := ensureLiveIdentity(dir); err == nil {
+		t.Fatal("scan-context-out under evidence must fail")
+	}
+}
+
 // Pro R28 P1: external --scan-context-out/in enables cross-host load; never under evidence.
 func TestLiveScanContext_ExternalImportCrossCache(t *testing.T) {
 	prevC, prevD := reinframeCommit, reinframeDirty

@@ -1400,22 +1400,89 @@ func writeLiveScanContext(evDir, scanContextID string) error {
 		return err
 	}
 	// Optional external transfer path — must NOT be under evidence (Pro R28 P1).
-	if out := strings.TrimSpace(scanContextOutPath); out != "" {
-		outAbs, err := filepath.Abs(out)
-		if err != nil {
-			return fmt.Errorf("writeLiveScanContext: scan-context-out abs: %w", err)
+	if err := writeScanContextOutFile(evAbs, b); err != nil {
+		return err
+	}
+	return nil
+}
+
+// writeScanContextOutFile writes validated scan-context JSON to --scan-context-out
+// when set. No-op when the flag is empty. Fail-closed on containment or write errors.
+func writeScanContextOutFile(evAbs string, b []byte) error {
+	out := strings.TrimSpace(scanContextOutPath)
+	if out == "" {
+		return nil
+	}
+	outAbs, err := filepath.Abs(out)
+	if err != nil {
+		return fmt.Errorf("scan-context-out abs: %w", err)
+	}
+	if under, err := pathContainedIn(outAbs, evAbs); err != nil {
+		return fmt.Errorf("scan-context-out containment: %w", err)
+	} else if under {
+		return fmt.Errorf("--scan-context-out must be outside evidence directory")
+	}
+	if err := os.MkdirAll(filepath.Dir(outAbs), 0o700); err != nil {
+		return fmt.Errorf("scan-context-out mkdir: %w", err)
+	}
+	// Atomic-ish: temp sibling then rename so partial writes are not left as final.
+	tmp := outAbs + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return fmt.Errorf("write scan-context-out: %w", err)
+	}
+	if err := os.Rename(tmp, outAbs); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("write scan-context-out rename: %w", err)
+	}
+	return nil
+}
+
+// exportLiveScanContextOut copies the validated private scan context for this
+// campaign to --scan-context-out when set (Pro R30 P2: resume existing identity).
+// Fail if the user requested export but the private file cannot be read or written.
+func exportLiveScanContextOut(evDir, scanContextID string) error {
+	out := strings.TrimSpace(scanContextOutPath)
+	if out == "" {
+		return nil
+	}
+	scanContextID = strings.TrimSpace(scanContextID)
+	if scanContextID == "" {
+		return fmt.Errorf("export scan-context-out: empty scan_context_id")
+	}
+	path, err := liveScanContextPath(evDir, scanContextID)
+	if err != nil {
+		return fmt.Errorf("export scan-context-out path: %w", err)
+	}
+	doc, ok, why := loadLiveScanContextFile(path)
+	if !ok {
+		// Allow external --scan-context-in already imported into cache by loadLiveScanContext.
+		// Re-resolve via load after optional import side effects.
+		if h, ok2, why2 := loadLiveScanContext(evDir); !ok2 || h == "" {
+			return fmt.Errorf("export scan-context-out: private context: %s; reload: %s", why, why2)
 		}
-		if under, err := pathContainedIn(outAbs, evAbs); err != nil {
-			return fmt.Errorf("writeLiveScanContext: scan-context-out containment: %w", err)
-		} else if under {
-			return fmt.Errorf("writeLiveScanContext: --scan-context-out must be outside evidence directory")
+		// loadLiveScanContext may have imported; re-read private path.
+		doc, ok, why = loadLiveScanContextFile(path)
+		if !ok {
+			return fmt.Errorf("export scan-context-out: private context after import: %s", why)
 		}
-		if err := os.MkdirAll(filepath.Dir(outAbs), 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(outAbs, b, 0o600); err != nil {
-			return fmt.Errorf("writeLiveScanContext: write scan-context-out: %w", err)
-		}
+	}
+	if doc.ID != scanContextID {
+		return fmt.Errorf("export scan-context-out: scan_context_id mismatch")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("export scan-context-out read: %w", err)
+	}
+	// Re-validate bytes before shipping (symlink/malformed already handled by load).
+	if _, ok2, why2 := parseLiveScanContextBytes(b); !ok2 {
+		return fmt.Errorf("export scan-context-out reparse: %s", why2)
+	}
+	evAbs := evDir
+	if a, e := filepath.Abs(evDir); e == nil {
+		evAbs = a
+	}
+	if err := writeScanContextOutFile(evAbs, b); err != nil {
+		return fmt.Errorf("export scan-context-out: %w", err)
 	}
 	return nil
 }
@@ -1635,6 +1702,11 @@ func ensureLiveIdentity(evDir string) error {
 		// Sidecar is mandatory with live_identity (Pro R17 P1: no identity-without-context).
 		if _, ok, why := loadLiveScanContext(evDir); !ok {
 			return fmt.Errorf("ensureLiveIdentity: live_scan_context: %s", why)
+		}
+		// Resume with existing identity must still honor --scan-context-out
+		// (Pro R30 P2: writeLiveScanContext only runs on first create).
+		if err := exportLiveScanContextOut(evDir, id.ScanContextID); err != nil {
+			return fmt.Errorf("ensureLiveIdentity: %w", err)
 		}
 		return nil
 	}

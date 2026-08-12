@@ -414,6 +414,11 @@ func hostnameTokenPresent(s, host string) bool {
 // redactHostnameToken replaces a runtime hostname only as a whole token so short
 // hostnames cannot mutate JSON keys or schema ids (Pro R10 P2). FQDN forms of the
 // short name are replaced with [HOSTNAME] (Pro R21/R22). Longer candidates first.
+//
+// Adjacent/repeated hostnames sharing a single delimiter (e.g. "build-01 build-01")
+// need multi-pass replacement: RE2 has no lookaround, so the right-boundary group
+// is consumed by the first match and the next host would otherwise remain raw
+// (Pro R30 P1). Loop until fixed-point (bounded).
 func redactHostnameToken(s, host string) string {
 	if s == "" || host == "" {
 		return s
@@ -428,8 +433,16 @@ func redactHostnameToken(s, host string) string {
 		}
 	}
 	for _, h := range cands {
-		// ${1}=left boundary, ${3}=right boundary (preserve), FQDN body → placeholder.
-		s = hostnameTokenRE(h).ReplaceAllString(s, `${1}[HOSTNAME]${3}`)
+		re := hostnameTokenRE(h)
+		// Multi-pass: each ReplaceAllString only covers non-overlapping matches;
+		// shared delimiters leave residual hosts for the next pass (Pro R30 P1).
+		for pass := 0; pass < 64; pass++ {
+			next := re.ReplaceAllString(s, `${1}[HOSTNAME]${3}`)
+			if next == s {
+				break
+			}
+			s = next
+		}
 	}
 	return s
 }

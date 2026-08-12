@@ -280,6 +280,32 @@ func TestRedactHostnameToken_DoesNotCorruptSchemaIDs(t *testing.T) {
 	if hostnameTokenPresent("reinframe.grok_build_acp.v1", "BUILD") {
 		t.Fatal("case-insensitive matcher must still respect token boundaries")
 	}
+
+	// Pro R30 P1: adjacent hosts sharing a delimiter must all be redacted.
+	// Single-pass ReplaceAll consumes the shared boundary as ${3}, leaving the next raw.
+	for _, in := range []string{
+		"build-01 build-01",
+		"build-01,build-01",
+		"build-01 build-01 build-01",
+		"note=build-01;build-01;build-01",
+	} {
+		outAdj := redactHostnameToken(in, "build-01")
+		if strings.Contains(strings.ToLower(outAdj), "build-01") {
+			t.Fatalf("adjacent hostname residual: in=%q out=%q", in, outAdj)
+		}
+		if !strings.Contains(outAdj, "[HOSTNAME]") {
+			t.Fatalf("adjacent hostname not redacted: in=%q out=%q", in, outAdj)
+		}
+	}
+	// Schema ids must still be preserved under multi-pass.
+	schemaAdj := `{"schema":"reinframe.grok_build_live_control.v2","hosts":"build build"}`
+	outSA := redactHostnameToken(schemaAdj, "build")
+	if !strings.Contains(outSA, "grok_build") {
+		t.Fatalf("multi-pass corrupted schema: %s", outSA)
+	}
+	if strings.Contains(outSA, `"hosts":"build `) || strings.Contains(outSA, ` build"`) {
+		t.Fatalf("multi-pass left residual host: %s", outSA)
+	}
 }
 
 func TestHostnameTokenPresent_MatchesRedactorBoundaries(t *testing.T) {

@@ -273,12 +273,15 @@ func redactLocalIdentity(s string) string {
 	return s
 }
 
-// hostnameTokenRE matches a host string only as a whole token so short hostnames
-// cannot corrupt schema ids (e.g. hostname "build" inside grok_build).
+// hostnameTokenRE matches a host string as a whole DNS label so short hostnames
+// cannot corrupt schema ids (e.g. hostname "build" inside grok_build), while still
+// matching FQDNs like build-01.corp.example.com when host is build-01 (Pro R21 P1).
 // Case-insensitive: Windows/DNS hostnames often vary in case in tool output (Pro R14 P1).
 func hostnameTokenRE(host string) *regexp.Regexp {
-	// Token boundaries: not letter/digit/underscore/dot/hyphen on either side.
-	return regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_.-])` + regexp.QuoteMeta(host) + `([^A-Za-z0-9_.-]|$)`)
+	// Left boundary excludes letter/digit/underscore/hyphen (not bare mid-identifier).
+	// Middle: optional FQDN suffix labels. Right: end or non-DNS char (RE2 has no lookaround).
+	return regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_-])` + regexp.QuoteMeta(host) +
+		`((?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*)([^A-Za-z0-9_.-]|$)`)
 }
 
 // hostnameTokenPresent reports whether host appears as a token (not a substring of
@@ -291,12 +294,14 @@ func hostnameTokenPresent(s, host string) bool {
 }
 
 // redactHostnameToken replaces a runtime hostname only as a whole token so short
-// hostnames cannot mutate JSON keys or schema ids (Pro R10 P2).
+// hostnames cannot mutate JSON keys or schema ids (Pro R10 P2). FQDN forms of the
+// short name are replaced with [HOSTNAME] (Pro R21 P1).
 func redactHostnameToken(s, host string) string {
 	if s == "" || host == "" {
 		return s
 	}
-	return hostnameTokenRE(host).ReplaceAllString(s, `${1}[HOSTNAME]${2}`)
+	// ${1}=left boundary, ${3}=right boundary (preserve), FQDN body dropped into placeholder.
+	return hostnameTokenRE(host).ReplaceAllString(s, `${1}[HOSTNAME]${3}`)
 }
 
 // redactLocalAccountNames rewrites env account names only as path segments.

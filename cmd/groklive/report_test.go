@@ -1725,6 +1725,45 @@ func TestLiveScanContext_RejectsCacheInsideEvidence(t *testing.T) {
 	}
 }
 
+func TestLiveScanContext_RejectsSymlinkIntoEvidenceSubdir(t *testing.T) {
+	// Pro R21 P1: cache-root symlink → evidence/private must still be rejected.
+	ev := t.TempDir()
+	sub := filepath.Join(ev, "private")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	link := filepath.Join(outside, "cache-link")
+	if err := os.Symlink(sub, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	prev := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prev })
+	privateCacheRootFn = func() (string, error) { return link, nil }
+	id, err := newScanContextID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLiveScanContext(ev, id); err == nil {
+		t.Fatal("write must fail when cache root symlinks into evidence subdirectory")
+	}
+}
+
+func TestHostnameToken_MatchesFQDNFirstLabel(t *testing.T) {
+	t.Parallel()
+	host := "build-01"
+	if !hostnameTokenPresent("node build-01.corp.example.com up", host) {
+		t.Fatal("short hostname must match as first FQDN label")
+	}
+	if hostnameTokenPresent("reinframe.grok_build.v1", "build") {
+		t.Fatal("must not match inside schema id grok_build")
+	}
+	out := redactHostnameToken("host=build-01.corp.example.com", host)
+	if strings.Contains(out, "build-01") || !strings.Contains(out, "[HOSTNAME]") {
+		t.Fatalf("FQDN redaction: %s", out)
+	}
+}
+
 func TestLiveScanContext_RejectsCaseAliasCacheRoot(t *testing.T) {
 	// Pro R20 P1: on case-insensitive volumes, Evidence vs eVIDENCE must still
 	// be treated as the same tree.

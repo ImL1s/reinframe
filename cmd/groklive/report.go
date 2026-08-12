@@ -1108,69 +1108,146 @@ func newScanContextID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
+// realPathBestEffort returns a cleaned absolute path with as many existing
+// components symlink-resolved as possible (Pro R20/R21 containment).
+func realPathBestEffort(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	abs = filepath.Clean(abs)
+	if r, err := filepath.EvalSymlinks(abs); err == nil {
+		return r
+	}
+	// Resolve longest existing ancestor, re-join missing suffix.
+	suffix := ""
+	cur := abs
+	for {
+		if r, err := filepath.EvalSymlinks(cur); err == nil {
+			if suffix == "" {
+				return r
+			}
+			return filepath.Join(r, suffix)
+		}
+		dir := filepath.Dir(cur)
+		if dir == cur {
+			break
+		}
+		base := filepath.Base(cur)
+		if suffix == "" {
+			suffix = base
+		} else {
+			suffix = filepath.Join(base, suffix)
+		}
+		cur = dir
+	}
+	return abs
+}
+
 // pathContainedIn reports whether child is equal to parent or nested under it.
-// Uses filesystem identity (os.SameFile) so case-insensitive volumes and
-// macOS /var→/private/var aliases cannot bypass the check (Pro R20 P1).
+// Uses resolved paths + os.SameFile on every ancestor of both the lexical child
+// and its symlink-resolved form, so:
+//   - case-insensitive APFS aliases (Evidence vs eVIDENCE) are caught (Pro R20)
+//   - cache-root symlink into evidence/subdir is caught (Pro R21 P1)
 func pathContainedIn(child, parent string) (bool, error) {
 	pAbs, err := filepath.Abs(parent)
 	if err != nil {
 		return false, err
 	}
 	pAbs = filepath.Clean(pAbs)
-	pInfo, err := os.Stat(pAbs)
+	pReal := realPathBestEffort(pAbs)
+	pInfo, err := os.Stat(pReal)
 	if err != nil {
 		// Parent must exist for a meaningful containment decision.
 		return false, err
 	}
+
 	cAbs, err := filepath.Abs(child)
 	if err != nil {
 		return false, err
 	}
 	cAbs = filepath.Clean(cAbs)
+	cReal := realPathBestEffort(cAbs)
 
-	// Walk child's existing ancestor chain; SameFile against parent.
-	cur := cAbs
-	for {
-		if info, err := os.Stat(cur); err == nil {
-			if os.SameFile(info, pInfo) {
+	// Walk both lexical and resolved child ancestors; SameFile vs evidence root.
+	for _, start := range []string{cAbs, cReal} {
+		cur := start
+		for {
+			if info, err := os.Stat(cur); err == nil {
+				if os.SameFile(info, pInfo) {
+					return true, nil
+				}
+			}
+			if eval, err := filepath.EvalSymlinks(cur); err == nil && eval != cur {
+				if info, err := os.Stat(eval); err == nil && os.SameFile(info, pInfo) {
+					return true, nil
+				}
+				// Walk resolved target ancestors too (symlink → evidence/subdir).
+				rcur := eval
+				for {
+					if info, err := os.Stat(rcur); err == nil && os.SameFile(info, pInfo) {
+						return true, nil
+					}
+					// Also: is rcur under pReal via Rel after both real?
+					if underLexical(rcur, pReal) {
+						return true, nil
+					}
+					next := filepath.Dir(rcur)
+					if next == rcur {
+						break
+					}
+					rcur = next
+				}
+			}
+			if underLexical(cur, pReal) || underLexical(cur, pAbs) {
 				return true, nil
 			}
-		}
-		// Also try EvalSymlinks on this ancestor for /var vs /private/var.
-		if eval, err := filepath.EvalSymlinks(cur); err == nil && eval != cur {
-			if info, err := os.Stat(eval); err == nil && os.SameFile(info, pInfo) {
-				return true, nil
+			next := filepath.Dir(cur)
+			if next == cur {
+				break
 			}
+			cur = next
 		}
-		next := filepath.Dir(cur)
-		if next == cur {
-			break
-		}
-		cur = next
 	}
-	// Lexical fallback only when child does not yet exist and no ancestor matched:
-	// still compare cleaned absolute strings case-insensitively for the common
-	// APFS trap (Evidence vs eVIDENCE) without requiring the path to exist.
-	if equalFoldPath(cAbs, pAbs) {
-		return true, nil
+	return underLexical(cReal, pReal) || underLexical(cAbs, pAbs) || underLexical(cReal, pAbs), nil
+}
+
+func underLexical(child, parent string) bool {
+	if child == "" || parent == "" {
+		return false
+	}
+	if equalFoldPath(child, parent) {
+		return true
 	}
 	sep := string(os.PathSeparator)
-	// Case-insensitive prefix (APFS default on macOS).
-	if len(cAbs) > len(pAbs) && equalFoldPath(cAbs[:len(pAbs)], pAbs) {
-		// Next rune must be separator.
-		if strings.HasPrefix(strings.ToLower(cAbs), strings.ToLower(pAbs)+sep) ||
-			strings.HasPrefix(cAbs, pAbs+sep) {
-			return true, nil
+	cl, pl := strings.ToLower(child), strings.ToLower(parent)
+	if strings.HasPrefix(cl, pl+sep) {
+		return true
+	}
+	// filepath.Rel when same volume.
+	if rel, err := filepath.Rel(parent, child); err == nil {
+		if rel == "." {
+			return true
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+sep) {
+			return true
 		}
 	}
-	return false, nil
+	if rel, err := filepath.Rel(strings.ToLower(parent), strings.ToLower(child)); err == nil {
+		if rel == "." {
+			return true
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+sep) {
+			return true
+		}
+	}
+	return false
 }
 
 func equalFoldPath(a, b string) bool {
 	if a == b {
 		return true
 	}
-	// filepath on Windows is already case-insensitive in many APIs; use EqualFold.
 	return strings.EqualFold(a, b)
 }
 

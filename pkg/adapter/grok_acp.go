@@ -113,9 +113,10 @@ type GrokACPClient struct {
 	negotiated GrokACPNegotiatedCaps
 	// initOK is true only after fail-closed initialize succeeded.
 	initOK bool
-	// deliverMu serializes DrainUpdates + session/prompt + update wait across all
-	// actuators sharing this client (Pro R13 P2: actuator-scoped mutex is insufficient).
-	deliverMu sync.Mutex
+	// deliverGate serializes DrainUpdates + session/prompt + update wait across all
+	// actuators sharing this client (Pro R13 P2). Capacity-1 channel so waiters can
+	// select on ctx.Done() instead of blocking forever on sync.Mutex (Pro R36 P2).
+	deliverGate chan struct{}
 }
 
 type jsonRPCMessage struct {
@@ -218,15 +219,16 @@ func StartGrokACPClient(ctx context.Context, cfg GrokACPConfig) (*GrokACPClient,
 		return nil, fmt.Errorf("grok acp: attach process tree: %w", err)
 	}
 	c := &GrokACPClient{
-		cfg:        cfg,
-		cmd:        cmd,
-		plat:       plat,
-		stdin:      stdin,
-		stdout:     stdout,
-		pending:    make(map[int64]chan jsonRPCMessage),
-		updates:    make(chan map[string]any, cfg.QueueDepth),
-		lastACK:    ACKLayerNone,
-		readerDone: make(chan struct{}),
+		cfg:         cfg,
+		cmd:         cmd,
+		plat:        plat,
+		stdin:       stdin,
+		stdout:      stdout,
+		pending:     make(map[int64]chan jsonRPCMessage),
+		updates:     make(chan map[string]any, cfg.QueueDepth),
+		lastACK:     ACKLayerNone,
+		readerDone:  make(chan struct{}),
+		deliverGate: make(chan struct{}, 1),
 	}
 	go c.readLoop()
 	return c, nil
@@ -244,16 +246,57 @@ func NewGrokACPClientForTest(serverIn io.WriteCloser, serverOut io.ReadCloser, c
 		cfg.StartupTimeout = DefaultGrokACPStartup
 	}
 	c := &GrokACPClient{
-		cfg:        cfg,
-		stdin:      serverIn,  // client writes requests here (server reads)
-		stdout:     serverOut, // client reads responses here (server writes)
-		pending:    make(map[int64]chan jsonRPCMessage),
-		updates:    make(chan map[string]any, cfg.QueueDepth),
-		lastACK:    ACKLayerNone,
-		readerDone: make(chan struct{}),
+		cfg:         cfg,
+		stdin:       serverIn,  // client writes requests here (server reads)
+		stdout:      serverOut, // client reads responses here (server writes)
+		pending:     make(map[int64]chan jsonRPCMessage),
+		updates:     make(chan map[string]any, cfg.QueueDepth),
+		lastACK:     ACKLayerNone,
+		readerDone:  make(chan struct{}),
+		deliverGate: make(chan struct{}, 1),
 	}
 	go c.readLoop()
 	return c
+}
+
+// acquireDeliver obtains the shared-client delivery gate or returns when ctx is done
+// (Pro R36 P2: must not block forever behind another delivery's WaitUpdate).
+func (c *GrokACPClient) acquireDeliver(ctx context.Context) error {
+	if c == nil {
+		return fmt.Errorf("grok acp: nil client")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.mu.Lock()
+	if c.deliverGate == nil {
+		c.deliverGate = make(chan struct{}, 1)
+	}
+	gate := c.deliverGate
+	c.mu.Unlock()
+	select {
+	case gate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// releaseDeliver frees the shared-client delivery gate.
+func (c *GrokACPClient) releaseDeliver() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	gate := c.deliverGate
+	c.mu.Unlock()
+	if gate == nil {
+		return
+	}
+	select {
+	case <-gate:
+	default:
+	}
 }
 
 // Initialize sends initialize and returns the raw result only after fail-closed validation.

@@ -322,6 +322,69 @@ func TestGrokACPActuator_SecondDeliverStaysTransportWithoutNewUpdates(t *testing
 	wg.Wait()
 }
 
+// Pro R36 P2: waiter blocked on shared delivery gate must honor its own context.
+func TestGrokACPActuator_DeliverGateRespectsContext(t *testing.T) {
+	t.Parallel()
+	serverR, clientW := io.Pipe()
+	clientR, serverW := io.Pipe()
+	// Server that answers initialize/session/new/prompt but never emits updates.
+	go fakeACPServer(t, serverR, serverW, nil)
+	c := adapter.NewGrokACPClientForTest(clientW, clientR, adapter.GrokACPConfig{})
+	ctx := context.Background()
+	if _, err := c.Initialize(ctx, map[string]any{"name": "t"}); err != nil {
+		t.Fatal(err)
+	}
+	sid, err := c.SessionNew(ctx, map[string]any{"cwd": "/tmp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	act := &adapter.GrokACPActuator{
+		Client:          c,
+		TargetSessionID: sid,
+		WaitUpdate:      3 * time.Second,
+	}
+	// Hold the gate with a long WaitUpdate delivery.
+	started := make(chan struct{})
+	doneA := make(chan struct{})
+	go func() {
+		defer close(doneA)
+		close(started)
+		_, _ = act.Deliver(context.Background(), protocol.Intervention{
+			InterventionID: "iv-hold",
+			SessionID:      "rf",
+			ActionType:     "ZOOM_OUT_PROMPT",
+			AdvicePrompt:   "hold gate",
+		})
+	}()
+	<-started
+	// Give A time to acquire gate and enter WaitUpdate.
+	time.Sleep(80 * time.Millisecond)
+	// B must fail near its own short deadline, not after A's 3s wait.
+	bCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	t0 := time.Now()
+	res, err := act.Deliver(bCtx, protocol.Intervention{
+		InterventionID: "iv-wait",
+		SessionID:      "rf",
+		ActionType:     "ZOOM_OUT_PROMPT",
+		AdvicePrompt:   "should timeout on gate",
+	})
+	elapsed := time.Since(t0)
+	if err == nil {
+		t.Fatal("expected context error while waiting for delivery gate")
+	}
+	if res.DeliveryBoundary != adapter.BoundaryNotSent {
+		t.Fatalf("want not_sent boundary, got %s msg=%s", res.DeliveryBoundary, res.Message)
+	}
+	if elapsed > 1500*time.Millisecond {
+		t.Fatalf("gate wait ignored context: elapsed=%v (should be ~200ms, not full A wait)", elapsed)
+	}
+	<-doneA
+	_ = c.Close()
+	_ = clientW.Close()
+	_ = serverW.Close()
+}
+
 func TestAdvisoryDelivery_LedgerSuppressesDuplicate(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

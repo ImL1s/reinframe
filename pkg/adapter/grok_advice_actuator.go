@@ -79,9 +79,17 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		return base, fmt.Errorf("grok advice: client required")
 	}
 	// Serialize on the shared client so multiple actuators cannot race on
-	// DrainUpdates / Updates() (Pro R13 P2: mutex must not be actuator-scoped).
-	g.Client.deliverMu.Lock()
-	defer g.Client.deliverMu.Unlock()
+	// DrainUpdates / Updates() (Pro R13 P2). Gate is context-cancellable so a
+	// waiter is not stuck behind another delivery's WaitUpdate (Pro R36 P2).
+	if err := g.Client.acquireDeliver(ctx); err != nil {
+		base.Accepted = false
+		base.AckStatus = AckStatusTimedOut
+		base.ErrorClass = ErrorClassTimeout
+		base.DeliveryBoundary = BoundaryNotSent
+		base.Message = "context done waiting for shared client delivery gate"
+		return base, err
+	}
+	defer g.Client.releaseDeliver()
 	now := g.now()
 	base.DeliveredAt = now
 	base.HostVersion = g.HostVersion

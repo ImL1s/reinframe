@@ -2236,16 +2236,26 @@ func TestScanPrivacy_HarnessOwnedFilenameNotHostLeak(t *testing.T) {
 }
 
 // Pro R42 P2: issue-* wildcard must not exempt host-bearing names like issue-[build-01].json.
+// Pro R44: formal report basenames are not fully harness-owned — only the version
+// segment is host-scanned via filenameIdentityLeak (fixed stems remain exempt).
 func TestScanPrivacy_IssuePrefixNotBroadExempt(t *testing.T) {
 	// Not parallel: mutates privateCacheRootFn / scanContext paths.
 	if isHarnessOwnedEvidenceFilename("issue-[build-01].json") {
 		t.Fatal("issue-[build-01].json must not be harness-owned")
 	}
-	if !isHarnessOwnedEvidenceFilename("issue-167-live-v2-grok-1.0.0-darwin-2026-08-12.json") {
-		t.Fatal("canonical formal report basename must be harness-owned")
+	if isHarnessOwnedEvidenceFilename("issue-167-live-v2-grok-1.0.0-darwin-2026-08-12.json") {
+		t.Fatal("formal report basenames are not fully harness-owned (R44: version-segment scan)")
 	}
 	if isHarnessOwnedEvidenceFilename("issue-167-live-v2-build-01.json") {
 		t.Fatal("malformed formal-prefix name with embedded host must not be harness-owned")
+	}
+	// Canonical formal name must not leak for an unrelated host (version is grok-1.0.0).
+	if leak, _ := filenameIdentityLeak("issue-167-live-v2-grok-1.0.0-darwin-2026-08-12.json", "build-01"); leak {
+		t.Fatal("canonical formal name must not leak for unrelated host")
+	}
+	// Version-slot host must still leak under full formal shape.
+	if leak, _ := filenameIdentityLeak("issue-167-live-v2-build-01-darwin-2026-08-12.json", "build-01"); !leak {
+		t.Fatal("full-shape formal name with host in version segment must leak")
 	}
 	dir := t.TempDir()
 	live := "build-01"
@@ -2293,18 +2303,9 @@ func TestScanPrivacy_IssuePrefixNotBroadExempt(t *testing.T) {
 	}
 }
 
-// Pro R43 P1: issue-167-live-v2-build-01.json must still scan (overbroad formal prefix).
+// Pro R43/R44: host embedded in formal-shaped names must still fail privacy.
 func TestScanPrivacy_FormalPrefixHostEmbedStillLeaks(t *testing.T) {
 	// Not parallel: mutates privateCacheRootFn.
-	dir := t.TempDir()
-	live := "build-01"
-	name := "issue-167-live-v2-" + live + ".json"
-	if isHarnessOwnedEvidenceFilename(name) {
-		t.Fatal("must not treat host-embedded formal-prefix name as harness-owned")
-	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(`{"ok":true}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	prevC, prevD := reinframeCommit, reinframeDirty
 	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
 	reinframeCommit = testFullRev
@@ -2313,36 +2314,52 @@ func TestScanPrivacy_FormalPrefixHostEmbedStillLeaks(t *testing.T) {
 	prevRoot := privateCacheRootFn
 	t.Cleanup(func() { privateCacheRootFn = prevRoot })
 	privateCacheRootFn = func() (string, error) { return cache, nil }
-	scanID := "abcdef0123456789abcdef0123456789"
-	path, err := liveScanContextPath(dir, scanID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	body := fmt.Sprintf(`{"schema":%q,"scan_context_id":%q,"live_hostname":%q,"at":"t"}`, liveScanContextSchema, scanID, live)
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	idBody := fmt.Sprintf(`{"schema":%q,"live_binary_commit":%q,"live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":%q,"live_goarch":%q,"scan_context_id":%q,"at":"t"}`,
-		liveIdentitySchema, testFullRev, runtime.GOOS, runtime.GOARCH, scanID)
-	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(idBody), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p := scanPrivacy(dir)
-	if p["complete"] == true {
-		t.Fatalf("must not complete with host in formal-prefix filename: %+v", p)
-	}
-	found := false
-	fails, _ := p["failure_classes"].([]string)
-	for _, f := range fails {
-		if strings.Contains(f, "local_identity_filename:"+name) {
-			found = true
+
+	live := "build-01"
+	// Short malformed + full-shape version-slot host (Pro R44 P1).
+	for _, name := range []string{
+		"issue-167-live-v2-" + live + ".json",
+		"issue-167-live-v2-" + live + "-darwin-2026-08-12.json",
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(`{"ok":true}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		scanID := "abcdef0123456789abcdef0123456789"
+		path, err := liveScanContextPath(dir, scanID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		body := fmt.Sprintf(`{"schema":%q,"scan_context_id":%q,"live_hostname":%q,"at":"t"}`, liveScanContextSchema, scanID, live)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		idBody := fmt.Sprintf(`{"schema":%q,"live_binary_commit":%q,"live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":%q,"live_goarch":%q,"scan_context_id":%q,"at":"t"}`,
+			liveIdentitySchema, testFullRev, runtime.GOOS, runtime.GOARCH, scanID)
+		if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(idBody), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p := scanPrivacy(dir)
+		if p["complete"] == true {
+			t.Fatalf("%s must not complete: %+v", name, p)
+		}
+		found := false
+		fails, _ := p["failure_classes"].([]string)
+		for _, f := range fails {
+			if strings.Contains(f, "local_identity_filename:"+name) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("want local_identity_filename:%s; got %v", name, fails)
 		}
 	}
-	if !found {
-		t.Fatalf("want local_identity_filename:%s; got %v", name, fails)
+	// Canonical generator name remains free of host in version segment.
+	if leak, _ := filenameIdentityLeak("issue-167-live-v2-grok-1.0.0-darwin-2026-08-12.json", "build-01"); leak {
+		t.Fatal("canonical formal name must not leak for unrelated host")
 	}
 }
 

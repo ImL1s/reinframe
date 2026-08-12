@@ -946,14 +946,13 @@ func scanPrivacy(evDir string) map[string]any {
 			hits++
 			fails = append(fails, "local_identity:"+e.Name())
 		}
-		// Filenames also publish identity (Pro R35 P1): build-01.log with clean body
-		// must not allow privacy.complete=true. Exempt closed harness-owned basenames
-		// so hostname=preflight does not false-flag preflight.json (Pro R41 P2).
-		// Filename-specific host matching treats '-' as a boundary so
-		// issue-167-live-v2-build-01.json still flags host build-01 (Pro R43 P1).
-		if !isHarnessOwnedEvidenceFilename(e.Name()) && filenameHasLocalIdentityLeak(e.Name(), scanHosts...) {
+		// Filenames also publish identity (Pro R35 P1). Fixed harness basenames are
+		// fully exempt (preflight.json vs host=preflight). Formal report names are
+		// NOT fully exempt: only the version segment is host-scanned so a spoofed
+		// issue-167-live-v2-build-01-darwin-2026-08-12.json still fails (Pro R44 P1).
+		if leak, why := filenameIdentityLeak(e.Name(), scanHosts...); leak {
 			hits++
-			fails = append(fails, "local_identity_filename:"+e.Name())
+			fails = append(fails, "local_identity_filename:"+e.Name()+why)
 		}
 	}
 	out["files_seen"] = seen
@@ -1096,10 +1095,9 @@ func filenameHostTokenPresent(s, host string) bool {
 	return re.MatchString(s)
 }
 
-// isHarnessOwnedEvidenceFilename reports closed basenames written by groklive itself.
-// These must not be treated as host tokens when the machine hostname collides with the
-// basename stem (Pro R41 P2: hostname=preflight must not flag preflight.json).
-// User-supplied names (e.g. preflight.log) remain scannable.
+// isHarnessOwnedEvidenceFilename reports fixed basenames written by groklive itself
+// (not formal report names). Hostname collisions with these stems must not false-flag
+// (Pro R41 P2: host=preflight vs preflight.json).
 func isHarnessOwnedEvidenceFilename(name string) bool {
 	base := filepath.Base(name)
 	switch base {
@@ -1111,20 +1109,38 @@ func isHarnessOwnedEvidenceFilename(name string) bool {
 		"RUN.md", "PRIVACY_ERRATA.md", "SUPERSEDED.md":
 		return true
 	}
-	// Formal reports from generateLiveReport only — full shape (Pro R43 P1):
-	// issue-167-live-v2-<sanitizeVersion>-<goos|unknown>-<YYYY-MM-DD>.{json,md}
-	// Prefix alone is insufficient (issue-167-live-v2-build-01.json must still scan).
-	return formalLiveReportBasenameRE.MatchString(base)
+	return false
 }
 
-// formalLiveReportBasenameRE matches only basenames the report generator emits.
-// Version segment is sanitized [A-Za-z0-9._-]+; platform is known GOOS or "unknown";
-// date is UTC YYYY-MM-DD.
+// formalLiveReportBasenameRE matches generator formal report basenames and captures
+// the version segment for host scanning (Pro R44 P1).
+// issue-167-live-v2-<ver>-<goos|unknown>-YYYY-MM-DD.{json,md}
 var formalLiveReportBasenameRE = regexp.MustCompile(
-	`^issue-167-live-v2-[A-Za-z0-9._-]{1,48}-` +
+	`^issue-167-live-v2-([A-Za-z0-9._-]{1,48})-` +
 		`(?:unknown|aix|android|darwin|dragonfly|freebsd|hurd|illumos|ios|js|linux|nacl|netbsd|openbsd|plan9|solaris|wasip1|windows|zos)-` +
 		`\d{4}-\d{2}-\d{2}\.(?:json|md)$`,
 )
+
+// filenameIdentityLeak reports whether a basename publishes a host token.
+// Fixed harness names: never. Formal reports: scan only the version component.
+// All other names: full filename host scan.
+func filenameIdentityLeak(name string, extraHostnames ...string) (bool, string) {
+	base := filepath.Base(name)
+	if isHarnessOwnedEvidenceFilename(base) {
+		return false, ""
+	}
+	if m := formalLiveReportBasenameRE.FindStringSubmatch(base); len(m) == 2 {
+		// Only the free version segment can carry a host; fixed prefix/GOOS/date/ext skipped.
+		if filenameHasLocalIdentityLeak(m[1], extraHostnames...) {
+			return true, ""
+		}
+		return false, ""
+	}
+	if filenameHasLocalIdentityLeak(base, extraHostnames...) {
+		return true, ""
+	}
+	return false, ""
+}
 
 // contentHasLocalIdentityLeak reports home/tmp absolute paths or .local hostnames in evidence.
 // Covers Unix and Windows (including JSON-escaped backslashes after Marshal).

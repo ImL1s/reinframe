@@ -2112,6 +2112,50 @@ func TestLiveScanContext_ExternalImportCrossCache(t *testing.T) {
 	}
 }
 
+// Pro R29 P1: typed map[string]ScenarioResult free-text must be redacted via writeJSON.
+func TestWriteJSON_RedactsTypedScenarioMapFreeText(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenarios.json")
+	// Inject a free-text host token that would only appear if walk visits Detail.
+	// Use a distinctive hostname-like token that is not a closed enum.
+	m := map[string]ScenarioResult{
+		"HOOK-ALLOW-001": {
+			ID:     "HOOK-ALLOW-001",
+			Status: "PASS",
+			Detail: "prompt transport OK on host build-99-live",
+		},
+	}
+	// Temporarily force hostname via env is hard; call redact path by writing
+	// through writeJSON then check Detail was processed as free-text.
+	// We assert structure: status preserved, and redactLocalIdentityAlways would
+	// rewrite home paths in Detail if present.
+	m["HOOK-ALLOW-001"] = ScenarioResult{
+		ID:     "HOOK-ALLOW-001",
+		Status: "PASS",
+		Detail: "path=/Users/alice/project transport OK",
+	}
+	if err := writeJSON(path, m); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(b)
+	if strings.Contains(raw, "/Users/alice") {
+		t.Fatalf("typed scenario Detail path not redacted: %s", raw)
+	}
+	if !strings.Contains(raw, `"status": "PASS"`) && !strings.Contains(raw, `"status":"PASS"`) {
+		// indented form
+		if !strings.Contains(raw, "PASS") {
+			t.Fatalf("status lost: %s", raw)
+		}
+	}
+	if !strings.Contains(raw, "[HOME]") {
+		t.Fatalf("expected [HOME] redaction in Detail: %s", raw)
+	}
+}
+
 // Pro R28 P1: raw scan-context under evidence is a privacy failure.
 func TestScanPrivacy_ScanContextInEvidenceFails(t *testing.T) {
 	dir := t.TempDir()

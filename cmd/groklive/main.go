@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -115,11 +116,22 @@ func writeJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	// Field-aware identity redaction before marshal (Pro R28 P2): structured enum /
-	// platform keys keep typed values; free-text strings always get path+hostname redact
-	// including unsafe hostnames like "linux"/"go"/"transport".
-	v = redactIdentityInValue(v)
-	b, err := json.MarshalIndent(v, "", "  ")
+	// Normalize typed maps/structs/slices into map[string]any / []any via JSON
+	// (Pro R29 P1): map[string]ScenarioResult and []string otherwise bypass the walker.
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var normalized any
+	if err := dec.Decode(&normalized); err != nil {
+		return err
+	}
+	// Field-aware identity redaction: structured enum/platform keys keep values;
+	// free-text strings always get path+hostname redact (incl. unsafe hostnames).
+	normalized = redactIdentityInValue(normalized)
+	b, err := json.MarshalIndent(normalized, "", "  ")
 	if err != nil {
 		return err
 	}

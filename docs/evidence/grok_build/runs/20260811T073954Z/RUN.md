@@ -9,7 +9,7 @@
 - **final_disposition (harness)**: **NO_GO**
 - **limitations**: ['HOOK-DENY-001 FAIL']
 - **scenario counts**: {'PASS': 8, 'INCONCLUSIVE': 9, 'FAIL': 1, 'NOT_RUN': 1}
-- **strongest_proven ACK**: `session_visible` (source-correlated; `explicit_claimed=false`)
+- **strongest_proven ACK (as recorded)**: `session_visible` (`explicit_claimed=false`) — **legacy temporal correlation only**; see `LEGACY_CORRELATION.md` (not source-correlated under post-P1-A / #199 rules)
 - **privacy.complete**: `True` (`raw_thoughts_stored=false`; `trust_launch` closed allowlist, no raw `thought`)
 - **caps_digest**: load negotiated; `session/load` optional path remains INCONCLUSIVE (`Invalid params`)
 
@@ -17,11 +17,12 @@
 
 This directory is **immutable mechanical evidence** from `cmd/groklive all --live` on main tip `694e09d…` (post-#225 privacy exact-key fix).
 Scenario statuses and disposition were **not** hand-edited to a stronger result.
+Recorded `session_visible` must **not** be cited as source-correlated product evidence; see `LEGACY_CORRELATION.md`.
 
 ### What improved vs `20260810T170640Z` (quota-contaminated NO_GO)
 
 - No host **402 / balance exhausted** markers in this campaign log.
-- **ACP-SESSION-001 PASS** with source-correlated **session_visible** (prior run: FAIL / Internal error under quota contamination).
+- **ACP-SESSION-001 PASS** as recorded (session-matched update; **legacy** temporal correlation — not #199 source-correlated).
 - **CHALLENGE-001 PASS**.
 - **trust_launch** is closed-allowlist only (hashed session/request IDs; `stdout_raw=false`; no `thought` field).
 

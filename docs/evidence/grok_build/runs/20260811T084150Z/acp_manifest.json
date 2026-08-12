@@ -1,0 +1,43 @@
+{
+  "auth_methods": [
+    "cached_token",
+    "grok.com"
+  ],
+  "caps_digest": "load=true pause=false cancel=false resume=false tool=false diff=false",
+  "post_handshake": {
+    "profile": "reinframe.grok_build_acp.v1",
+    "protocol_version": 1,
+    "cap_event_stream": true,
+    "cap_tool_inspection": false,
+    "cap_advice_delivery": true,
+    "cap_diff_inspection": false,
+    "cap_pause": false,
+    "cap_cancel": false,
+    "cap_resume": false,
+    "cap_intervention_ack": false,
+    "explicit_ack": false,
+    "load_session": true,
+    "auth_methods": [
+      "cached_token",
+      "grok.com"
+    ],
+    "negotiated_level": 0,
+    "honesty_note": "derived from initialize via protocol.EvaluateAchievableLevel; Level 2 requires full Level1 mask plus CapDiffInspection+CapPause+CapCancel+CapResume; JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; live #167 harness path exercised on cmd/groklive (does not claim disposition GO); no CapPause/L2 claimed from hooks alone"
+  },
+  "pre_handshake": {
+    "profile": "reinframe.grok_build_acp.v1",
+    "protocol_version": 1,
+    "cap_event_stream": false,
+    "cap_tool_inspection": false,
+    "cap_advice_delivery": false,
+    "cap_diff_inspection": false,
+    "cap_pause": false,
+    "cap_cancel": false,
+    "cap_resume": false,
+    "cap_intervention_ack": false,
+    "explicit_ack": false,
+    "load_session": false,
+    "negotiated_level": -1,
+    "honesty_note": "pre-handshake: no achieved level or unproven caps; call ManifestFromNegotiated after initialize; JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; live #167 harness path via cmd/groklive does not imply disposition GO"
+  }
+}

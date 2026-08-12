@@ -1,0 +1,18 @@
+{
+  "capture": "closed_allowlist",
+  "exit": 0,
+  "request_id_sha256": "01d2d5ece38590ae62b36723db5e53e774c2b617fa08dec1257fa4d88ebb23ce",
+  "schema": "reinframe.trust_launch.v1",
+  "session_id_sha256": "7bdcada2be5d9deb75ef4453fe64ca30fae96f477827288a8e6129cb1cba3b13",
+  "stderr_raw": false,
+  "stdout_raw": false,
+  "stop_reason": "end_turn",
+  "text": "TRUST_OK",
+  "usage": {
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 5376,
+    "input_tokens": 48849,
+    "output_tokens": 39,
+    "total_tokens": 54264
+  }
+}

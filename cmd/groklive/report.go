@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -126,9 +129,54 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		}
 	}
 
-	osName := runtime.GOOS
 	day := time.Now().UTC().Format("2006-01-02")
 	commit, dirty, commitSrc := reinframeBuildIdentity()
+	// live_identity.json is mandatory for qualifying reports — never fall back to the
+	// report-generator identity (GPT-5.6 Pro P1: false-qualify via silent fallback).
+	liveID := loadLiveIdentity(evDir)
+	liveBinaryCommit, liveBinaryDirty, liveBinarySrc := liveID.Commit, liveID.Dirty, liveID.Src
+	// Campaign platform from live_identity when bound; never silently rename with generator GOOS.
+	osName := liveID.GOOS
+	liveArch := liveID.GOARCH
+	if osName == "" {
+		osName = runtime.GOOS
+	}
+	if liveArch == "" {
+		liveArch = runtime.GOARCH
+	}
+	if !liveID.OK {
+		reasons = append(reasons, liveID.Err)
+		if floor == "GO" || floor == "LIMITED_GO" {
+			floor = demoteFloor(floor, "NO_GO")
+			reasons = append(reasons, "invalid/missing live_identity forbids GO/LIMITED_GO")
+		}
+		if liveBinarySrc == "" {
+			liveBinarySrc = "missing"
+		}
+	}
+	// External Grok CLI content binding (Pro R6 P1): standalone phases must share
+	// the same --grok-executable contents, not only Reinframe harness identity.
+	if grokOK, grokWhy := loadLiveGrokExecutableOK(evDir); !grokOK {
+		// Require binding when any phase evidence is present (preflight/scenarios).
+		if preflightPresent || len(scenarios) > 0 {
+			reasons = append(reasons, grokWhy)
+			if floor == "GO" || floor == "LIMITED_GO" {
+				floor = demoteFloor(floor, "NO_GO")
+				reasons = append(reasons, "invalid/missing live_grok_executable forbids GO/LIMITED_GO")
+			}
+		}
+	}
+	// Hooks helper content binding (Pro R14 P1): when hook scenarios exist, require
+	// live_grokhooks_executable.json so outcomes cannot come from a swapped helper.
+	if hasHookScenarios(scenarios) {
+		if hooksOK, hooksWhy := loadLiveGrokhooksExecutableOK(evDir); !hooksOK {
+			reasons = append(reasons, hooksWhy)
+			if floor == "GO" || floor == "LIMITED_GO" {
+				floor = demoteFloor(floor, "NO_GO")
+				reasons = append(reasons, "invalid/missing live_grokhooks_executable forbids GO/LIMITED_GO")
+			}
+		}
+	}
 
 	ack := "transport"
 	if sr, ok := scenarios["ACP-SESSION-001"]; ok && sr.ACKLayer != "" {
@@ -146,7 +194,8 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	disp = demoteFloor(floor, disp)
 
 	// Live qualification for GO and LIMITED_GO alike (#215).
-	if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, commit, commitSrc, dirty); demote != disp {
+	// Bind qualification to the LIVE executor binary (not a later report re-run generator).
+	if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, liveBinaryCommit, liveBinarySrc, liveBinaryDirty); demote != disp {
 		disp = demote
 		reasons = append(reasons, msgs...)
 	}
@@ -156,20 +205,39 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	report := map[string]any{
 		"schema_version": LiveControlSchemaV2,
 		"provenance": map[string]any{
-			"issue":                 167,
-			"generated_at":          stamp(),
-			"goos":                  osName,
-			"goarch":                runtime.GOARCH,
-			"grok_version":          ver,
-			"grok_version_full":     verFull,
-			"reinframe_commit":      commit,
-			"reinframe_dirty":       dirty,
-			"reinframe_commit_src":  commitSrc,
-			"starting_main_sha":     "62889cb59916fa2dd412a2c5d511c7ac7c4b23c6",
-			"main_tip_note":         "evidence produced against live host using shipped #165/#166 APIs; v2 gates (#199/#215)",
-			"harness":               "cmd/groklive",
-			"evidence_binding_note": "generated solely by cmd/groklive report; no post-hoc privacy rewrites",
-			"schema_note":           "v2 closed disposition matrix; historical v1 evidence is immutable under HISTORICAL_v1.md",
+			"issue":                167,
+			"generated_at":         stamp(),
+			// Campaign platform (prefer live_identity bind; Pro R10 P2).
+			"goos":                 osName,
+			"goarch":               liveArch,
+			"live_goos":            liveID.GOOS,
+			"live_goarch":          liveID.GOARCH,
+			"report_generator_goos":   runtime.GOOS,
+			"report_generator_goarch": runtime.GOARCH,
+			"grok_version":         ver,
+			"grok_version_full":    verFull,
+			"reinframe_commit":     commit,
+			"reinframe_dirty":      dirty,
+			"reinframe_commit_src": commitSrc,
+			// Live executor vs report generator identities (#post-230 GPT P1-B).
+			// starting_main_sha / live_binary_* describe the process that executed live phases.
+			// report_generator_* describe the binary that produced this formal report.
+			"starting_main_sha":           liveBinaryCommit,
+			"live_binary_commit":          liveBinaryCommit,
+			"live_binary_dirty":           liveBinaryDirty,
+			"live_binary_commit_src":      liveBinarySrc,
+			"report_generator_commit":     commit,
+			"report_generator_dirty":      dirty,
+			"report_generator_commit_src": commitSrc,
+			// derived when live vs generator commit, dirty, or platform differ (Pro R10 P2).
+			"derived": liveID.OK && liveBinaryCommit != "" && commit != "" &&
+				(liveBinaryCommit != commit || liveBinaryDirty != dirty ||
+					(liveID.GOOS != "" && liveID.GOOS != runtime.GOOS) ||
+					(liveID.GOARCH != "" && liveID.GOARCH != runtime.GOARCH)),
+			"main_tip_note":               "evidence produced against live host using shipped #165/#166 APIs; v2 gates (#199/#215); live_binary_commit vs report_generator_commit may differ when report is re-run",
+			"harness":                     "cmd/groklive",
+			"evidence_binding_note":       "generated by cmd/groklive report; live_binary_commit requires complete live_identity.json (no generator fallback)",
+			"schema_note":                 "v2 closed disposition matrix; historical v1 evidence is immutable under HISTORICAL_v1.md",
 		},
 		"entry_gates": map[string]any{
 			"live_flag_required": true,
@@ -221,7 +289,7 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		disp = demoteFloor(floor, disp2)
 		reasons = append(reasons, reasons2...)
 		reasons = append(reasons, verrs...)
-		if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, commit, commitSrc, dirty); demote != disp {
+		if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, liveBinaryCommit, liveBinarySrc, liveBinaryDirty); demote != disp {
 			disp = demote
 			reasons = append(reasons, msgs...)
 		}
@@ -268,7 +336,7 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		return liveReportOutcome{}, fmt.Errorf("written report fails committed schema: %w", err)
 	}
 
-	md := renderMD(report, disp, ack, ver, osName, reasons, scenarios)
+	md := redactLocalIdentity(renderMD(report, disp, ack, ver, osName, reasons, scenarios))
 	if err := os.WriteFile(mdPath, []byte(md), 0o600); err != nil {
 		_ = os.Remove(jsonPath)
 		return liveReportOutcome{}, err
@@ -820,6 +888,11 @@ func scanPrivacy(evDir string) map[string]any {
 		if contentHasPrivateReasoning(b) {
 			rawThoughts = true
 		}
+		// Local host identity / absolute paths (#168 / GPT P1-C).
+		if contentHasLocalIdentityLeak(s) {
+			hits++
+			fails = append(fails, "local_identity:"+e.Name())
+		}
 	}
 	out["files_seen"] = seen
 	out["files_scanned"] = scanned
@@ -832,9 +905,466 @@ func scanPrivacy(evDir string) map[string]any {
 	if len(fails) > 0 {
 		out["failure_classes"] = fails
 	}
-	// Complete only when every seen entry was scanned and at least one file scanned.
+	// Complete only when every seen entry was scanned and at least one file scanned
+	// and no privacy failure classes (including local identity leaks).
 	out["complete"] = skipped == 0 && scanned > 0 && len(fails) == 0
 	return out
+}
+
+// contentHasLocalIdentityLeak reports home/tmp absolute paths or .local hostnames in evidence.
+// Covers Unix and Windows (including JSON-escaped backslashes after Marshal).
+func contentHasLocalIdentityLeak(s string) bool {
+	if s == "" {
+		return false
+	}
+	// Already redacted placeholders are fine as tokens; residual raw paths still fail.
+	if strings.Contains(s, "/Users/") || strings.Contains(s, "/home/") {
+		return true
+	}
+	if strings.Contains(s, "/var/folders/") {
+		return true
+	}
+	// Windows user roots: C:\Users\…, C:\\Users\\… (JSON), C:/Users/…
+	if winUsersPath.MatchString(s) || winUsersPathEscaped.MatchString(s) || winUsersPathSlash.MatchString(s) {
+		return true
+	}
+	if strings.Contains(s, `\Users\`) || strings.Contains(s, `\\Users\\`) {
+		return true
+	}
+	if localHostname.MatchString(s) {
+		return true
+	}
+	// Runtime hostname without .local suffix (Linux CI / containers).
+	// Always strip [HOSTNAME] placeholders first so mixed placeholder+raw fails (Codex P1).
+	// Match token boundaries only — unrestricted Contains false-flags schema ids when
+	// hostname is a common word like "build" (Codex P2 on tip 608cdcc).
+	if h, err := os.Hostname(); err == nil {
+		h = strings.TrimSpace(h)
+		if h != "" && h != "localhost" && len(h) > 1 {
+			strippedHost := strings.ReplaceAll(s, "[HOSTNAME]", "")
+			if hostnameTokenPresent(strippedHost, h) {
+				return true
+			}
+		}
+	}
+	// Unhashed temp paths (Unix /tmp and Windows Temp). Strip [TMP:…] placeholders first
+	// so a mixed file with one good placeholder and one raw path still fails (#Codex P2).
+	withoutPlaceholders := localTmpPlaceholder.ReplaceAllString(s, "")
+	// Also strip bare [TMP] env-root replacements and identity placeholders.
+	withoutPlaceholders = strings.ReplaceAll(withoutPlaceholders, "[TMP]", "")
+	withoutPlaceholders = strings.ReplaceAll(withoutPlaceholders, "[HOSTNAME]", "")
+	withoutPlaceholders = strings.ReplaceAll(withoutPlaceholders, "[HOME]", "")
+	if localTmpPath.MatchString(withoutPlaceholders) {
+		return true
+	}
+	if winTempPath.MatchString(withoutPlaceholders) || winTempPathEscaped.MatchString(withoutPlaceholders) {
+		return true
+	}
+	if strings.Contains(withoutPlaceholders, `\AppData\Local\Temp`) ||
+		strings.Contains(withoutPlaceholders, `\\AppData\\Local\\Temp`) ||
+		strings.Contains(withoutPlaceholders, `\Windows\Temp`) ||
+		strings.Contains(withoutPlaceholders, `\\Windows\\Temp`) {
+		return true
+	}
+	// Residual ls -l owner before redaction (including mid-line JSON stdout).
+	// Skip rows already rewritten to [USER]/[GROUP] so redacted evidence is clean.
+	for _, m := range lsOwnerGroup.FindAllStringSubmatch(s, -1) {
+		if len(m) < 6 {
+			continue
+		}
+		owner, group := m[3], m[5]
+		if owner == "[USER]" || group == "[GROUP]" {
+			continue
+		}
+		// Real residual ownership columns.
+		return true
+	}
+	// Residual env account names (len>=3) only in path/ownership-token contexts —
+	// not unrestricted substrings (Pro R7 P2: USER=agent must not match "agent stdio").
+	withoutUserPlaceholders := strings.ReplaceAll(withoutPlaceholders, "[USER]", "")
+	withoutUserPlaceholders = strings.ReplaceAll(withoutUserPlaceholders, "[GROUP]", "")
+	for _, key := range []string{"USER", "LOGNAME", "USERNAME"} {
+		u := strings.TrimSpace(os.Getenv(key))
+		if u == "" || u == "root" || len(u) < 3 {
+			continue
+		}
+		if contentHasAccountTokenLeak(withoutUserPlaceholders, u) {
+			return true
+		}
+	}
+	return false
+}
+
+// contentHasAccountTokenLeak reports residual account names only as path segments
+// or parsed ls -l owner/group columns — never arbitrary quote/whitespace tokens
+// (Pro R13 P2: USER=grok must not flag {"version":"grok 1.0.0"}).
+func contentHasAccountTokenLeak(s, user string) bool {
+	if user == "" {
+		return false
+	}
+	// Path segments.
+	for _, pref := range []string{"/Users/", "/home/", `\Users\`, `\\Users\\`} {
+		if strings.Contains(s, pref+user) {
+			return true
+		}
+	}
+	// ls -l ownership columns only (mode links owner group …).
+	// Example: "lrwxr-xr-x@ 1 alice  staff  27 …"
+	re := regexp.MustCompile(`(?m)(?:^|[\s"\\])[l-][rwxSsTt-]{9}[@+]?\s+\d+\s+` + regexp.QuoteMeta(user) + `\s+\S+`)
+	if re.MatchString(s) {
+		return true
+	}
+	// Group column as second identity field after a numeric links count.
+	reG := regexp.MustCompile(`(?m)(?:^|[\s"\\])[l-][rwxSsTt-]{9}[@+]?\s+\d+\s+\S+\s+` + regexp.QuoteMeta(user) + `(?:[\s"\\]|$)`)
+	return reG.MatchString(s)
+}
+
+// liveIdentitySchema is the sealed schema id for live executor provenance.
+const liveIdentitySchema = "reinframe.live_identity.v1"
+
+// liveGrokExeSchema seals the external Grok CLI binary content binding for a run.
+const liveGrokExeSchema = "reinframe.live_grok_executable.v1"
+
+// liveIdentity holds a verified live-executor identity (never the report generator).
+type liveIdentity struct {
+	Commit string
+	Dirty  bool
+	Src    string
+	GOOS   string
+	GOARCH string
+	OK     bool
+	Err    string // non-empty when OK is false
+}
+
+// writeLiveIdentity records the live executor binary identity for later report provenance.
+func writeLiveIdentity(evDir string) error {
+	rev, dirty, src := reinframeBuildIdentity()
+	if rev == "" || src == "unknown" || !isFullVCSRevision(rev) {
+		return fmt.Errorf("writeLiveIdentity: current binary lacks qualifying identity (rev=%q src=%s)", rev, src)
+	}
+	return writeJSON(filepath.Join(evDir, "live_identity.json"), map[string]any{
+		"schema":                 liveIdentitySchema,
+		"live_binary_commit":     rev,
+		"live_binary_dirty":      dirty,
+		"live_binary_commit_src": src,
+		// Platform of the live campaign host (Pro R10 P2: do not attribute generator GOOS).
+		"live_goos":   runtime.GOOS,
+		"live_goarch": runtime.GOARCH,
+		"at":          stamp(),
+	})
+}
+
+// ensureLiveIdentity creates live_identity.json if missing, or verifies an existing file
+// matches the current binary. Used by standalone hooks/acp and runAll so report never
+// has to invent identity from the generator.
+//
+// Refuse to retrofit identity onto a directory that already holds live phase outputs
+// without identity (Codex P1: mixed pre-change scenarios + new binary stamp).
+func ensureLiveIdentity(evDir string) error {
+	if err := os.MkdirAll(evDir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(evDir, "live_identity.json")
+	if st, err := os.Stat(path); err == nil && !st.IsDir() {
+		id := loadLiveIdentity(evDir)
+		if !id.OK {
+			return fmt.Errorf("ensureLiveIdentity: existing file invalid: %s", id.Err)
+		}
+		rev, dirty, src := reinframeBuildIdentity()
+		if id.Commit != rev || id.Dirty != dirty || id.Src != src {
+			return fmt.Errorf("ensureLiveIdentity: live_identity mismatch current binary (live=%s dirty=%v src=%s; current=%s dirty=%v src=%s)",
+				id.Commit, id.Dirty, id.Src, rev, dirty, src)
+		}
+		// When platform is bound, refuse cross-platform retrofit of the same commit.
+		if id.GOOS != "" && id.GOARCH != "" && (id.GOOS != runtime.GOOS || id.GOARCH != runtime.GOARCH) {
+			return fmt.Errorf("ensureLiveIdentity: live platform mismatch (live=%s/%s; current=%s/%s)",
+				id.GOOS, id.GOARCH, runtime.GOOS, runtime.GOARCH)
+		}
+		return nil
+	}
+	if hasExistingLiveEvidenceWithoutIdentity(evDir) {
+		return fmt.Errorf("ensureLiveIdentity: refuse to retrofit live_identity onto existing live evidence (scenarios/hooks/acp artifacts present without identity)")
+	}
+	if err := writeLiveIdentity(evDir); err != nil {
+		return err
+	}
+	// Atomic create: refuse to proceed if the written file is not loadable.
+	id := loadLiveIdentity(evDir)
+	if !id.OK {
+		return fmt.Errorf("ensureLiveIdentity: post-write verification failed: %s", id.Err)
+	}
+	return nil
+}
+
+// hasExistingLiveEvidenceWithoutIdentity reports phase artifacts that bind a run
+// to a prior binary (scenarios, hooks, trust, acp) when live_identity.json is absent.
+func hasExistingLiveEvidenceWithoutIdentity(evDir string) bool {
+	for _, name := range []string{
+		"scenarios.json",
+		"preflight.json",
+		"hook_invocations.jsonl",
+		"trust_launch.json",
+		"acp_manifest.json",
+		"hooks_doctor_pre_trust.json",
+		"hooks_doctor_post_trust.json",
+	} {
+		st, err := os.Stat(filepath.Join(evDir, name))
+		if err == nil && !st.IsDir() && st.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// parseLiveIdentityJSON validates a complete live_identity document (no silent partials).
+func parseLiveIdentityJSON(b []byte) (liveIdentity, error) {
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return liveIdentity{}, fmt.Errorf("live_identity.json malformed: %w", err)
+	}
+	if m == nil {
+		return liveIdentity{}, fmt.Errorf("live_identity.json empty object")
+	}
+	schema, _ := m["schema"].(string)
+	if strings.TrimSpace(schema) != liveIdentitySchema {
+		return liveIdentity{}, fmt.Errorf("live_identity.json schema must be %s", liveIdentitySchema)
+	}
+	commit, ok := m["live_binary_commit"].(string)
+	commit = strings.TrimSpace(commit)
+	if !ok || commit == "" {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_binary_commit")
+	}
+	if !isFullVCSRevision(commit) {
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_binary_commit not full VCS revision")
+	}
+	dirty, ok := m["live_binary_dirty"].(bool)
+	if !ok {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_binary_dirty bool")
+	}
+	src, ok := m["live_binary_commit_src"].(string)
+	src = strings.TrimSpace(src)
+	if !ok || src == "" {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_binary_commit_src")
+	}
+	switch src {
+	case "ldflags", "vcs":
+		// ok
+	case "unknown":
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_binary_commit_src=unknown cannot qualify")
+	default:
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_binary_commit_src %q not allowed", src)
+	}
+	// Platform fields optional on legacy pins; when present must be non-empty strings.
+	goos, _ := m["live_goos"].(string)
+	goarch, _ := m["live_goarch"].(string)
+	goos = strings.TrimSpace(goos)
+	goarch = strings.TrimSpace(goarch)
+	if _, has := m["live_goos"]; has && goos == "" {
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_goos empty")
+	}
+	if _, has := m["live_goarch"]; has && goarch == "" {
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_goarch empty")
+	}
+	return liveIdentity{Commit: commit, Dirty: dirty, Src: src, GOOS: goos, GOARCH: goarch, OK: true}, nil
+}
+
+// loadLiveIdentity loads and validates live_identity.json. On any failure OK=false and
+// Err is set — never substitutes the report-generator identity.
+func loadLiveIdentity(evDir string) liveIdentity {
+	b, err := os.ReadFile(filepath.Join(evDir, "live_identity.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return liveIdentity{Err: "live_identity.json missing"}
+		}
+		return liveIdentity{Err: "live_identity.json unreadable: " + err.Error()}
+	}
+	id, err := parseLiveIdentityJSON(b)
+	if err != nil {
+		return liveIdentity{Err: err.Error()}
+	}
+	return id
+}
+
+// fileContentSHA256 returns the hex SHA-256 of file contents (not the path string).
+func fileContentSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ensureGrokExecutableIdentity records or verifies the live Grok CLI binary content
+// hash so standalone preflight/hooks/acp cannot swap --grok-executable mid-run
+// (Pro R6 P1). Path string hashing alone is insufficient.
+func ensureGrokExecutableIdentity(evDir, grokExe string) error {
+	if strings.TrimSpace(grokExe) == "" {
+		return fmt.Errorf("ensureGrokExecutableIdentity: grok executable path required")
+	}
+	abs, err := filepath.Abs(grokExe)
+	if err != nil {
+		return fmt.Errorf("ensureGrokExecutableIdentity: abs: %w", err)
+	}
+	st, err := os.Stat(abs)
+	if err != nil {
+		return fmt.Errorf("ensureGrokExecutableIdentity: stat %s: %w", abs, err)
+	}
+	if st.IsDir() {
+		return fmt.Errorf("ensureGrokExecutableIdentity: %s is a directory", abs)
+	}
+	sum, err := fileContentSHA256(abs)
+	if err != nil {
+		return fmt.Errorf("ensureGrokExecutableIdentity: hash: %w", err)
+	}
+	if err := os.MkdirAll(evDir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(evDir, "live_grok_executable.json")
+	if st, err := os.Stat(path); err == nil && !st.IsDir() {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("ensureGrokExecutableIdentity: read existing: %w", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			return fmt.Errorf("ensureGrokExecutableIdentity: existing malformed: %w", err)
+		}
+		schema, _ := m["schema"].(string)
+		if strings.TrimSpace(schema) != liveGrokExeSchema {
+			return fmt.Errorf("ensureGrokExecutableIdentity: schema must be %s", liveGrokExeSchema)
+		}
+		prevSum, _ := m["grok_executable_sha256"].(string)
+		if strings.TrimSpace(prevSum) == "" || prevSum != sum {
+			return fmt.Errorf("ensureGrokExecutableIdentity: grok executable content mismatch (live=%s current=%s)", prevSum, sum)
+		}
+		return nil
+	}
+	return writeJSON(path, map[string]any{
+		"schema":                  liveGrokExeSchema,
+		"grok_executable_path":    abs,
+		"grok_executable_sha256":  sum,
+		"at":                      stamp(),
+	})
+}
+
+// loadLiveGrokExecutableOK reports whether live_grok_executable.json is complete.
+func loadLiveGrokExecutableOK(evDir string) (ok bool, reason string) {
+	b, err := os.ReadFile(filepath.Join(evDir, "live_grok_executable.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, "live_grok_executable.json missing"
+		}
+		return false, "live_grok_executable.json unreadable: " + err.Error()
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return false, "live_grok_executable.json malformed"
+	}
+	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveGrokExeSchema {
+		return false, "live_grok_executable.json schema invalid"
+	}
+	sum, _ := m["grok_executable_sha256"].(string)
+	if strings.TrimSpace(sum) == "" || len(sum) != 64 {
+		return false, "live_grok_executable.json missing content sha256"
+	}
+	return true, ""
+}
+
+// liveGrokhooksSchema seals the grokhooks helper content binding for hooks campaigns.
+const liveGrokhooksSchema = "reinframe.live_grokhooks_executable.v1"
+
+// ensureGrokhooksExecutable records or verifies the hooks helper binary content
+// so --grokhooks cannot swap mid-run independently of live_binary_commit (Pro R14 P1).
+func ensureGrokhooksExecutable(evDir, hooksExe string) error {
+	if strings.TrimSpace(hooksExe) == "" {
+		return fmt.Errorf("ensureGrokhooksExecutable: grokhooks path required")
+	}
+	abs, err := filepath.Abs(hooksExe)
+	if err != nil {
+		return fmt.Errorf("ensureGrokhooksExecutable: abs: %w", err)
+	}
+	st, err := os.Stat(abs)
+	if err != nil {
+		return fmt.Errorf("ensureGrokhooksExecutable: stat %s: %w", abs, err)
+	}
+	if st.IsDir() {
+		return fmt.Errorf("ensureGrokhooksExecutable: %s is a directory", abs)
+	}
+	sum, err := fileContentSHA256(abs)
+	if err != nil {
+		return fmt.Errorf("ensureGrokhooksExecutable: hash: %w", err)
+	}
+	if err := os.MkdirAll(evDir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(evDir, "live_grokhooks_executable.json")
+	if st, err := os.Stat(path); err == nil && !st.IsDir() {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("ensureGrokhooksExecutable: read existing: %w", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			return fmt.Errorf("ensureGrokhooksExecutable: existing malformed: %w", err)
+		}
+		schema, _ := m["schema"].(string)
+		if strings.TrimSpace(schema) != liveGrokhooksSchema {
+			return fmt.Errorf("ensureGrokhooksExecutable: schema must be %s", liveGrokhooksSchema)
+		}
+		prevSum, _ := m["grokhooks_executable_sha256"].(string)
+		if strings.TrimSpace(prevSum) == "" || prevSum != sum {
+			return fmt.Errorf("ensureGrokhooksExecutable: content mismatch (live=%s current=%s)", prevSum, sum)
+		}
+		prevPath, _ := m["grokhooks_executable_path"].(string)
+		if strings.TrimSpace(prevPath) != "" && filepath.Clean(prevPath) != filepath.Clean(abs) {
+			return fmt.Errorf("ensureGrokhooksExecutable: path mismatch (live=%s current=%s)", prevPath, abs)
+		}
+		return nil
+	}
+	return writeJSON(path, map[string]any{
+		"schema":                       liveGrokhooksSchema,
+		"grokhooks_executable_path":    abs,
+		"grokhooks_executable_sha256":  sum,
+		"at":                           stamp(),
+	})
+}
+
+// hasHookScenarios reports whether any HOOK-* scenario is present in evidence.
+func hasHookScenarios(scenarios map[string]ScenarioResult) bool {
+	for id := range scenarios {
+		if strings.HasPrefix(id, "HOOK-") {
+			return true
+		}
+	}
+	return false
+}
+
+// loadLiveGrokhooksExecutableOK reports whether live_grokhooks_executable.json is complete.
+func loadLiveGrokhooksExecutableOK(evDir string) (ok bool, reason string) {
+	b, err := os.ReadFile(filepath.Join(evDir, "live_grokhooks_executable.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, "live_grokhooks_executable.json missing"
+		}
+		return false, "live_grokhooks_executable.json unreadable: " + err.Error()
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return false, "live_grokhooks_executable.json malformed"
+	}
+	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveGrokhooksSchema {
+		return false, "live_grokhooks_executable.json schema invalid"
+	}
+	sum, _ := m["grokhooks_executable_sha256"].(string)
+	if strings.TrimSpace(sum) == "" || len(sum) != 64 {
+		return false, "live_grokhooks_executable.json missing content sha256"
+	}
+	return true, ""
 }
 
 func containsStr(ss []string, want string) bool {

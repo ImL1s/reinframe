@@ -28,6 +28,12 @@ func runACP(args []string) {
 	proj := mustAbs(*project, "--project")
 	evDir := mustAbs(*out, "--evidence-out")
 	_ = os.MkdirAll(evDir, 0o700)
+	if err := ensureLiveIdentity(evDir); err != nil {
+		fail(fmt.Errorf("groklive acp: live_identity: %w", err))
+	}
+	if err := ensureGrokExecutableIdentity(evDir, grok); err != nil {
+		fail(fmt.Errorf("groklive acp: live_grok_executable: %w", err))
+	}
 
 	scenarios := loadScenarioMap(evDir)
 	set := func(id, status, detail string, extra map[string]string) {
@@ -129,8 +135,9 @@ func runACP(args []string) {
 		}
 	}
 
-	// ACP-SESSION-001 — PASS only with correlated session/update (session_visible).
-	// Transport-only prompt success is INCONCLUSIVE (mandatory update not proven).
+	// ACP-SESSION-001 — PASS only with source-correlated session/update (#199).
+	// Session id match alone is insufficient: require intervention/challenge/request identity.
+	// Pre-prompt watermark drains stale queue entries so temporal races cannot upgrade ACK.
 	// session/prompt waits for agent turn completion — allow several minutes.
 	newCtx, newCancel := rpcCtx(45)
 	sid, err := client.SessionNew(newCtx, map[string]any{"cwd": proj})
@@ -138,19 +145,23 @@ func runACP(args []string) {
 	if err != nil || sid == "" {
 		set("ACP-SESSION-001", "FAIL", fmt.Sprintf("session/new err=%v sid=%q", err, sid), nil)
 	} else {
+		const interventionID = "issue167-live-advice-001"
 		body := adapter.BuildAdvicePrompt("REQUEST_REPLAN",
 			"Re-evaluate the current approach against the stated acceptance criteria. Reply with one short sentence only.",
-			"issue167-live-advice-001", "")
+			interventionID, "")
+		// Watermark: discard any pre-prompt session/update notifications.
+		_ = client.DrainUpdates()
 		promptCtx, promptCancel := rpcCtx(180)
-		err := client.SessionPrompt(promptCtx, sid, body, "issue167-live-advice-001", "")
+		meta, err := client.SessionPromptMeta(promptCtx, sid, body, interventionID, "")
 		promptCancel()
 		if err != nil {
 			set("ACP-SESSION-001", "FAIL", "session/prompt: "+err.Error(), nil)
 		} else {
-			// Source-correlated session_visible only from post-prompt updates that
-			// match the target session. Never reuse client-global LastACKLayer.
-			saw := false
-			sessionMatched := false
+			// Post-prompt updates only; require strong identity correlation (#199).
+			// Never reuse client-global LastACKLayer for evidence claims.
+			strongMatch := false
+			sessionOnlyMatch := false
+			corrReason := ""
 			deadline := time.After(90 * time.Second)
 		waitLoop:
 			for {
@@ -168,31 +179,41 @@ func runACP(args []string) {
 					if kind == "" {
 						continue
 					}
-					saw = true
-					sessionMatched = true
-					client.NoteSessionVisible()
-					break waitLoop
+					sessionOnlyMatch = true
+					if ok, why := adapter.UpdateStrongCorrelation(u, interventionID, "", meta.RequestID); ok {
+						strongMatch = true
+						corrReason = why
+						client.NoteSessionVisible()
+						break waitLoop
+					}
 				case <-time.After(200 * time.Millisecond):
-					// Do not poll LastACKLayer (stale upgrade risk).
 				}
 			}
 			sr := ScenarioResult{
 				ID:             "ACP-SESSION-001",
 				At:             stamp(),
-				InterventionID: "issue167-live-advice-001",
+				InterventionID: interventionID,
 				// Never store plaintext host session UUIDs in public evidence.
 				TargetSessionID: sha256Hex(sid),
 			}
-			if saw && sessionMatched {
+			switch {
+			case strongMatch:
 				sr.Status = "PASS"
 				sr.ACKLayer = adapter.ACKLayerSessionVisible
 				sr.SessionCorrelated = true
-				sr.Detail = "session/new+prompt+post-prompt session-matched update; source-correlated session_visible"
-			} else {
+				sr.Detail = "source-correlated session_visible via " + corrReason + " after pre-prompt watermark"
+			case sessionOnlyMatch:
+				// Temporal session match without request/intervention/challenge identity
+				// must not claim source_correlated session_visible (#199 / GPT-5.6 Pro P1-A).
 				sr.Status = "INCONCLUSIVE"
 				sr.ACKLayer = adapter.ACKLayerTransport
 				sr.SessionCorrelated = false
-				sr.Detail = "prompt transport OK; no session-matched post-prompt update — ACK remains transport"
+				sr.Detail = "prompt transport OK; post-prompt session-matched update lacks request/intervention/challenge identity — ACK remains transport"
+			default:
+				sr.Status = "INCONCLUSIVE"
+				sr.ACKLayer = adapter.ACKLayerTransport
+				sr.SessionCorrelated = false
+				sr.Detail = "prompt transport OK; no post-prompt session-matched update — ACK remains transport"
 			}
 			scenarios["ACP-SESSION-001"] = sr
 		}
@@ -278,6 +299,11 @@ func runACP(args []string) {
 		set("ACP-CLEANUP-001", "FAIL", fmt.Sprintf("owned PID %d still alive after Close", ownedPID), nil)
 	} else {
 		set("ACP-CLEANUP-001", "PASS", fmt.Sprintf("Close completed; owned PID %d not alive", ownedPID), nil)
+	}
+
+	// Re-verify Grok CLI content binding after ACP probes (Codex P2 symmetry with hooks/preflight).
+	if err := ensureGrokExecutableIdentity(evDir, grok); err != nil {
+		fail(fmt.Errorf("groklive acp: live_grok_executable post-probe: %w", err))
 	}
 
 	_ = saveScenarioMap(evDir, scenarios)

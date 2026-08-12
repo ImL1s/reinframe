@@ -31,6 +31,12 @@ func runHooks(args []string) {
 	proj := mustAbs(*project, "--project")
 	evDir := mustAbs(*out, "--evidence-out")
 	_ = os.MkdirAll(evDir, 0o700)
+	if err := ensureLiveIdentity(evDir); err != nil {
+		fail(fmt.Errorf("groklive hooks: live_identity: %w", err))
+	}
+	if err := ensureGrokExecutableIdentity(evDir, grok); err != nil {
+		fail(fmt.Errorf("groklive hooks: live_grok_executable: %w", err))
+	}
 	_ = os.MkdirAll(filepath.Join(proj, "harmless"), 0o700)
 	_ = os.MkdirAll(filepath.Join(proj, "denied"), 0o700)
 
@@ -42,6 +48,10 @@ func runHooks(args []string) {
 		}
 	}
 	gh = mustAbs(gh, "--grokhooks")
+	// Bind hooks helper content before first use (Pro R14 P1).
+	if err := ensureGrokhooksExecutable(evDir, gh); err != nil {
+		fail(fmt.Errorf("groklive hooks: live_grokhooks_executable: %w", err))
+	}
 
 	scenarios := loadScenarioMap(evDir)
 	set := func(id, status, detail string, extra map[string]string) {
@@ -335,6 +345,14 @@ If the tool is denied, acknowledge and stop. Do not work around the denial.`,
 	// Reinstall for any follow-on ACP phase that still wants hooks present.
 	mgr.BridgeCommand = wrapPath
 	_ = mgr.Install()
+
+	// Re-verify Grok CLI + grokhooks content bindings after all live tool probes.
+	if err := ensureGrokExecutableIdentity(evDir, grok); err != nil {
+		fail(fmt.Errorf("groklive hooks: live_grok_executable post-probe: %w", err))
+	}
+	if err := ensureGrokhooksExecutable(evDir, gh); err != nil {
+		fail(fmt.Errorf("groklive hooks: live_grokhooks_executable post-probe: %w", err))
+	}
 
 	_ = saveScenarioMap(evDir, scenarios)
 	fmt.Println(`{"ok":true,"action":"hooks"}`)

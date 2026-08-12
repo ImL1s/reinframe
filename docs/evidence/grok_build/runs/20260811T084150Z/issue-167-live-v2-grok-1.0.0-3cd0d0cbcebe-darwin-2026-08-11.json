@@ -1,0 +1,401 @@
+{
+  "ack_layers": {
+    "explicit_claimed": false,
+    "note": "JSON-RPC success is transport; session_visible only when SessionCorrelated; explicit never from transport alone",
+    "source_correlated": true,
+    "strongest_proven": "session_visible"
+  },
+  "acp_negotiation": {
+    "ACP-INIT-001": {
+      "id": "ACP-INIT-001",
+      "status": "PASS",
+      "detail": "protocolVersion=1 post_level=0 load=true cancel=false auth=[cached_token grok.com]",
+      "at": "2026-08-11T08:47:05Z"
+    }
+  },
+  "advice_results": {
+    "ADVICE-DEDUP-001": {
+      "id": "ADVICE-DEDUP-001",
+      "status": "INCONCLUSIVE",
+      "detail": "second delivery accepted at transport; durable/business InterventionID suppression not proven in harness (#200)",
+      "at": "2026-08-11T08:47:49Z",
+      "intervention_id": "issue167-live-advice-001"
+    }
+  },
+  "auth_boundary": {
+    "ACP-AUTH-001": {
+      "id": "ACP-AUTH-001",
+      "status": "PASS",
+      "detail": "delegated auth methodId=cached_token headless=true no token field",
+      "at": "2026-08-11T08:47:05Z"
+    }
+  },
+  "capability_manifests": {
+    "auth_methods": [
+      "cached_token",
+      "grok.com"
+    ],
+    "caps_digest": "load=true pause=false cancel=false resume=false tool=false diff=false",
+    "post_handshake": {
+      "auth_methods": [
+        "cached_token",
+        "grok.com"
+      ],
+      "cap_advice_delivery": true,
+      "cap_cancel": false,
+      "cap_diff_inspection": false,
+      "cap_event_stream": true,
+      "cap_intervention_ack": false,
+      "cap_pause": false,
+      "cap_resume": false,
+      "cap_tool_inspection": false,
+      "explicit_ack": false,
+      "honesty_note": "derived from initialize via protocol.EvaluateAchievableLevel; Level 2 requires full Level1 mask plus CapDiffInspection+CapPause+CapCancel+CapResume; JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; live #167 harness path exercised on cmd/groklive (does not claim disposition GO); no CapPause/L2 claimed from hooks alone",
+      "load_session": true,
+      "negotiated_level": 0,
+      "profile": "reinframe.grok_build_acp.v1",
+      "protocol_version": 1
+    },
+    "pre_handshake": {
+      "cap_advice_delivery": false,
+      "cap_cancel": false,
+      "cap_diff_inspection": false,
+      "cap_event_stream": false,
+      "cap_intervention_ack": false,
+      "cap_pause": false,
+      "cap_resume": false,
+      "cap_tool_inspection": false,
+      "explicit_ack": false,
+      "honesty_note": "pre-handshake: no achieved level or unproven caps; call ManifestFromNegotiated after initialize; JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; live #167 harness path via cmd/groklive does not imply disposition GO",
+      "load_session": false,
+      "negotiated_level": -1,
+      "profile": "reinframe.grok_build_acp.v1",
+      "protocol_version": 1
+    }
+  },
+  "challenge_results": {
+    "CHALLENGE-001": {
+      "id": "CHALLENGE-001",
+      "status": "PASS",
+      "detail": "challenge text transported with ChallengeID preserved; #131 remains authoritative; no self-authorization claimed",
+      "at": "2026-08-11T08:47:51Z"
+    }
+  },
+  "entry_gates": {
+    "auth_json_read": false,
+    "credential_print": false,
+    "live_flag_required": true
+  },
+  "final_disposition": "LIMITED_GO",
+  "hook_failure_semantics": {
+    "HOOK-FAIL-001": {
+      "id": "HOOK-FAIL-001",
+      "status": "PASS",
+      "detail": "broken hook invoked and marker written (timeout); exit_err=\u003cnil\u003e stdout_bytes=53274 stderr=",
+      "host_outcome": "host_fail_open",
+      "at": "2026-08-11T08:45:10Z",
+      "fail_open_invoked": true
+    },
+    "HOOK-FAIL-002": {
+      "id": "HOOK-FAIL-002",
+      "status": "PASS",
+      "detail": "broken hook invoked and marker written (crash_nonzero_non_deny); exit_err=\u003cnil\u003e stdout_bytes=53464 stderr=",
+      "host_outcome": "host_fail_open",
+      "at": "2026-08-11T08:45:50Z",
+      "fail_open_invoked": true
+    },
+    "HOOK-FAIL-003": {
+      "id": "HOOK-FAIL-003",
+      "status": "PASS",
+      "detail": "broken hook invoked and marker written (malformed); exit_err=\u003cnil\u003e stdout_bytes=53345 stderr=",
+      "host_outcome": "host_fail_open",
+      "at": "2026-08-11T08:46:26Z",
+      "fail_open_invoked": true
+    },
+    "HOOK-FAIL-004": {
+      "id": "HOOK-FAIL-004",
+      "status": "PASS",
+      "detail": "broken hook invoked and marker written (oversized); exit_err=\u003cnil\u003e stdout_bytes=54262 stderr=",
+      "host_outcome": "host_fail_open",
+      "at": "2026-08-11T08:47:05Z",
+      "fail_open_invoked": true
+    }
+  },
+  "hook_results": {
+    "HOOK-ALLOW-001": {
+      "id": "HOOK-ALLOW-001",
+      "status": "PASS",
+      "detail": "exit_err=\u003cnil\u003e stdout_bytes=50511 stderr=",
+      "tool_name": "run_terminal_command",
+      "host_outcome": "allowed",
+      "at": "2026-08-11T08:43:15Z"
+    },
+    "HOOK-DENY-001": {
+      "id": "HOOK-DENY-001",
+      "status": "PASS",
+      "detail": "direct deny response/exit observed for tool=run_terminal_command; exit_err=\u003cnil\u003e stdout_bytes=49939 stderr=",
+      "tool_name": "run_terminal_command",
+      "host_outcome": "enforced_deny",
+      "at": "2026-08-11T08:43:54Z",
+      "deny_direct_proof": true
+    },
+    "HOOK-MAP-001": {
+      "id": "HOOK-MAP-001",
+      "status": "PASS",
+      "detail": "observed_tools=run_terminal_command",
+      "at": "2026-08-11T08:43:54Z"
+    },
+    "HOOK-UNINSTALL-001": {
+      "id": "HOOK-UNINSTALL-001",
+      "status": "PASS",
+      "detail": "reinframe-owned hooks removed",
+      "at": "2026-08-11T08:47:05Z"
+    }
+  },
+  "limitations": [
+    "TRUST-STALE-001 INCONCLUSIVE",
+    "ADVICE-DEDUP-001 INCONCLUSIVE",
+    "STATIC-PERM-001 NOT_RUN",
+    "ACP-OPTIONAL-001 INCONCLUSIVE"
+  ],
+  "privacy_checks": {
+    "auth_json_path_leak_suspected": false,
+    "auth_json_path_seen_in_honesty_notes_only": true,
+    "auth_json_read": false,
+    "bytes_scanned": 54590,
+    "complete": true,
+    "failure_classes": [],
+    "files_scanned": 11,
+    "files_seen": 11,
+    "files_skipped": 0,
+    "method": "complete_or_fail_flat_scan",
+    "raw_thoughts_stored": false,
+    "secret_pattern_hits": 0,
+    "token_fields_in_auth_envelope": false
+  },
+  "process_cleanup": {
+    "ACP-CLEANUP-001": {
+      "id": "ACP-CLEANUP-001",
+      "status": "PASS",
+      "detail": "Close completed; owned PID 45310 not alive",
+      "at": "2026-08-11T08:47:53Z"
+    }
+  },
+  "provenance": {
+    "evidence_binding_note": "generated solely by cmd/groklive report; no post-hoc privacy rewrites",
+    "generated_at": "2026-08-11T09:09:10Z",
+    "goarch": "arm64",
+    "goos": "darwin",
+    "grok_version": "grok-1.0.0-3cd0d0cbcebe",
+    "grok_version_full": "grok 1.0.0 (3cd0d0cbcebe)",
+    "harness": "cmd/groklive",
+    "issue": 167,
+    "main_tip_note": "evidence produced against live host using shipped #165/#166 APIs; v2 gates (#199/#215); starting_main_sha is binary-bound reinframe_commit",
+    "reinframe_commit": "af1b3cc93912489399317aa8491d1adaf41ced00",
+    "reinframe_commit_src": "ldflags",
+    "reinframe_dirty": false,
+    "schema_note": "v2 closed disposition matrix; historical v1 evidence is immutable under HISTORICAL_v1.md",
+    "starting_main_sha": "af1b3cc93912489399317aa8491d1adaf41ced00"
+  },
+  "scenario_registry": [
+    "TRUST-001",
+    "TRUST-STALE-001",
+    "TRUST-RESTORE-001",
+    "HOOK-ALLOW-001",
+    "HOOK-DENY-001",
+    "HOOK-MAP-001",
+    "HOOK-UNINSTALL-001",
+    "HOOK-FAIL-001",
+    "HOOK-FAIL-002",
+    "HOOK-FAIL-003",
+    "HOOK-FAIL-004",
+    "ACP-INIT-001",
+    "ACP-AUTH-001",
+    "ACP-SESSION-001",
+    "ACP-CLEANUP-001",
+    "ADVICE-DEDUP-001",
+    "CHALLENGE-001",
+    "STATIC-PERM-001"
+  ],
+  "scenarios": {
+    "ACP-AUTH-001": {
+      "id": "ACP-AUTH-001",
+      "status": "PASS",
+      "detail": "delegated auth methodId=cached_token headless=true no token field",
+      "at": "2026-08-11T08:47:05Z"
+    },
+    "ACP-CLEANUP-001": {
+      "id": "ACP-CLEANUP-001",
+      "status": "PASS",
+      "detail": "Close completed; owned PID 45310 not alive",
+      "at": "2026-08-11T08:47:53Z"
+    },
+    "ACP-INIT-001": {
+      "id": "ACP-INIT-001",
+      "status": "PASS",
+      "detail": "protocolVersion=1 post_level=0 load=true cancel=false auth=[cached_token grok.com]",
+      "at": "2026-08-11T08:47:05Z"
+    },
+    "ACP-OPTIONAL-001": {
+      "id": "ACP-OPTIONAL-001",
+      "status": "INCONCLUSIVE",
+      "detail": "loadSession negotiated but failed: grok acp: session/load: Invalid params",
+      "at": "2026-08-11T08:47:45Z"
+    },
+    "ACP-SESSION-001": {
+      "id": "ACP-SESSION-001",
+      "status": "PASS",
+      "detail": "session/new+prompt+post-prompt session-matched update; source-correlated session_visible",
+      "ack_layer": "session_visible",
+      "at": "2026-08-11T08:47:45Z",
+      "session_correlated": true,
+      "intervention_id": "issue167-live-advice-001",
+      "target_session_id": "dbd4e066adc6a06b650899f1d5b21734ac2984643004ac909819d100d101715d"
+    },
+    "ADVICE-DEDUP-001": {
+      "id": "ADVICE-DEDUP-001",
+      "status": "INCONCLUSIVE",
+      "detail": "second delivery accepted at transport; durable/business InterventionID suppression not proven in harness (#200)",
+      "at": "2026-08-11T08:47:49Z",
+      "intervention_id": "issue167-live-advice-001"
+    },
+    "CHALLENGE-001": {
+      "id": "CHALLENGE-001",
+      "status": "PASS",
+      "detail": "challenge text transported with ChallengeID preserved; #131 remains authoritative; no self-authorization claimed",
+      "at": "2026-08-11T08:47:51Z"
+    },
+    "HOOK-ALLOW-001": {
+      "id": "HOOK-ALLOW-001",
+      "status": "PASS",
+      "detail": "exit_err=\u003cnil\u003e stdout_bytes=50511 stderr=",
+      "tool_name": "run_terminal_command",
+      "host_outcome": "allowed",
+      "at": "2026-08-11T08:43:15Z"
+    },
+    "HOOK-DENY-001": {
+      "id": "HOOK-DENY-001",
+      "status": "PASS",
+      "detail": "direct deny response/exit observed for tool=run_terminal_command; exit_err=\u003cnil\u003e stdout_bytes=49939 stderr=",
+      "tool_name": "run_terminal_command",
+      "host_outcome": "enforced_deny",
+      "at": "2026-08-11T08:43:54Z",
+      "deny_direct_proof": true
+    },
+    "HOOK-FAIL-001": {
+      "id": "HOOK-FAIL-001",
+      "status": "PASS",
+      "detail": "broken hook invoked and marker written (timeout); exit_err=\u003cnil\u003e stdout_bytes=53274 stderr=",
+      "host_outcome": "host_fail_open",
+      "at": "2026-08-11T08:45:10Z",
+      "fail_open_invoked": true
+    },
+    "HOOK-FAIL-002": {
+      "id": "HOOK-FAIL-002",
+      "status": "PASS",
+      "detail": "broken hook invoked and marker written (crash_nonzero_non_deny); exit_err=\u003cnil\u003e stdout_bytes=53464 stderr=",
+      "host_outcome": "host_fail_open",
+      "at": "2026-08-11T08:45:50Z",
+      "fail_open_invoked": true
+    },
+    "HOOK-FAIL-003": {
+      "id": "HOOK-FAIL-003",
+      "status": "PASS",
+      "detail": "broken hook invoked and marker written (malformed); exit_err=\u003cnil\u003e stdout_bytes=53345 stderr=",
+      "host_outcome": "host_fail_open",
+      "at": "2026-08-11T08:46:26Z",
+      "fail_open_invoked": true
+    },
+    "HOOK-FAIL-004": {
+      "id": "HOOK-FAIL-004",
+      "status": "PASS",
+      "detail": "broken hook invoked and marker written (oversized); exit_err=\u003cnil\u003e stdout_bytes=54262 stderr=",
+      "host_outcome": "host_fail_open",
+      "at": "2026-08-11T08:47:05Z",
+      "fail_open_invoked": true
+    },
+    "HOOK-MAP-001": {
+      "id": "HOOK-MAP-001",
+      "status": "PASS",
+      "detail": "observed_tools=run_terminal_command",
+      "at": "2026-08-11T08:43:54Z"
+    },
+    "HOOK-UNINSTALL-001": {
+      "id": "HOOK-UNINSTALL-001",
+      "status": "PASS",
+      "detail": "reinframe-owned hooks removed",
+      "at": "2026-08-11T08:47:05Z"
+    },
+    "STATIC-PERM-001": {
+      "id": "STATIC-PERM-001",
+      "status": "NOT_RUN",
+      "detail": "optional Reinframe-owned static permission fragment not exercised",
+      "at": "2026-08-11T09:09:10Z"
+    },
+    "TRUST-001": {
+      "id": "TRUST-001",
+      "status": "PASS",
+      "detail": "launched with --trust; doctor_ok=true",
+      "at": "2026-08-11T08:42:42Z"
+    },
+    "TRUST-RESTORE-001": {
+      "id": "TRUST-RESTORE-001",
+      "status": "PASS",
+      "detail": "restored command doctor_ok=true",
+      "at": "2026-08-11T08:42:42Z"
+    },
+    "TRUST-STALE-001": {
+      "id": "TRUST-STALE-001",
+      "status": "INCONCLUSIVE",
+      "detail": "command reinstalled; TrustStale=false msgs=valid reinframe grok hooks foundation",
+      "at": "2026-08-11T08:42:42Z"
+    }
+  },
+  "schema_version": "reinframe.grok_build_live_control.v2",
+  "session_results": {
+    "ACP-OPTIONAL-001": {
+      "id": "ACP-OPTIONAL-001",
+      "status": "INCONCLUSIVE",
+      "detail": "loadSession negotiated but failed: grok acp: session/load: Invalid params",
+      "at": "2026-08-11T08:47:45Z"
+    },
+    "ACP-SESSION-001": {
+      "id": "ACP-SESSION-001",
+      "status": "PASS",
+      "detail": "session/new+prompt+post-prompt session-matched update; source-correlated session_visible",
+      "ack_layer": "session_visible",
+      "at": "2026-08-11T08:47:45Z",
+      "session_correlated": true,
+      "intervention_id": "issue167-live-advice-001",
+      "target_session_id": "dbd4e066adc6a06b650899f1d5b21734ac2984643004ac909819d100d101715d"
+    }
+  },
+  "static_permission_results": {
+    "STATIC-PERM-001": {
+      "id": "STATIC-PERM-001",
+      "status": "NOT_RUN",
+      "detail": "optional Reinframe-owned static permission fragment not exercised",
+      "at": "2026-08-11T09:09:10Z"
+    }
+  },
+  "trust_results": {
+    "TRUST-001": {
+      "id": "TRUST-001",
+      "status": "PASS",
+      "detail": "launched with --trust; doctor_ok=true",
+      "at": "2026-08-11T08:42:42Z"
+    },
+    "TRUST-RESTORE-001": {
+      "id": "TRUST-RESTORE-001",
+      "status": "PASS",
+      "detail": "restored command doctor_ok=true",
+      "at": "2026-08-11T08:42:42Z"
+    },
+    "TRUST-STALE-001": {
+      "id": "TRUST-STALE-001",
+      "status": "INCONCLUSIVE",
+      "detail": "command reinstalled; TrustStale=false msgs=valid reinframe grok hooks foundation",
+      "at": "2026-08-11T08:42:42Z"
+    }
+  }
+}

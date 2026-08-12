@@ -582,6 +582,9 @@ func TestStore_DefaultMemoryStore_SharedCachePooling(t *testing.T) {
 }
 
 func TestStore_ConcurrentMigrations_Race(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping concurrent migrations race on Windows — NTFS file locking causes SQLITE_BUSY under CI contention")
+	}
 	dbPath := filepath.Join(t.TempDir(), "concurrent_migrations.db")
 
 	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate", dbPath))

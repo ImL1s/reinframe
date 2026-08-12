@@ -67,6 +67,12 @@ func runAll(args []string) {
 		fail(fmt.Errorf("groklive all: --evidence-out required"))
 	}
 	// Sequential phases; preflight must write into evidence-out for report provenance.
+	// live_identity.json captures the live executor binary (distinct from a later report re-run).
+	// Write failure is fatal — report must not fall back to the generator identity.
+	evDir := mustAbs(*out, "--evidence-out")
+	if err := ensureLiveIdentity(evDir); err != nil {
+		fail(fmt.Errorf("groklive all: live_identity: %w", err))
+	}
 	runPreflight([]string{"--grok-executable", *exe, "--evidence-out", *out})
 	runHooks([]string{"--live", "--grok-executable", *exe, "--project", *project, "--evidence-out", *out, "--grokhooks", *hooksBin})
 	runACP([]string{"--live", "--grok-executable", *exe, "--project", *project, "--evidence-out", *out})
@@ -97,6 +103,8 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
+	// Defense-in-depth: redact local host identity before any evidence lands on disk.
+	b = []byte(redactLocalIdentity(string(b)))
 	return os.WriteFile(path, b, 0o600)
 }
 
@@ -135,7 +143,7 @@ type ScenarioResult struct {
 	// FailOpenInvoked: true only when the broken hook process was positively invoked.
 	FailOpenInvoked bool `json:"fail_open_invoked,omitempty"`
 	// SessionCorrelated: true only when session/update matched target session + this prompt turn.
-	SessionCorrelated bool `json:"session_correlated,omitempty"`
+	SessionCorrelated bool `json:"session_correlated"`
 	// InterventionID bound into the scenario when relevant.
 	InterventionID string `json:"intervention_id,omitempty"`
 	// TargetSessionID is the SHA-256 hex of the host session id (never plaintext UUID).

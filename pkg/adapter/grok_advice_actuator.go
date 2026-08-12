@@ -78,6 +78,10 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		base.Message = "grok advice: client required"
 		return base, fmt.Errorf("grok advice: client required")
 	}
+	// Serialize on the shared client so multiple actuators cannot race on
+	// DrainUpdates / Updates() (Pro R13 P2: mutex must not be actuator-scoped).
+	g.Client.deliverMu.Lock()
+	defer g.Client.deliverMu.Unlock()
 	now := g.now()
 	base.DeliveredAt = now
 	base.HostVersion = g.HostVersion
@@ -145,7 +149,11 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 		base.Message = "context done before deliver"
 		return base, err
 	}
-	if err := g.Client.SessionPrompt(ctx, g.TargetSessionID, prompt, intervention.InterventionID, ""); err != nil {
+	// Pre-prompt watermark so stale session-matched updates cannot upgrade this delivery
+	// (#199 / GPT-5.6 Pro / Codex P1 on strong correlation).
+	_ = g.Client.DrainUpdates()
+	meta, err := g.Client.SessionPromptMeta(ctx, g.TargetSessionID, prompt, intervention.InterventionID, "")
+	if err != nil {
 		base.Accepted = false
 		base.AckStatus = AckStatusRejected
 		base.ErrorClass = ErrorClassTransport
@@ -166,7 +174,7 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 	if wait <= 0 {
 		return base, nil
 	}
-	// Only updates received *after* this SessionPrompt may upgrade this delivery.
+	// Only post-prompt updates with request/intervention/challenge identity may upgrade.
 	deadline := time.Now().Add(wait)
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
@@ -182,15 +190,17 @@ func (g *GrokACPActuator) Deliver(ctx context.Context, intervention protocol.Int
 			if !updateMatchesTargetSession(u, g.TargetSessionID) {
 				continue
 			}
-			kind, _ := MapSessionUpdateToSummary(u)
-			if kind == "" {
+			// Defense in depth: only session/update notifications may upgrade ACK.
+			if !isSessionUpdateNotification(u) {
 				continue
 			}
-			// kind "unknown" still proves a post-prompt session/update envelope for this session.
-			g.Client.NoteSessionVisible()
-			base.AckLayer = ACKLayerSessionVisible
-			base.Message = "session/prompt + post-prompt correlated session/update; strongest ACK=session_visible; explicit not claimed"
-			return base, nil
+			// Strong identity only — bare sessionId match is transport, not session_visible.
+			if ok, why := UpdateStrongCorrelation(u, intervention.InterventionID, "", meta.RequestID); ok {
+				g.Client.NoteSessionVisible()
+				base.AckLayer = ACKLayerSessionVisible
+				base.Message = "session/prompt + source-correlated session/update (" + why + "); strongest ACK=session_visible; explicit not claimed"
+				return base, nil
+			}
 		case <-time.After(50 * time.Millisecond):
 			// Do not poll LastACKLayer — that reuses prior deliveries' session_visible.
 		}

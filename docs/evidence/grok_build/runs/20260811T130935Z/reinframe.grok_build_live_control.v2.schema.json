@@ -41,18 +41,6 @@
         "goarch": {
           "type": "string"
         },
-        "live_goos": {
-          "type": "string"
-        },
-        "live_goarch": {
-          "type": "string"
-        },
-        "report_generator_goos": {
-          "type": "string"
-        },
-        "report_generator_goarch": {
-          "type": "string"
-        },
         "grok_version": {
           "type": "string"
         },

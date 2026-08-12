@@ -21,16 +21,28 @@
 ## Live pin (Grok #167)
 
 - Historical v1 evidence: `docs/evidence/grok_build/issue-167-live-grok-1.0.0-3cd0d0cbcebe-stable-darwin-2026-08-08.json`
-- Clean-quota re-run (main `694e09d…` post-#225, run `20260811T073954Z`):  
-  `docs/evidence/grok_build/runs/20260811T073954Z/`  
+- Clean-quota re-run after GPT-5.6 Pro P1-A/B/C fixes (run `20260811T130935Z`):  
+  `docs/evidence/grok_build/runs/20260811T130935Z/`  
+  - Harness disposition (re-eval under executable-binding gate): **NO_GO** — missing `live_grok_executable.json` (pin predates content-bound Grok CLI identity; scenarios retained; not a fresh live campaign)  
+  - Strongest ACK: **transport** (`source_correlated=false`; ACP-SESSION-001 INCONCLUSIVE)  
+  - Privacy: complete=true on original scan; path/hostname/ls-owner redacted  
+  - Provenance **split** (`derived=true`): live_binary_commit `66ca8ae…` ≠ report_generator  
+  - Authoritative formal re-eval: `…darwin-2026-08-12.json` (NO_GO); pre-gate formal `…2026-08-11.json` superseded for qualification  
+  - Public ranking still **MORE_DATA**
+- Superseded clean-quota pin (run `20260811T084150Z`):  
+  `docs/evidence/grok_build/runs/20260811T084150Z/` + `SUPERSEDED.md`  
+  - Harness disposition: **LIMITED_GO** (mechanical; retained)  
+  - **Do not use** for source-correlated `session_visible` or privacy.complete claims (pre-P1-A/B/C overclaims; see SUPERSEDED.md)  
+  - Superseded by `20260811T130935Z`  
+  - Public ranking still **MORE_DATA**
+- Legacy clean-quota pin (main `694e09d…` post-#225, run `20260811T073954Z`):  
+  `docs/evidence/grok_build/runs/20260811T073954Z/` + `LEGACY_CORRELATION.md`  
   - Grok profile: `grok 1.0.0 (3cd0d0cbcebe)` darwin/arm64  
-  - Harness disposition: **NO_GO** (mechanical; primary limitation `HOOK-DENY-001 FAIL` — host deny not enforced / fail-open)  
+  - Harness disposition: **NO_GO** (mechanical; primary limitation `HOOK-DENY-001 FAIL` — host deny not enforced / fail-open) — **unchanged**  
   - Not quota-contaminated (no 402 / balance exhausted in campaign log)  
-  - **ACP-SESSION-001 PASS** with source-correlated **session_visible**; **CHALLENGE-001 PASS**  
-  - Privacy: `privacy.complete=true`, `raw_thoughts_stored=false`; `trust_launch` closed allowlist (hashed IDs; no raw `thought`)  
-  - Scenario counts: PASS 8 · FAIL 1 · INCONCLUSIVE 9 · NOT_RUN 1  
-  - Strongest proven ACK: **session_visible** (`explicit_claimed=false`)  
-  - Optional residual: `ACP-OPTIONAL-001` `session/load: Invalid params` (INCONCLUSIVE; not first-order NO_GO)  
+  - Recorded scenarios claim ACP-SESSION-001 PASS / session_visible — **legacy temporal correlation only** (pre watermark / request-intervention identity; **not** source-correlated evidence under #199 / post-P1-A rules)  
+  - **CHALLENGE-001 PASS** retained as recorded  
+  - Privacy / scenario counts retained as recorded; do not cite this pin for source-correlated session_visible  
   - Ranking still blocked by matched-host gaps: **#164 Codex**, **#120 Claude**
 - Prior v2 campaign (main `3a218bd…`, run `20260810T170640Z`):  
   `docs/evidence/grok_build/runs/20260810T170640Z/`  

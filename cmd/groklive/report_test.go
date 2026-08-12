@@ -1140,3 +1140,348 @@ func TestScanPrivacy_NonRegularFIFO(t *testing.T) {
 		t.Fatalf("fifo must make incomplete: %+v", p)
 	}
 }
+
+// --- live_identity fail-closed (GPT-5.6 Pro P1) ---
+
+const testFullRev = "0123456789abcdef0123456789abcdef01234567"
+
+func writeLiveIdentityFixture(t *testing.T, dir, commit, src string, dirty bool) {
+	t.Helper()
+	m := map[string]any{
+		"schema":                 liveIdentitySchema,
+		"live_binary_commit":     commit,
+		"live_binary_dirty":      dirty,
+		"live_binary_commit_src": src,
+		"at":                     stamp(),
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeUsablePreflight(t *testing.T, dir string) {
+	t.Helper()
+	m := map[string]any{
+		"usable":  true,
+		"version": "grok 1.0.0 (3cd0d0cbcebe)",
+		"binary":  "grok",
+	}
+	b, _ := json.MarshalIndent(m, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "preflight.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeValidCapsFile(t *testing.T, dir string) {
+	t.Helper()
+	// Match closed shape used by validCaps() / liveQualification.
+	caps := validCaps()
+	b, err := json.MarshalIndent(caps, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "acp_manifest.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseLiveIdentityJSON_RejectsPartialAndMalformed(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"malformed", `{not-json`},
+		{"empty", `{}`},
+		{"wrong_schema", `{"schema":"other","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags"}`},
+		{"missing_commit", `{"schema":"` + liveIdentitySchema + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags"}`},
+		{"short_commit", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"abc","live_binary_dirty":false,"live_binary_commit_src":"ldflags"}`},
+		{"missing_dirty", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_commit_src":"ldflags"}`},
+		{"dirty_string", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":"false","live_binary_commit_src":"ldflags"}`},
+		{"missing_src", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false}`},
+		{"src_unknown", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"unknown"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseLiveIdentityJSON([]byte(tc.raw))
+			if err == nil {
+				t.Fatalf("expected error for %s", tc.name)
+			}
+		})
+	}
+	id, err := parseLiveIdentityJSON([]byte(`{
+		"schema":"` + liveIdentitySchema + `",
+		"live_binary_commit":"` + testFullRev + `",
+		"live_binary_dirty":false,
+		"live_binary_commit_src":"ldflags"
+	}`))
+	if err != nil || !id.OK || id.Commit != testFullRev || id.Dirty || id.Src != "ldflags" {
+		t.Fatalf("valid identity: %+v err=%v", id, err)
+	}
+}
+
+func TestLoadLiveIdentity_NoGeneratorFallback(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	id := loadLiveIdentity(dir)
+	if id.OK {
+		t.Fatal("missing file must not OK")
+	}
+	if id.Commit != "" || id.Src != "" {
+		t.Fatalf("must not invent identity: %+v", id)
+	}
+	if !strings.Contains(id.Err, "missing") {
+		t.Fatalf("want missing err got %q", id.Err)
+	}
+
+	// Malformed must not partially apply generator-like defaults.
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(`{bad`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id = loadLiveIdentity(dir)
+	if id.OK || id.Commit != "" {
+		t.Fatalf("malformed must not OK/commit: %+v", id)
+	}
+
+	// Partial: commit only, no dirty — reject entirely.
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(`{
+		"schema":"`+liveIdentitySchema+`",
+		"live_binary_commit":"`+testFullRev+`",
+		"live_binary_commit_src":"ldflags"
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id = loadLiveIdentity(dir)
+	if id.OK || id.Commit != "" {
+		t.Fatalf("partial must not surface commit: %+v", id)
+	}
+}
+
+func TestGenerateLiveReport_MissingLiveIdentity_DemotesGO(t *testing.T) {
+	// Qualifying scenario matrix without live_identity must not keep GO/LIMITED_GO
+	// even if the report generator itself is clean (the false-qualify path).
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	writeScenarios(t, dir, fullGOScenarios())
+	writeUsablePreflight(t, dir)
+	writeValidCapsFile(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("ok evidence"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Intentionally no live_identity.json
+
+	out, err := generateLiveReport(dir)
+	if err != nil {
+		t.Fatalf("generateLiveReport: %v", err)
+	}
+	if out.Disposition == "GO" || out.Disposition == "LIMITED_GO" {
+		t.Fatalf("missing live_identity must demote qualifying floor; got %s reasons=%v", out.Disposition, out.Reasons)
+	}
+	foundMissing, foundForbid := false, false
+	for _, r := range out.Reasons {
+		if strings.Contains(r, "live_identity.json missing") {
+			foundMissing = true
+		}
+		if strings.Contains(r, "invalid/missing live_identity forbids GO/LIMITED_GO") {
+			foundForbid = true
+		}
+	}
+	if !foundMissing || !foundForbid {
+		t.Fatalf("want missing+forbid limitations; got %v", out.Reasons)
+	}
+	// Provenance must not claim generator as live.
+	prov, _ := out.Report["provenance"].(map[string]any)
+	if prov == nil {
+		t.Fatal("missing provenance")
+	}
+	if c, _ := prov["live_binary_commit"].(string); c != "" {
+		t.Fatalf("live_binary_commit must stay empty without identity, got %q", c)
+	}
+	if d, _ := prov["derived"].(bool); d {
+		t.Fatal("derived must be false when live identity invalid")
+	}
+	gen, _ := prov["report_generator_commit"].(string)
+	if gen != testFullRev {
+		t.Fatalf("generator still recorded: %q", gen)
+	}
+}
+
+func TestGenerateLiveReport_MalformedLiveIdentity_Demotes(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	writeScenarios(t, dir, fullGOScenarios())
+	writeUsablePreflight(t, dir)
+	writeValidCapsFile(t, dir)
+	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("ok"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(`{"schema":"x"}`), 0o600)
+
+	out, err := generateLiveReport(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Disposition == "GO" || out.Disposition == "LIMITED_GO" {
+		t.Fatalf("malformed identity demote: got %s", out.Disposition)
+	}
+}
+
+func TestGenerateLiveReport_DirtyLiveIdentity_Demotes(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	// Clean generator must not rescue a dirty live executor.
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	writeScenarios(t, dir, fullGOScenarios())
+	writeUsablePreflight(t, dir)
+	writeValidCapsFile(t, dir)
+	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("ok"), 0o600)
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", true)
+
+	out, err := generateLiveReport(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Disposition == "GO" || out.Disposition == "LIMITED_GO" {
+		t.Fatalf("dirty live identity demote: got %s reasons=%v", out.Disposition, out.Reasons)
+	}
+	prov, _ := out.Report["provenance"].(map[string]any)
+	if dirty, _ := prov["live_binary_dirty"].(bool); !dirty {
+		t.Fatal("live_binary_dirty must be true from identity")
+	}
+}
+
+func TestGenerateLiveReport_ValidLiveIdentity_PreservesSplitProvenance(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	liveRev := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	genRev := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	reinframeCommit = genRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	// LIMITED_GO-style incomplete matrix still needs identity for provenance honesty.
+	writeScenarios(t, dir, moreDataScenarios())
+	writeUsablePreflight(t, dir)
+	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("ok"), 0o600)
+	writeLiveIdentityFixture(t, dir, liveRev, "ldflags", false)
+
+	out, err := generateLiveReport(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov, _ := out.Report["provenance"].(map[string]any)
+	if c, _ := prov["live_binary_commit"].(string); c != liveRev {
+		t.Fatalf("live=%q", c)
+	}
+	if c, _ := prov["report_generator_commit"].(string); c != genRev {
+		t.Fatalf("gen=%q", c)
+	}
+	if d, _ := prov["derived"].(bool); !d {
+		t.Fatal("derived must be true when live != generator")
+	}
+}
+
+func TestEnsureLiveIdentity_CreateAndMismatch(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	if err := ensureLiveIdentity(dir); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	id := loadLiveIdentity(dir)
+	if !id.OK || id.Commit != testFullRev || id.Dirty {
+		t.Fatalf("created: %+v", id)
+	}
+	// Second call with same binary is idempotent.
+	if err := ensureLiveIdentity(dir); err != nil {
+		t.Fatalf("idempotent: %v", err)
+	}
+	// Mismatch with different binary identity.
+	reinframeCommit = "cccccccccccccccccccccccccccccccccccccccc"
+	if err := ensureLiveIdentity(dir); err == nil {
+		t.Fatal("mismatch must fail")
+	}
+}
+
+func TestEnsureLiveIdentity_RefuseRetrofitOntoExistingEvidence(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	// Pre-existing scenarios without live_identity — must not stamp current binary.
+	if err := os.WriteFile(filepath.Join(dir, "scenarios.json"), []byte(`{"HOOK-ALLOW-001":{"id":"HOOK-ALLOW-001","status":"PASS"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := ensureLiveIdentity(dir)
+	if err == nil {
+		t.Fatal("expected refuse retrofit")
+	}
+	if !strings.Contains(err.Error(), "refuse to retrofit") {
+		t.Fatalf("want retrofit error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "live_identity.json")); err == nil {
+		t.Fatal("must not write live_identity.json on retrofit refuse")
+	}
+	// Preflight-only dir is also live evidence (cannot retrofit later binary).
+	pfDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pfDir, "preflight.json"), []byte(`{"usable":true,"version":"grok 1.0.0"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureLiveIdentity(pfDir); err == nil || !strings.Contains(err.Error(), "refuse to retrofit") {
+		t.Fatalf("preflight without identity must refuse retrofit: %v", err)
+	}
+	// Fresh directory still allowed.
+	fresh := t.TempDir()
+	if err := ensureLiveIdentity(fresh); err != nil {
+		t.Fatalf("fresh dir create: %v", err)
+	}
+}
+
+func TestEnsureLiveIdentity_RejectsMalformedExisting(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(`{bad`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureLiveIdentity(dir); err == nil {
+		t.Fatal("malformed existing must fail")
+	}
+}
+
+func TestWriteLiveIdentity_FailsOnUnknownBinary(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = ""
+	reinframeDirty = ""
+	// When ldflags empty, may fall back to vcs — only assert when source unknown.
+	rev, _, src := reinframeBuildIdentity()
+	if src != "unknown" && rev != "" {
+		t.Skip("build has VCS identity; cannot force unknown in this environment")
+	}
+	dir := t.TempDir()
+	if err := writeLiveIdentity(dir); err == nil {
+		t.Fatal("unknown binary must refuse writeLiveIdentity")
+	}
+}

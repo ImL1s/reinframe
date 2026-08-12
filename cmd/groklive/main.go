@@ -130,9 +130,6 @@ func fail(err error) {
 }
 
 func writeJSON(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	// Normalize typed maps/structs/slices into map[string]any / []any via JSON
 	// (Pro R29 P1): map[string]ScenarioResult and []string otherwise bypass the walker.
 	raw, err := json.Marshal(v)
@@ -157,7 +154,62 @@ func writeJSON(path string, v any) error {
 	if err := validatePostRedactPlatformFields(s); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(s), 0o600)
+	return safeWriteFile(path, []byte(s), 0o600)
+}
+
+// safeWriteFile writes evidence artifacts without following symlinks (Pro R37 P2).
+// Rejects existing symlink/non-regular destinations; uses same-dir temp + rename
+// so a dangling symlink cannot redirect content outside the evidence tree.
+func safeWriteFile(path string, data []byte, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("safeWriteFile: refusing symlink destination %s", path)
+		}
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("safeWriteFile: refusing non-regular destination %s", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-write-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// Re-check before rename (shrink TOCTOU window).
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("safeWriteFile: destination became symlink %s", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }
 
 // closedStructuredJSONKey reports keys whose string values must not be hostname-redacted.

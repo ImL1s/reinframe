@@ -1933,7 +1933,15 @@ func ensureLiveIdentity(evDir string) error {
 		return err
 	}
 	path := filepath.Join(evDir, "live_identity.json")
-	if st, err := os.Stat(path); err == nil && !st.IsDir() {
+	// Lstat: do not treat dangling/following symlinks as "missing" then write through
+	// them outside evidence (Pro R37 P2).
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("ensureLiveIdentity: live_identity.json is a symlink")
+		}
+		if st.IsDir() {
+			return fmt.Errorf("ensureLiveIdentity: live_identity.json is a directory")
+		}
 		id := loadLiveIdentity(evDir)
 		if !id.OK {
 			return fmt.Errorf("ensureLiveIdentity: existing file invalid: %s", id.Err)
@@ -2116,7 +2124,13 @@ func ensureGrokExecutableIdentity(evDir, grokExe string) error {
 		return err
 	}
 	path := filepath.Join(evDir, "live_grok_executable.json")
-	if st, err := os.Stat(path); err == nil && !st.IsDir() {
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("ensureGrokExecutableIdentity: live_grok_executable.json is a symlink")
+		}
+		if st.IsDir() {
+			return fmt.Errorf("ensureGrokExecutableIdentity: live_grok_executable.json is a directory")
+		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("ensureGrokExecutableIdentity: read existing: %w", err)
@@ -2198,7 +2212,13 @@ func ensureGrokhooksExecutable(evDir, hooksExe string) error {
 		return err
 	}
 	path := filepath.Join(evDir, "live_grokhooks_executable.json")
-	if st, err := os.Stat(path); err == nil && !st.IsDir() {
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("ensureGrokhooksExecutable: live_grokhooks_executable.json is a symlink")
+		}
+		if st.IsDir() {
+			return fmt.Errorf("ensureGrokhooksExecutable: live_grokhooks_executable.json is a directory")
+		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("ensureGrokhooksExecutable: read existing: %w", err)

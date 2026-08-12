@@ -2430,6 +2430,62 @@ func TestContentHasLocalIdentityLeak_InvalidClosedFieldNotExempt(t *testing.T) {
 	}
 }
 
+// Pro R37 P2: dangling symlink destinations must not receive evidence writes.
+func TestSafeWriteFile_RejectsDanglingSymlink(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside-target.json")
+	// Dangling: target does not exist.
+	link := filepath.Join(dir, "live_identity.json")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	err := writeJSON(link, map[string]any{"ok": true})
+	if err == nil {
+		t.Fatal("writeJSON through dangling symlink must fail")
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("external target must remain absent; stat err=%v", err)
+	}
+	// Existing binding files: ensure* rejects symlink destinations.
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+	if err := ensureLiveIdentity(dir); err == nil {
+		t.Fatal("ensureLiveIdentity must refuse symlink live_identity.json")
+	}
+	// grok executable binding
+	exeLink := filepath.Join(dir, "live_grok_executable.json")
+	_ = os.Remove(exeLink)
+	if err := os.Symlink(outside, exeLink); err != nil {
+		t.Fatal(err)
+	}
+	// Need a real executable path for the content hash path; use this test binary.
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureGrokExecutableIdentity(dir, self); err == nil {
+		t.Fatal("ensureGrokExecutableIdentity must refuse symlink binding")
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("external target still must be absent after grok bind attempt: %v", err)
+	}
+	// grokhooks binding
+	hooksLink := filepath.Join(dir, "live_grokhooks_executable.json")
+	_ = os.Remove(hooksLink)
+	if err := os.Symlink(outside, hooksLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureGrokhooksExecutable(dir, self); err == nil {
+		t.Fatal("ensureGrokhooksExecutable must refuse symlink binding")
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("external target still must be absent after hooks bind attempt: %v", err)
+	}
+}
+
 // Pro R35 P1: identity-bearing filenames must fail privacy complete.
 func TestScanPrivacy_FilenameHostLeak(t *testing.T) {
 	prevHosts := append([]string(nil), extraRedactHostnames...)

@@ -263,7 +263,13 @@ func redactLocalIdentity(s string) string {
 		// hostname is a short common word (e.g. "build" in grok_build, "go" in goos)
 		// (Pro R10 P2).
 		if h != "" && h != "localhost" && len(h) > 1 {
-			s = redactHostnameToken(s, h)
+			// Skip post-marshal hostname redaction when the host collides with
+			// structured JSON/schema values (Pro R23 P2: hostname "linux" must
+			// not rewrite report_generator_goos). Privacy scan still uses the
+			// full candidate set via contentHasLocalIdentityLeak.
+			if !hostnameUnsafeForPostMarshalRedact(h) {
+				s = redactHostnameToken(s, h)
+			}
 		}
 	}
 	// Local account names in path/ownership contexts only — never unrestricted
@@ -279,9 +285,10 @@ func redactLocalIdentity(s string) string {
 // Case-insensitive: Windows/DNS hostnames often vary in case in tool output (Pro R14 P1).
 func hostnameTokenRE(host string) *regexp.Regexp {
 	// Left boundary excludes letter/digit/underscore/hyphen (not bare mid-identifier).
-	// Middle: optional FQDN suffix labels. Right: end or non-DNS char (RE2 has no lookaround).
+	// Middle: optional FQDN suffix labels + optional DNS root trailing dot (Pro R23).
+	// Right: end or non-DNS char (RE2 has no lookaround).
 	return regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_-])` + regexp.QuoteMeta(host) +
-		`((?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*)([^A-Za-z0-9_.-]|$)`)
+		`((?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*)\.?([^A-Za-z0-9_.-]|$)`)
 }
 
 // hostnameCandidates returns the bound host plus its first DNS label when the bound
@@ -300,6 +307,43 @@ func hostnameCandidates(host string) []string {
 		}
 	}
 	return out
+}
+
+// hostnameUnsafeForPostMarshalRedact reports hostnames that collide with structured
+// JSON fields when redactLocalIdentity runs after json.Marshal (Pro R23 P2).
+func hostnameUnsafeForPostMarshalRedact(host string) bool {
+	for _, cand := range hostnameCandidates(host) {
+		h := strings.ToLower(cand)
+		if h == "" {
+			return true
+		}
+		if isValidGOOS(h) || isValidGOARCH(h) {
+			return true
+		}
+		switch h {
+		case "true", "false", "null", "pass", "fail", "go", "limited_go", "more_data", "no_go",
+			"transport", "session_visible", "explicit", "unknown":
+			return true
+		}
+	}
+	return false
+}
+
+// postRedactPlatformFieldCorruptRE detects GOOS/GOARCH provenance fields rewritten
+// to the [HOSTNAME] placeholder after post-marshal redaction (Pro R23 P2).
+var postRedactPlatformFieldCorruptRE = regexp.MustCompile(
+	`"(?:goos|goarch|live_goos|live_goarch|report_generator_goos|report_generator_goarch)"\s*:\s*"\[HOSTNAME\]"`)
+
+// validatePostRedactPlatformFields fails closed when post-marshal hostname redaction
+// rewrote a GOOS/GOARCH provenance field to the [HOSTNAME] placeholder (Pro R23 P2).
+func validatePostRedactPlatformFields(s string) error {
+	if s == "" {
+		return nil
+	}
+	if postRedactPlatformFieldCorruptRE.MatchString(s) {
+		return fmt.Errorf("post-redact platform field rewritten to [HOSTNAME]; refusing to write corrupted evidence")
+	}
+	return nil
 }
 
 // hostnameTokenPresent reports whether host appears as a token (not a substring of

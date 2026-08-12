@@ -104,8 +104,13 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	// Defense-in-depth: redact local host identity before any evidence lands on disk.
-	b = []byte(redactLocalIdentity(string(b)))
-	return os.WriteFile(path, b, 0o600)
+	// Skip hostnames that collide with structured platform/schema tokens (Pro R23 P2);
+	// still fail closed if a platform field was rewritten to [HOSTNAME].
+	s := redactLocalIdentity(string(b))
+	if err := validatePostRedactPlatformFields(s); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(s), 0o600)
 }
 
 func loadScenarioMap(dir string) map[string]ScenarioResult {

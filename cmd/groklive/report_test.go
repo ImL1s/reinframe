@@ -1771,6 +1771,74 @@ func TestHostnameToken_MatchesFQDNFirstLabel(t *testing.T) {
 	if strings.Contains(out2, "build-01") || !strings.Contains(out2, "[HOSTNAME]") {
 		t.Fatalf("short redaction under bound FQDN: %s", out2)
 	}
+	// Absolute DNS with root trailing dot (Pro R23 P1).
+	if !hostnameTokenPresent("name=build-01.corp.example.com.", "build-01.corp.example.com") {
+		t.Fatal("root-dot FQDN must match bound FQDN")
+	}
+	if !hostnameTokenPresent("name=build-01.corp.example.com.", "build-01") {
+		t.Fatal("root-dot FQDN must match bound short host")
+	}
+	// short bound → FQDN with root-dot must redact.
+	outRoot := redactHostnameToken("node build-01.corp.example.com. up", "build-01")
+	if strings.Contains(outRoot, "build-01") || !strings.Contains(outRoot, "[HOSTNAME]") {
+		t.Fatalf("root-dot FQDN redaction under short bound: %s", outRoot)
+	}
+	// FQDN bound → full FQDN with root-dot must redact.
+	outRoot2 := redactHostnameToken("node build-01.corp.example.com. up", "build-01.corp.example.com")
+	if strings.Contains(outRoot2, "build-01") || !strings.Contains(outRoot2, "[HOSTNAME]") {
+		t.Fatalf("root-dot FQDN redaction under FQDN bound: %s", outRoot2)
+	}
+	// Schema identifiers remain non-matches with root-dot matcher.
+	if hostnameTokenPresent("reinframe.grok_build.v1.", "build") {
+		t.Fatal("root-dot-aware matcher must not match schema id grok_build")
+	}
+}
+
+func TestHostnameUnsafeForPostMarshalRedact(t *testing.T) {
+	t.Parallel()
+	// GOOS/GOARCH hostnames must skip post-marshal rewrite (Pro R23 P2).
+	for _, h := range []string{"linux", "darwin", "amd64", "arm64", "linux.corp.example.com"} {
+		if !hostnameUnsafeForPostMarshalRedact(h) {
+			t.Fatalf("expected unsafe hostname %q", h)
+		}
+	}
+	for _, h := range []string{"true", "false", "PASS", "null", "go", "transport", "session_visible", "unknown"} {
+		if !hostnameUnsafeForPostMarshalRedact(h) {
+			t.Fatalf("expected unsafe schema token hostname %q", h)
+		}
+	}
+	if hostnameUnsafeForPostMarshalRedact("build-01") {
+		t.Fatal("ordinary hostname must remain safe for post-marshal redaction")
+	}
+	// redactLocalIdentity must not corrupt report_generator_goos when host is linux.
+	// We cannot force os.Hostname(); assert the helper + validator path directly.
+	raw := `{
+  "goos": "linux",
+  "goarch": "amd64",
+  "report_generator_goos": "linux",
+  "report_generator_goarch": "amd64",
+  "note": "host linux is online"
+}`
+	// Simulate unsafe-host skip: only free-text would be left if we still rewrote;
+	// the skip list must keep structured platform values intact under redactHostnameToken.
+	// When skip applies, redactHostnameToken is not called for os.Hostname==linux.
+	if err := validatePostRedactPlatformFields(raw); err != nil {
+		t.Fatalf("clean platform fields must validate: %v", err)
+	}
+	// Corrupted path must fail closed.
+	corrupt := strings.ReplaceAll(raw, `"report_generator_goos": "linux"`, `"report_generator_goos": "[HOSTNAME]"`)
+	if err := validatePostRedactPlatformFields(corrupt); err == nil {
+		t.Fatal("corrupted report_generator_goos must fail validation")
+	}
+	// Direct rewrite of goos value via redactHostnameToken("linux") would corrupt —
+	// that is why hostnameUnsafeForPostMarshalRedact short-circuits the call.
+	rewritten := redactHostnameToken(raw, "linux")
+	if !strings.Contains(rewritten, `"[HOSTNAME]"`) {
+		t.Fatalf("control: unrestricted linux redaction should rewrite tokens: %s", rewritten)
+	}
+	if err := validatePostRedactPlatformFields(rewritten); err == nil {
+		t.Fatal("post-redact validator must reject rewritten platform fields")
+	}
 }
 
 func TestLiveScanContext_RejectsCaseAliasCacheRoot(t *testing.T) {

@@ -944,6 +944,12 @@ func scanPrivacy(evDir string) map[string]any {
 			hits++
 			fails = append(fails, "local_identity:"+e.Name())
 		}
+		// Filenames also publish identity (Pro R35 P1): build-01.log with clean body
+		// must not allow privacy.complete=true.
+		if contentHasLocalIdentityLeak(e.Name(), scanHosts...) {
+			hits++
+			fails = append(fails, "local_identity_filename:"+e.Name())
+		}
 	}
 	out["files_seen"] = seen
 	out["files_scanned"] = scanned

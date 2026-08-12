@@ -2430,6 +2430,61 @@ func TestContentHasLocalIdentityLeak_InvalidClosedFieldNotExempt(t *testing.T) {
 	}
 }
 
+// Pro R35 P1: identity-bearing filenames must fail privacy complete.
+func TestScanPrivacy_FilenameHostLeak(t *testing.T) {
+	prevHosts := append([]string(nil), extraRedactHostnames...)
+	t.Cleanup(func() { extraRedactHostnames = prevHosts })
+	dir := t.TempDir()
+	// Clean body, dirty name.
+	live := "build-01-livehost"
+	if err := os.WriteFile(filepath.Join(dir, live+".log"), []byte("ok transport pass\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Bind live host as scan candidate via private scan context + identity.
+	// Simpler: pass via extra hostname by writing live identity + context.
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+	cache := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cache, nil }
+	// Manually write identity with scan id and private context with live host.
+	scanID := "abcdef0123456789abcdef0123456789"
+	path, err := liveScanContextPath(dir, scanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"schema":%q,"scan_context_id":%q,"live_hostname":%q,"at":"t"}`, liveScanContextSchema, scanID, live)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	idBody := fmt.Sprintf(`{"schema":%q,"live_binary_commit":%q,"live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":%q,"live_goarch":%q,"scan_context_id":%q,"at":"t"}`,
+		liveIdentitySchema, testFullRev, runtime.GOOS, runtime.GOARCH, scanID)
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(idBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := scanPrivacy(dir)
+	if p["complete"] == true {
+		t.Fatalf("filename host leak must not complete: %+v", p)
+	}
+	fails, _ := p["failure_classes"].([]string)
+	found := false
+	for _, f := range fails {
+		if strings.Contains(f, "local_identity_filename") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("want local_identity_filename failure, got %v", fails)
+	}
+}
+
 // Pro R33 P2 / R34 P2: case-sensitive volume must not fold /cache vs /Cache.
 func TestPathContainedIn_CaseSensitiveSiblingDirs(t *testing.T) {
 	base := t.TempDir()

@@ -355,6 +355,35 @@ func TestUpdateStrongCorrelation_RequiresSessionUpdateMethod(t *testing.T) {
 	if !ok {
 		t.Fatalf("canonical method session/update should correlate: why=%s", why)
 	}
+	// Pro R25 P2: present-but-malformed method must not fall through to shape.
+	for _, bad := range []any{123, nil, "", " ", " session/update ", "session/request_permission"} {
+		uBad := map[string]any{
+			"method":         bad,
+			"sessionId":      "s1",
+			"interventionId": "iv-1",
+			"requestId":      float64(42),
+			"sessionUpdate":  "agent_message_chunk",
+		}
+		ok, why = UpdateStrongCorrelation(uBad, "iv-1", "", 42)
+		if ok {
+			t.Fatalf("malformed method %v must not correlate: why=%s", bad, why)
+		}
+	}
+	// malformed top-level _method fails even if params._method is valid.
+	uMix := map[string]any{
+		"_method":        99,
+		"sessionId":      "s1",
+		"interventionId": "iv-1",
+		"requestId":      float64(42),
+		"sessionUpdate":  "agent_message_chunk",
+		"params": map[string]any{
+			"_method": "session/update",
+		},
+	}
+	ok, why = UpdateStrongCorrelation(uMix, "iv-1", "", 42)
+	if ok {
+		t.Fatalf("malformed top-level _method must fail closed even with valid params._method: why=%s", why)
+	}
 }
 
 func TestUpdateStrongCorrelation_IgnoresAgentContentSpoof(t *testing.T) {

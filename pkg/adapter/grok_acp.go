@@ -1020,29 +1020,69 @@ func firstRequestID(m map[string]any) (int64, bool) {
 // isSessionUpdateNotification reports whether the update is a session/update
 // notification (not an unrelated ACP method carrying identity fields).
 //
-// Method precedence (Pro R24 P2):
-//  1. Canonical JSON-RPC "method" is authoritative when present.
-//  2. Internal reader "_method" (top-level or params) next.
-//  3. If both method and _method are present and disagree → fail closed.
-//  4. Shape-only fallback (sessionUpdate key) only when neither method field exists.
+// Method rules (Pro R24/R25):
+//   - Any recognized method key that is present (top-level "method", top-level
+//     "_method", or params["_method"]) must be a string exactly equal to
+//     "session/update" — no TrimSpace acceptance of padded names, no collapse of
+//     non-string / null / empty into "absent" (Pro R25 P2).
+//   - Multiple present method fields must all be valid and mutually equal.
+//   - Shape-only fallback (sessionUpdate key) runs only when none of those keys exist.
 func isSessionUpdateNotification(u map[string]any) bool {
 	if u == nil {
 		return false
 	}
-	method := strings.TrimSpace(asStringField(u, "method"))
-	internal := strings.TrimSpace(asStringField(u, "_method"))
-	if p, _ := u["params"].(map[string]any); p != nil && internal == "" {
-		internal = strings.TrimSpace(asStringField(p, "_method"))
+	type methodHit struct {
+		present bool
+		ok      bool
+		value   string
 	}
-	if method != "" && internal != "" && method != internal {
-		return false
+	parse := func(m map[string]any, key string) methodHit {
+		if m == nil {
+			return methodHit{}
+		}
+		raw, exists := m[key]
+		if !exists {
+			return methodHit{}
+		}
+		// Key present: must be exact string "session/update" (no trim).
+		s, isStr := raw.(string)
+		if !isStr {
+			return methodHit{present: true, ok: false}
+		}
+		if s != "session/update" {
+			return methodHit{present: true, ok: false, value: s}
+		}
+		return methodHit{present: true, ok: true, value: s}
 	}
-	if method != "" {
-		return method == "session/update"
+
+	topMethod := parse(u, "method")
+	topInternal := parse(u, "_method")
+	var paramsInternal methodHit
+	if p, _ := u["params"].(map[string]any); p != nil {
+		paramsInternal = parse(p, "_method")
 	}
-	if internal != "" {
-		return internal == "session/update"
+
+	hits := []methodHit{topMethod, topInternal, paramsInternal}
+	anyPresent := false
+	var accepted string
+	for _, h := range hits {
+		if !h.present {
+			continue
+		}
+		anyPresent = true
+		if !h.ok {
+			return false
+		}
+		if accepted == "" {
+			accepted = h.value
+		} else if accepted != h.value {
+			return false
+		}
 	}
+	if anyPresent {
+		return accepted == "session/update"
+	}
+
 	// Unwrapped fixtures/tests without a method field: accept only when the body
 	// looks like a session/update (sessionUpdate key present).
 	if _, ok := u["sessionUpdate"]; ok {
@@ -1064,15 +1104,6 @@ func isSessionUpdateNotification(u map[string]any) bool {
 		}
 	}
 	return false
-}
-
-// asStringField returns a map value only when it is a non-empty string type.
-func asStringField(m map[string]any, key string) string {
-	if m == nil {
-		return ""
-	}
-	s, _ := m[key].(string)
-	return s
 }
 
 func (c *GrokACPClient) failAllPending(err error) {

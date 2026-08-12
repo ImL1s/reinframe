@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -2056,5 +2057,52 @@ func TestGenerateLiveReport_MissingPlatformFields_Demotes(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("want platform/identity reason; got %v", out.Reasons)
+	}
+}
+
+// Pro R25 P2: executable binding digests must be SHA-256 hex, not merely len==64.
+func TestLoadLiveExecutable_RequiresSHA256Hex(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write := func(name, schema, field, sum string) {
+		t.Helper()
+		body := fmt.Sprintf(`{"schema":%q,%q:%q}`, schema, field, sum)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 64 non-hex must fail.
+	write("live_grok_executable.json", liveGrokExeSchema, "grok_executable_sha256", strings.Repeat("z", 64))
+	if ok, why := loadLiveGrokExecutableOK(dir); ok {
+		t.Fatalf("non-hex digest must fail: why=%s", why)
+	}
+	// 63 / 65 length fail.
+	write("live_grok_executable.json", liveGrokExeSchema, "grok_executable_sha256", strings.Repeat("a", 63))
+	if ok, _ := loadLiveGrokExecutableOK(dir); ok {
+		t.Fatal("63-char digest must fail")
+	}
+	write("live_grok_executable.json", liveGrokExeSchema, "grok_executable_sha256", strings.Repeat("a", 65))
+	if ok, _ := loadLiveGrokExecutableOK(dir); ok {
+		t.Fatal("65-char digest must fail")
+	}
+	// whitespace padding fails isSHA256Hex.
+	write("live_grok_executable.json", liveGrokExeSchema, "grok_executable_sha256", strings.Repeat("a", 63)+" ")
+	if ok, _ := loadLiveGrokExecutableOK(dir); ok {
+		t.Fatal("whitespace in digest must fail")
+	}
+	// valid hex OK.
+	good := strings.Repeat("ab", 32) // 64 hex chars
+	write("live_grok_executable.json", liveGrokExeSchema, "grok_executable_sha256", good)
+	if ok, why := loadLiveGrokExecutableOK(dir); !ok {
+		t.Fatalf("valid hex must pass: %s", why)
+	}
+	// hooks loader same contract.
+	write("live_grokhooks_executable.json", liveGrokhooksSchema, "grokhooks_executable_sha256", strings.Repeat("z", 64))
+	if ok, why := loadLiveGrokhooksExecutableOK(dir); ok {
+		t.Fatalf("hooks non-hex must fail: why=%s", why)
+	}
+	write("live_grokhooks_executable.json", liveGrokhooksSchema, "grokhooks_executable_sha256", good)
+	if ok, why := loadLiveGrokhooksExecutableOK(dir); !ok {
+		t.Fatalf("hooks valid hex must pass: %s", why)
 	}
 }

@@ -1772,7 +1772,8 @@ func loadLiveGrokExecutableOK(evDir string) (ok bool, reason string) {
 		return false, "live_grok_executable.json schema invalid"
 	}
 	sum, _ := m["grok_executable_sha256"].(string)
-	if strings.TrimSpace(sum) == "" || len(sum) != 64 {
+	// Pro R25 P2: require SHA-256 hex syntax, not merely len==64 (zzzz… must fail).
+	if !isSHA256Hex(sum) {
 		return false, "live_grok_executable.json missing content sha256"
 	}
 	return true, ""
@@ -1864,7 +1865,8 @@ func loadLiveGrokhooksExecutableOK(evDir string) (ok bool, reason string) {
 		return false, "live_grokhooks_executable.json schema invalid"
 	}
 	sum, _ := m["grokhooks_executable_sha256"].(string)
-	if strings.TrimSpace(sum) == "" || len(sum) != 64 {
+	// Pro R25 P2: require SHA-256 hex syntax, not merely len==64 (zzzz… must fail).
+	if !isSHA256Hex(sum) {
 		return false, "live_grokhooks_executable.json missing content sha256"
 	}
 	return true, ""

@@ -29,6 +29,7 @@ func runHooks(args []string) {
 	}
 	grok := mustAbs(*exe, "--grok-executable")
 	proj := mustAbs(*project, "--project")
+	setLiveProjectRoot(proj)
 	evDir := mustAbs(*out, "--evidence-out")
 	_ = os.MkdirAll(evDir, 0o700)
 	if err := ensureLiveIdentity(evDir); err != nil {

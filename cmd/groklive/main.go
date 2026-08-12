@@ -80,6 +80,23 @@ func runAll(args []string) {
 		}
 		scanContextOutPath = abs
 	}
+	// --scan-context-in must be bound before ensureLiveIdentity so resume of a
+	// copied campaign (no private cache) can import the transferable sidecar
+	// during identity validation (Pro R31/R32 P2).
+	if s := strings.TrimSpace(*ctxIn); s != "" {
+		abs, err := filepath.Abs(s)
+		if err != nil {
+			fail(fmt.Errorf("groklive all: --scan-context-in: %w", err))
+		}
+		scanContextInPath = abs
+	} else if s := strings.TrimSpace(*ctxOut); s != "" {
+		// Same-host resume after private-cache loss can re-import the export path.
+		abs, err := filepath.Abs(s)
+		if err != nil {
+			fail(fmt.Errorf("groklive all: --scan-context-out as import: %w", err))
+		}
+		scanContextInPath = abs
+	}
 	if err := ensureLiveIdentity(evDir); err != nil {
 		fail(fmt.Errorf("groklive all: live_identity: %w", err))
 	}

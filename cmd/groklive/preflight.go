@@ -227,12 +227,31 @@ func redactSecrets(s string) string {
 	return redactLocalIdentity(out)
 }
 
+// liveProjectRoot is the absolute --project path for the active live phase.
+// Bound by runHooks/runACP so doctor/hooks artifacts cannot publish machine-specific
+// project roots outside HOME/TMP (Pro R31/R32 P1).
+var liveProjectRoot string
+
+func setLiveProjectRoot(p string) {
+	liveProjectRoot = filepath.Clean(strings.TrimSpace(p))
+}
+
+func redactLiveProjectRoot(s string) string {
+	p := liveProjectRoot
+	if p == "" || len(p) < 3 || p == "." || p == string(filepath.Separator) {
+		return s
+	}
+	return replacePathVariants(s, p, "[PROJECT]")
+}
+
 // redactLocalIdentity removes home/temp paths and hostnames from evidence strings (#168 / GPT P1-C).
 // Handles Unix paths, Windows paths (including JSON-escaped backslashes), and common env roots.
 func redactLocalIdentity(s string) string {
 	if s == "" {
 		return s
 	}
+	// Campaign project root (may sit outside HOME/TMP, e.g. /workspace/alice/campaign).
+	s = redactLiveProjectRoot(s)
 	// Env-bound roots (HOME/USERPROFILE and TEMP/TMP/TMPDIR), including JSON-escaped forms.
 	for _, key := range []string{"HOME", "USERPROFILE"} {
 		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
@@ -295,6 +314,7 @@ func redactPathsAndAccounts(s string) string {
 	if s == "" {
 		return s
 	}
+	s = redactLiveProjectRoot(s)
 	for _, key := range []string{"HOME", "USERPROFILE"} {
 		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 			s = replacePathVariants(s, v, "[HOME]")

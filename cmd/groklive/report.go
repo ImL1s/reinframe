@@ -1043,6 +1043,19 @@ func contentHasLocalIdentityLeak(s string, extraHostnames ...string) bool {
 	if strings.Contains(s, "/var/folders/") {
 		return true
 	}
+	// Residual --project root (outside HOME/TMP) is a leak (Pro R31/R32 P1).
+	if p := strings.TrimSpace(liveProjectRoot); p != "" && len(p) >= 3 {
+		if strings.Contains(s, p) {
+			return true
+		}
+		// JSON-escaped Windows separators.
+		if strings.Contains(p, `\`) {
+			esc := strings.ReplaceAll(p, `\`, `\\`)
+			if strings.Contains(s, esc) {
+				return true
+			}
+		}
+	}
 	// Windows user roots: C:\Users\…, C:\\Users\\… (JSON), C:/Users/…
 	if winUsersPath.MatchString(s) || winUsersPathEscaped.MatchString(s) || winUsersPathSlash.MatchString(s) {
 		return true

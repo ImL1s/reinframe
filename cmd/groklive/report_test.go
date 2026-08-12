@@ -2060,6 +2060,84 @@ func TestGenerateLiveReport_MissingPlatformFields_Demotes(t *testing.T) {
 	}
 }
 
+// Pro R31/R32 P2: --scan-context-in must work during ensureLiveIdentity (not only report).
+func TestEnsureLiveIdentity_ImportsScanContextInDuringValidate(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() {
+		reinframeCommit, reinframeDirty = prevC, prevD
+		scanContextOutPath = ""
+		scanContextInPath = ""
+		privateCacheRootFn = prevRoot
+	})
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	cacheA := t.TempDir()
+	privateCacheRootFn = func() (string, error) { return cacheA, nil }
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "evidence")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(parent, "ctx-export.json")
+	scanContextOutPath = external
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+	scanContextOutPath = ""
+
+	// Simulate copied campaign: public evidence only + external sidecar, empty private cache.
+	cacheB := t.TempDir()
+	privateCacheRootFn = func() (string, error) { return cacheB, nil }
+	copied := filepath.Join(t.TempDir(), "evidence-copy")
+	if err := os.MkdirAll(copied, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	idBytes, err := os.ReadFile(filepath.Join(dir, "live_identity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(copied, "live_identity.json"), idBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Without import, ensure must fail closed.
+	scanContextInPath = ""
+	if err := ensureLiveIdentity(copied); err == nil {
+		t.Fatal("missing private context without import must fail")
+	}
+	// With scan-context-in bound before ensure (as runAll now does), must succeed.
+	scanContextInPath = external
+	if err := ensureLiveIdentity(copied); err != nil {
+		t.Fatalf("ensureLiveIdentity with scan-context-in: %v", err)
+	}
+}
+
+// Pro R31/R32 P1: --project roots outside HOME/TMP must be redacted and scanned.
+func TestProjectRootRedactionAndLeakScan(t *testing.T) {
+	prev := liveProjectRoot
+	t.Cleanup(func() { liveProjectRoot = prev })
+	proj := filepath.Join(t.TempDir(), "workspace", "alice", "campaign")
+	if err := os.MkdirAll(proj, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	setLiveProjectRoot(proj)
+	hooksFile := filepath.Join(proj, ".grok", "hooks", "reinframe-pretool.json")
+	out := redactLocalIdentity("doctor hooks_file=" + hooksFile)
+	if strings.Contains(out, proj) || strings.Contains(out, "alice") {
+		t.Fatalf("project root not redacted: %s", out)
+	}
+	if !strings.Contains(out, "[PROJECT]") {
+		t.Fatalf("expected [PROJECT] placeholder: %s", out)
+	}
+	// Residual raw project path must fail privacy scan.
+	if !contentHasLocalIdentityLeak("hooks_file=" + hooksFile) {
+		t.Fatal("raw project path must leak")
+	}
+	if contentHasLocalIdentityLeak("hooks_file=[PROJECT]/.grok/hooks/reinframe-pretool.json") {
+		t.Fatal("redacted project path must not leak")
+	}
+}
+
 // Pro R30 P2: resume existing identity with --scan-context-out must still export.
 func TestEnsureLiveIdentity_ExportsScanContextOnResume(t *testing.T) {
 	prevC, prevD := reinframeCommit, reinframeDirty
@@ -2336,12 +2414,12 @@ func TestContentHasLocalIdentityLeak_InvalidClosedFieldNotExempt(t *testing.T) {
 	if !contentHasLocalIdentityLeak(`{"src":"build-01"}`, "build-01") {
 		t.Fatal(`invalid src value must leak`)
 	}
-	// Valid closed enums still exempt.
-	if contentHasLocalIdentityLeak(`{"status":"PASS","final_disposition":"NO_GO"}`, "PASS") {
-		// host PASS is unlikely; ensure valid enum does not create false path via status alone
-	}
+	// Valid closed enums still exempt (host token that is not an enum value).
 	if contentHasLocalIdentityLeak(`{"status":"PASS","goos":"linux"}`, "linux") {
 		t.Fatal("valid goos enum must remain exempt")
+	}
+	if contentHasLocalIdentityLeak(`{"status":"PASS","final_disposition":"NO_GO"}`, "build-01") {
+		t.Fatal("valid closed enums must not false-flag unrelated host")
 	}
 }
 

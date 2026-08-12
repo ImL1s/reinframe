@@ -2159,6 +2159,71 @@ func TestProjectRootRedactionAndLeakScan(t *testing.T) {
 	}
 }
 
+// Pro R39 skeptic / Codex P2: predictable OUT.tmp must not follow a pre-planted symlink.
+func TestWriteScanContextOut_RejectsPredictableTmpSymlink(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() {
+		reinframeCommit, reinframeDirty = prevC, prevD
+		scanContextOutPath = ""
+		scanContextInPath = ""
+	})
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	cache := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cache, nil }
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "evidence")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// First create identity without export.
+	scanContextOutPath = ""
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+
+	external := filepath.Join(parent, "scan-export.json")
+	// Pre-plant predictable OUT.tmp as dangling symlink to outside target (old bug path).
+	outside := filepath.Join(t.TempDir(), "hijacked.json")
+	predictableTmp := external + ".tmp"
+	if err := os.Symlink(outside, predictableTmp); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	// Also plant final destination as dangling symlink to prove safeWriteFile rejects it.
+	// For the .tmp case: safeWriteFile uses unique CreateTemp, so predictable .tmp is ignored.
+	// Attack surface for final OUT: symlink OUT itself.
+	if err := os.Symlink(outside, external); err != nil {
+		t.Fatal(err)
+	}
+	scanContextOutPath = external
+	err := ensureLiveIdentity(dir)
+	if err == nil {
+		t.Fatal("export to symlink destination must fail")
+	}
+	if _, stErr := os.Stat(outside); !os.IsNotExist(stErr) {
+		t.Fatalf("outside target must remain absent after failed export: %v", stErr)
+	}
+	// Clear final symlink; leave only predictable .tmp symlink — export must still succeed
+	// without writing through .tmp (unique temp) and without creating outside.
+	_ = os.Remove(external)
+	scanContextOutPath = external
+	if err := ensureLiveIdentity(dir); err != nil {
+		t.Fatalf("export with stale OUT.tmp symlink present must still work via unique temp: %v", err)
+	}
+	if _, stErr := os.Stat(outside); !os.IsNotExist(stErr) {
+		t.Fatalf("outside must remain absent when only OUT.tmp was symlinked: %v", stErr)
+	}
+	b, err := os.ReadFile(external)
+	if err != nil {
+		t.Fatalf("export file missing: %v", err)
+	}
+	if _, ok, why := parseLiveScanContextBytes(b); !ok {
+		t.Fatalf("export invalid: %s", why)
+	}
+}
+
 // Pro R30 P2: resume existing identity with --scan-context-out must still export.
 func TestEnsureLiveIdentity_ExportsScanContextOnResume(t *testing.T) {
 	prevC, prevD := reinframeCommit, reinframeDirty

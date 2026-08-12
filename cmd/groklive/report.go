@@ -1673,17 +1673,10 @@ func writeScanContextOutFile(evAbs string, b []byte) error {
 	} else if under {
 		return fmt.Errorf("--scan-context-out must be outside evidence directory")
 	}
-	if err := os.MkdirAll(filepath.Dir(outAbs), 0o700); err != nil {
-		return fmt.Errorf("scan-context-out mkdir: %w", err)
-	}
-	// Atomic-ish: temp sibling then rename so partial writes are not left as final.
-	tmp := outAbs + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	// Use safeWriteFile: unique CreateTemp (no predictable OUT.tmp) + Lstat reject
+	// so a pre-planted OUT.tmp symlink cannot redirect writes (Pro R39 skeptic / Codex P2).
+	if err := safeWriteFile(outAbs, b, 0o600); err != nil {
 		return fmt.Errorf("write scan-context-out: %w", err)
-	}
-	if err := os.Rename(tmp, outAbs); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("write scan-context-out rename: %w", err)
 	}
 	return nil
 }

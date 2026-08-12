@@ -1154,16 +1154,17 @@ func parseLiveIdentityJSON(b []byte) (liveIdentity, error) {
 	default:
 		return liveIdentity{}, fmt.Errorf("live_identity.json live_binary_commit_src %q not allowed", src)
 	}
-	// Platform fields optional on legacy pins; when present must be non-empty strings.
-	goos, _ := m["live_goos"].(string)
-	goarch, _ := m["live_goarch"].(string)
+	// Platform fields are mandatory for a valid live identity (Codex GraphQL P2 on #230).
+	// Absent fields previously allowed generator GOOS/GOARCH fallback into provenance naming.
+	goos, okGOOS := m["live_goos"].(string)
+	goarch, okGOARCH := m["live_goarch"].(string)
 	goos = strings.TrimSpace(goos)
 	goarch = strings.TrimSpace(goarch)
-	if _, has := m["live_goos"]; has && goos == "" {
-		return liveIdentity{}, fmt.Errorf("live_identity.json live_goos empty")
+	if !okGOOS || goos == "" {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_goos")
 	}
-	if _, has := m["live_goarch"]; has && goarch == "" {
-		return liveIdentity{}, fmt.Errorf("live_identity.json live_goarch empty")
+	if !okGOARCH || goarch == "" {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_goarch")
 	}
 	return liveIdentity{Commit: commit, Dirty: dirty, Src: src, GOOS: goos, GOARCH: goarch, OK: true}, nil
 }
@@ -1320,10 +1321,10 @@ func ensureGrokhooksExecutable(evDir, hooksExe string) error {
 		if strings.TrimSpace(prevSum) == "" || prevSum != sum {
 			return fmt.Errorf("ensureGrokhooksExecutable: content mismatch (live=%s current=%s)", prevSum, sum)
 		}
-		prevPath, _ := m["grokhooks_executable_path"].(string)
-		if strings.TrimSpace(prevPath) != "" && filepath.Clean(prevPath) != filepath.Clean(abs) {
-			return fmt.Errorf("ensureGrokhooksExecutable: path mismatch (live=%s current=%s)", prevPath, abs)
-		}
+		// Do not compare grokhooks_executable_path: writeJSON redacts home/tmp paths to
+		// [HOME]/[TMP:…] so a second bind always false-mismatched absolute paths
+		// (Codex GraphQL P1 on #230). Content SHA-256 is the authoritative bind —
+		// same contract as ensureGrokExecutableIdentity.
 		return nil
 	}
 	return writeJSON(path, map[string]any{

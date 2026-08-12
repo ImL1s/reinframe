@@ -1152,6 +1152,8 @@ func writeLiveIdentityFixture(t *testing.T, dir, commit, src string, dirty bool)
 		"live_binary_commit":     commit,
 		"live_binary_dirty":      dirty,
 		"live_binary_commit_src": src,
+		"live_goos":              runtime.GOOS,
+		"live_goarch":            runtime.GOARCH,
 		"at":                     stamp(),
 	}
 	b, err := json.MarshalIndent(m, "", "  ")
@@ -1191,19 +1193,25 @@ func writeValidCapsFile(t *testing.T, dir string) {
 
 func TestParseLiveIdentityJSON_RejectsPartialAndMalformed(t *testing.T) {
 	t.Parallel()
+	plat := `,"live_goos":"darwin","live_goarch":"arm64"`
 	cases := []struct {
 		name string
 		raw  string
 	}{
 		{"malformed", `{not-json`},
 		{"empty", `{}`},
-		{"wrong_schema", `{"schema":"other","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags"}`},
-		{"missing_commit", `{"schema":"` + liveIdentitySchema + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags"}`},
-		{"short_commit", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"abc","live_binary_dirty":false,"live_binary_commit_src":"ldflags"}`},
-		{"missing_dirty", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_commit_src":"ldflags"}`},
-		{"dirty_string", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":"false","live_binary_commit_src":"ldflags"}`},
-		{"missing_src", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false}`},
-		{"src_unknown", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"unknown"}`},
+		{"wrong_schema", `{"schema":"other","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags"` + plat + `}`},
+		{"missing_commit", `{"schema":"` + liveIdentitySchema + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags"` + plat + `}`},
+		{"short_commit", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"abc","live_binary_dirty":false,"live_binary_commit_src":"ldflags"` + plat + `}`},
+		{"missing_dirty", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_commit_src":"ldflags"` + plat + `}`},
+		{"dirty_string", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":"false","live_binary_commit_src":"ldflags"` + plat + `}`},
+		{"missing_src", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false` + plat + `}`},
+		{"src_unknown", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"unknown"` + plat + `}`},
+		// Platform mandatory (Codex #230 P2): legacy pin shape without live_goos/goarch.
+		{"missing_platform", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags"}`},
+		{"empty_goos", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"","live_goarch":"arm64"}`},
+		{"empty_goarch", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"darwin","live_goarch":""}`},
+		{"goos_null", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":null,"live_goarch":"arm64"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1217,9 +1225,11 @@ func TestParseLiveIdentityJSON_RejectsPartialAndMalformed(t *testing.T) {
 		"schema":"` + liveIdentitySchema + `",
 		"live_binary_commit":"` + testFullRev + `",
 		"live_binary_dirty":false,
-		"live_binary_commit_src":"ldflags"
+		"live_binary_commit_src":"ldflags",
+		"live_goos":"darwin",
+		"live_goarch":"arm64"
 	}`))
-	if err != nil || !id.OK || id.Commit != testFullRev || id.Dirty || id.Src != "ldflags" {
+	if err != nil || !id.OK || id.Commit != testFullRev || id.Dirty || id.Src != "ldflags" || id.GOOS != "darwin" || id.GOARCH != "arm64" {
 		t.Fatalf("valid identity: %+v err=%v", id, err)
 	}
 }
@@ -1483,5 +1493,90 @@ func TestWriteLiveIdentity_FailsOnUnknownBinary(t *testing.T) {
 	dir := t.TempDir()
 	if err := writeLiveIdentity(dir); err == nil {
 		t.Fatal("unknown binary must refuse writeLiveIdentity")
+	}
+}
+
+// Codex GraphQL P1: writeJSON redacts paths under $HOME / temp to [HOME]/[TMP:…].
+// ensureGrokhooksExecutable must re-bind on content SHA only — not path string equality.
+func TestEnsureGrokhooksExecutable_HomePathRedaction_AllowsRebind(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("no home dir")
+	}
+	// Place helper under HOME so writeJSON redacts the absolute path.
+	helperDir := filepath.Join(home, ".cache", "reinframe-test-grokhooks-"+t.Name())
+	if err := os.MkdirAll(helperDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(helperDir) })
+	helper := filepath.Join(helperDir, "grokhooks-helper")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\necho hooks-helper-v1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	evDir := t.TempDir()
+	if err := ensureGrokhooksExecutable(evDir, helper); err != nil {
+		t.Fatalf("first bind: %v", err)
+	}
+	// Confirm redaction actually rewrote the stored path (otherwise the bug is not exercised).
+	raw, err := os.ReadFile(filepath.Join(evDir, "live_grokhooks_executable.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "[HOME]") && !strings.Contains(string(raw), "[TMP:") {
+		// Some environments keep the project outside HOME; force-check still that rebind works.
+		t.Logf("stored path was not redacted (ok if helper not under HOME redaction roots): %s", raw)
+	}
+	// Second bind with same content must succeed even when stored path is a placeholder.
+	if err := ensureGrokhooksExecutable(evDir, helper); err != nil {
+		t.Fatalf("rebind after redaction must not path-mismatch: %v", err)
+	}
+	// Content change must still fail.
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\necho hooks-helper-v2\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureGrokhooksExecutable(evDir, helper); err == nil {
+		t.Fatal("content swap must fail rebind")
+	}
+}
+
+func TestGenerateLiveReport_MissingPlatformFields_Demotes(t *testing.T) {
+	// Legacy pin shape (130935Z) without live_goos/goarch must not qualify.
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	writeScenarios(t, dir, fullGOScenarios())
+	writeUsablePreflight(t, dir)
+	writeValidCapsFile(t, dir)
+	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("ok"), 0o600)
+	// Pre-platform-field identity (honest historical pin shape).
+	legacy := `{
+		"schema":"` + liveIdentitySchema + `",
+		"live_binary_commit":"` + testFullRev + `",
+		"live_binary_dirty":false,
+		"live_binary_commit_src":"ldflags"
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := generateLiveReport(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Disposition == "GO" || out.Disposition == "LIMITED_GO" {
+		t.Fatalf("missing platform fields must demote; got %s reasons=%v", out.Disposition, out.Reasons)
+	}
+	found := false
+	for _, r := range out.Reasons {
+		if strings.Contains(r, "live_goos") || strings.Contains(r, "live_goarch") || strings.Contains(r, "live_identity") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("want platform/identity reason; got %v", out.Reasons)
 	}
 }

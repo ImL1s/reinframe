@@ -2161,7 +2161,7 @@ func TestProjectRootRedactionAndLeakScan(t *testing.T) {
 
 // Pro R41 P2: harness-owned basenames must not false-flag when hostname collides.
 func TestScanPrivacy_HarnessOwnedFilenameNotHostLeak(t *testing.T) {
-	t.Parallel()
+	// Not parallel: mutates privateCacheRootFn / scanContext paths.
 	// content/filename helpers — no need for full private cache when using extra hosts.
 	if !isHarnessOwnedEvidenceFilename("preflight.json") {
 		t.Fatal("preflight.json must be harness-owned")
@@ -2237,7 +2237,7 @@ func TestScanPrivacy_HarnessOwnedFilenameNotHostLeak(t *testing.T) {
 
 // Pro R42 P2: issue-* wildcard must not exempt host-bearing names like issue-[build-01].json.
 func TestScanPrivacy_IssuePrefixNotBroadExempt(t *testing.T) {
-	t.Parallel()
+	// Not parallel: mutates privateCacheRootFn / scanContext paths.
 	if isHarnessOwnedEvidenceFilename("issue-[build-01].json") {
 		t.Fatal("issue-[build-01].json must not be harness-owned")
 	}
@@ -3019,3 +3019,4 @@ func TestLoadLiveExecutable_RequiresSHA256Hex(t *testing.T) {
 		t.Fatalf("hooks valid hex must pass: %s", why)
 	}
 }
+

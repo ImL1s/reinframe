@@ -2430,6 +2430,46 @@ func TestContentHasLocalIdentityLeak_InvalidClosedFieldNotExempt(t *testing.T) {
 	}
 }
 
+// Pro R33 P2: case-sensitive FS must not fold /cache vs /Cache as containment.
+func TestPathContainedIn_CaseSensitiveSiblingDirs(t *testing.T) {
+	if pathVolumeCaseInsensitive() {
+		t.Skip("volume is case-insensitive; sibling Cache/cache collapse")
+	}
+	base := t.TempDir()
+	cache := filepath.Join(base, "cache")
+	evidence := filepath.Join(base, "Cache")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(evidence, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Distinct siblings on Linux must not contain each other.
+	under, err := pathContainedIn(cache, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if under {
+		t.Fatalf("case-distinct siblings must not contain: cache=%s evidence=%s", cache, evidence)
+	}
+	under2, err := pathContainedIn(filepath.Join(cache, "x"), evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if under2 {
+		t.Fatal("cache/x must not be under evidence Cache")
+	}
+	// Nested under exact parent still works.
+	child := filepath.Join(evidence, "sub")
+	if err := os.MkdirAll(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	under3, err := pathContainedIn(child, evidence)
+	if err != nil || !under3 {
+		t.Fatalf("true nested path must be contained: under=%v err=%v", under3, err)
+	}
+}
+
 // Pro R32 P1: cross-host report redaction must rewrite imported live hostname.
 func TestWriteJSON_RedactsImportedLiveHostname(t *testing.T) {
 	prev := append([]string(nil), extraRedactHostnames...)

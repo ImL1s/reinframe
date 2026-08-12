@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
@@ -1331,19 +1332,86 @@ func pathContainedIn(child, parent string) (bool, error) {
 	return underLexical(cReal, pReal) || underLexical(cAbs, pAbs) || underLexical(cReal, pAbs), nil
 }
 
+// pathVolumeCaseInsensitive reports whether lexical path comparison should fold
+// case. Windows always; darwin when the volume is case-insensitive; never on
+// typical Linux (Pro R33 P2: /workspace/cache vs /workspace/Cache are distinct).
+// os.SameFile still catches real case-aliases when both paths exist.
+func pathVolumeCaseInsensitive() bool {
+	switch runtime.GOOS {
+	case "windows":
+		return true
+	case "darwin":
+		return darwinPathCaseInsensitive()
+	default:
+		return false
+	}
+}
+
+var (
+	darwinCaseOnce sync.Once
+	darwinCaseFold bool
+)
+
+func darwinPathCaseInsensitive() bool {
+	darwinCaseOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "rf-case-probe-*")
+		if err != nil {
+			// Fail open toward case-sensitive (safer for Linux-like layouts).
+			darwinCaseFold = false
+			return
+		}
+		defer os.RemoveAll(dir)
+		// Create "a"; if Stat("A") succeeds on the same entry, volume folds case.
+		p := filepath.Join(dir, "a")
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			darwinCaseFold = false
+			return
+		}
+		alt := filepath.Join(dir, "A")
+		stA, errA := os.Stat(p)
+		stB, errB := os.Stat(alt)
+		if errA != nil || errB != nil {
+			darwinCaseFold = false
+			return
+		}
+		darwinCaseFold = os.SameFile(stA, stB)
+	})
+	return darwinCaseFold
+}
+
 func underLexical(child, parent string) bool {
 	if child == "" || parent == "" {
 		return false
 	}
-	if equalFoldPath(child, parent) {
+	if child == parent {
 		return true
 	}
 	sep := string(os.PathSeparator)
+	// Case-sensitive volumes (Linux, case-sensitive APFS): exact match only.
+	// Unconditional ToLower falsely merges /workspace/cache with /workspace/Cache
+	// (Pro R33 P2).
+	if !pathVolumeCaseInsensitive() {
+		if strings.HasPrefix(child, parent+sep) {
+			return true
+		}
+		if rel, err := filepath.Rel(parent, child); err == nil {
+			if rel == "." {
+				return true
+			}
+			if rel != ".." && !strings.HasPrefix(rel, ".."+sep) {
+				return true
+			}
+		}
+		return false
+	}
+	// Case-insensitive volumes: fold case for equality and prefix (Windows/APFS).
+	if equalFoldPath(child, parent) {
+		return true
+	}
 	cl, pl := strings.ToLower(child), strings.ToLower(parent)
 	if strings.HasPrefix(cl, pl+sep) {
 		return true
 	}
-	// filepath.Rel when same volume.
 	if rel, err := filepath.Rel(parent, child); err == nil {
 		if rel == "." {
 			return true
@@ -1352,7 +1420,7 @@ func underLexical(child, parent string) bool {
 			return true
 		}
 	}
-	if rel, err := filepath.Rel(strings.ToLower(parent), strings.ToLower(child)); err == nil {
+	if rel, err := filepath.Rel(pl, cl); err == nil {
 		if rel == "." {
 			return true
 		}
@@ -1366,6 +1434,9 @@ func underLexical(child, parent string) bool {
 func equalFoldPath(a, b string) bool {
 	if a == b {
 		return true
+	}
+	if !pathVolumeCaseInsensitive() {
+		return false
 	}
 	return strings.EqualFold(a, b)
 }

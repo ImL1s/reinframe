@@ -361,11 +361,13 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	}
 
 	md := redactLocalIdentity(renderMD(report, disp, ack, ver, osName, reasons, scenarios))
-	if err := os.WriteFile(mdPath, []byte(md), 0o600); err != nil {
+	// Formal Markdown + schema are evidence destinations: never follow symlinks
+	// (Pro R38 P2: complete the R37 safe-write contract).
+	if err := safeWriteFile(mdPath, []byte(md), 0o600); err != nil {
 		_ = os.Remove(jsonPath)
 		return liveReportOutcome{}, err
 	}
-	if err := os.WriteFile(schemaPath, EmbeddedV2SchemaJSON(), 0o600); err != nil {
+	if err := safeWriteFile(schemaPath, EmbeddedV2SchemaJSON(), 0o600); err != nil {
 		_ = os.Remove(jsonPath)
 		_ = os.Remove(mdPath)
 		return liveReportOutcome{}, fmt.Errorf("write schema: %w", err)

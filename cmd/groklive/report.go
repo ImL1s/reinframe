@@ -2213,8 +2213,9 @@ func ensureGrokExecutableIdentity(evDir, grokExe string) error {
 	if err != nil {
 		return fmt.Errorf("ensureGrokExecutableIdentity: stat %s: %w", abs, err)
 	}
-	if st.IsDir() {
-		return fmt.Errorf("ensureGrokExecutableIdentity: %s is a directory", abs)
+	// Refuse FIFO/device/dir before unbounded hash copy (Codex GraphQL P2).
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("ensureGrokExecutableIdentity: %s is not a regular file", abs)
 	}
 	sum, err := fileContentSHA256(abs)
 	if err != nil {
@@ -2301,8 +2302,9 @@ func ensureGrokhooksExecutable(evDir, hooksExe string) error {
 	if err != nil {
 		return fmt.Errorf("ensureGrokhooksExecutable: stat %s: %w", abs, err)
 	}
-	if st.IsDir() {
-		return fmt.Errorf("ensureGrokhooksExecutable: %s is a directory", abs)
+	// Refuse FIFO/device/dir before unbounded hash copy (Codex GraphQL P2).
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("ensureGrokhooksExecutable: %s is not a regular file", abs)
 	}
 	sum, err := fileContentSHA256(abs)
 	if err != nil {

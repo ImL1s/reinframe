@@ -202,6 +202,15 @@ func safeWriteFile(path string, data []byte, perm os.FileMode) error {
 		if st.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("safeWriteFile: destination became symlink %s", path)
 		}
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("safeWriteFile: destination became non-regular %s", path)
+		}
+		// Windows cannot rename over an existing file. After refusing symlink /
+		// non-regular destinations, remove the regular file so the atomic rename
+		// of the temp sibling can succeed on all platforms (Codex GraphQL P2).
+		if err := os.Remove(path); err != nil {
+			return err
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}

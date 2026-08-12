@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
 	"github.com/santhosh-tekuri/jsonschema/v5"
@@ -3090,6 +3091,74 @@ func TestLoadLiveExecutable_RequiresSHA256Hex(t *testing.T) {
 	write("live_grokhooks_executable.json", liveGrokhooksSchema, "grokhooks_executable_sha256", good)
 	if ok, why := loadLiveGrokhooksExecutableOK(dir); !ok {
 		t.Fatalf("hooks valid hex must pass: %s", why)
+	}
+}
+
+// Codex GraphQL P2: safeWriteFile must replace an existing regular file
+// (Windows cannot os.Rename over destination; remove-then-rename path).
+func TestSafeWriteFile_ReplacesExistingRegular(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenarios.json")
+	if err := os.WriteFile(path, []byte(`{"old":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte(`{"new":true,"phase":"acp"}`)
+	if err := safeWriteFile(path, want, 0o600); err != nil {
+		t.Fatalf("replace existing regular: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("content mismatch: got %s want %s", got, want)
+	}
+	// Second replace (hooks → acp → report same-day re-run).
+	want2 := []byte(`{"new":true,"phase":"report"}`)
+	if err := safeWriteFile(path, want2, 0o600); err != nil {
+		t.Fatalf("second replace: %v", err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want2) {
+		t.Fatalf("second content mismatch: got %s want %s", got, want2)
+	}
+}
+
+// Codex GraphQL P2: non-regular --grok-executable / --grokhooks must fail
+// before unbounded fileContentSHA256 (FIFO hang).
+func TestEnsureExecutable_RejectsNonRegular(t *testing.T) {
+	dir := t.TempDir()
+	// Directory is non-regular for Mode().IsRegular().
+	if err := ensureGrokExecutableIdentity(dir, dir); err == nil {
+		t.Fatal("ensureGrokExecutableIdentity must refuse directory")
+	}
+	if err := ensureGrokhooksExecutable(dir, dir); err == nil {
+		t.Fatal("ensureGrokhooksExecutable must refuse directory")
+	}
+	// FIFO when available (unix build tag provides mkfifo).
+	fifo := filepath.Join(dir, "not-an-exe")
+	if err := mkfifo(fifo); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	// Bound the hang risk: identity check must return without opening the FIFO for copy.
+	done := make(chan error, 2)
+	go func() { done <- ensureGrokExecutableIdentity(dir, fifo) }()
+	go func() { done <- ensureGrokhooksExecutable(dir, fifo) }()
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatal("FIFO executable must be refused")
+			}
+			if !strings.Contains(err.Error(), "not a regular file") {
+				t.Fatalf("want not a regular file; got %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("ensure* hung on FIFO — must reject before hash copy")
+		}
 	}
 }
 

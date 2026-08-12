@@ -389,7 +389,7 @@ func TestReinframeBuildIdentity_LdflagsDirtyDefault(t *testing.T) {
 }
 
 func TestGitHEAD_IsEmptyNotAmbient(t *testing.T) {
-	t.Parallel()
+	// Not parallel: reads reinframeBuildIdentity package vars (races with mutators).
 	// gitHEAD must not expose ambient CWD HEAD for qualification.
 	if gitHEAD() != "" {
 		t.Fatalf("gitHEAD must be empty for binary-bound provenance; got %q", gitHEAD())
@@ -2856,7 +2856,7 @@ func TestGenerateLiveReport_RejectsSymlinkMDAndSchema(t *testing.T) {
 
 // Pro R37 P2: dangling symlink destinations must not receive evidence writes.
 func TestSafeWriteFile_RejectsDanglingSymlink(t *testing.T) {
-	t.Parallel()
+	// Not parallel: mutates reinframeCommit/Dirty for ensure* binding paths.
 	dir := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside-target.json")
 	// Dangling: target does not exist.

@@ -1549,10 +1549,9 @@ func TestContentHasLocalIdentityLeak_UsesLiveHostname(t *testing.T) {
 	if contentHasLocalIdentityLeak("ok no host") {
 		t.Fatal("clean string must not leak")
 	}
-	if contentHasLocalIdentityLeak("uname says "+liveHost+" ready") {
-		// Without extra hostname, only .local / generator host trigger.
-		// liveHost should not match generator unless coincidence.
-	}
+	// Without extra hostname, only .local / generator host trigger.
+	// liveHost should not match generator unless coincidence — so no assert either way.
+	_ = contentHasLocalIdentityLeak("uname says " + liveHost + " ready")
 	if !contentHasLocalIdentityLeak("uname says "+liveHost+" ready", liveHost) {
 		t.Fatal("extra live hostname must be scanned")
 	}

@@ -2060,17 +2060,20 @@ func TestGenerateLiveReport_MissingPlatformFields_Demotes(t *testing.T) {
 	}
 }
 
-// Pro R27 P1: portable sidecar enables load when private cache is empty (cross-host).
-func TestLiveScanContext_PortableSidecarCrossCache(t *testing.T) {
+// Pro R28 P1: external --scan-context-out/in enables cross-host load; never under evidence.
+func TestLiveScanContext_ExternalImportCrossCache(t *testing.T) {
 	prevC, prevD := reinframeCommit, reinframeDirty
 	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
 	reinframeCommit = testFullRev
 	reinframeDirty = "false"
 
-	// Host A cache.
 	cacheA := t.TempDir()
 	prevRoot := privateCacheRootFn
-	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	t.Cleanup(func() {
+		privateCacheRootFn = prevRoot
+		scanContextOutPath = ""
+		scanContextInPath = ""
+	})
 	privateCacheRootFn = func() (string, error) { return cacheA, nil }
 
 	parent := t.TempDir()
@@ -2078,52 +2081,50 @@ func TestLiveScanContext_PortableSidecarCrossCache(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	external := filepath.Join(parent, "scan-context-export.json")
+	scanContextOutPath = external
 	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
-	if _, err := os.Stat(filepath.Join(dir, liveScanContextPortableFile)); err != nil {
-		t.Fatalf("portable sidecar missing: %v", err)
+	// Must not land under evidence.
+	if _, err := os.Stat(filepath.Join(dir, liveScanContextPortableFile)); !os.IsNotExist(err) {
+		t.Fatal("must not write portable scan context under evidence-out")
+	}
+	if _, err := os.Stat(external); err != nil {
+		t.Fatalf("external scan-context-out missing: %v", err)
 	}
 
-	// Host B: clean cache; copy evidence (including portable sidecar).
+	// Host B: empty cache + import external path.
 	cacheB := t.TempDir()
 	privateCacheRootFn = func() (string, error) { return cacheB, nil }
+	scanContextOutPath = ""
+	scanContextInPath = external
+	// Copy only public evidence (no private cache).
 	copied := filepath.Join(t.TempDir(), "evidence-copy")
-	// Recursive copy of evidence.
-	if err := copyDirForTest(dir, copied); err != nil {
+	if err := os.MkdirAll(copied, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// Ensure private cache B has no context files.
+	idBytes, _ := os.ReadFile(filepath.Join(dir, "live_identity.json"))
+	if err := os.WriteFile(filepath.Join(copied, "live_identity.json"), idBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	h, ok, why := loadLiveScanContext(copied)
 	if !ok || h == "" {
-		t.Fatalf("portable sidecar must enable cross-cache load: ok=%v why=%s", ok, why)
+		t.Fatalf("external import must enable cross-cache load: ok=%v why=%s", ok, why)
 	}
 }
 
-func copyDirForTest(src, dst string) error {
-	if err := os.MkdirAll(dst, 0o700); err != nil {
-		return err
+// Pro R28 P1: raw scan-context under evidence is a privacy failure.
+func TestScanPrivacy_ScanContextInEvidenceFails(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("clean"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, liveScanContextPortableFile), []byte(`{"schema":"`+liveScanContextSchema+`","live_hostname":"secret-host","scan_context_id":"dddddddddddddddddddddddddddddddd"}`), 0o600)
+	p := scanPrivacy(dir)
+	if complete, _ := p["complete"].(bool); complete {
+		t.Fatalf("scan context in evidence must not complete: %+v", p)
 	}
-	ents, err := os.ReadDir(src)
-	if err != nil {
-		return err
+	raw, _ := json.Marshal(p["failure_classes"])
+	if !strings.Contains(string(raw), "scan_context_in_evidence") {
+		t.Fatalf("want scan_context_in_evidence failure: %+v", p)
 	}
-	for _, e := range ents {
-		s := filepath.Join(src, e.Name())
-		d := filepath.Join(dst, e.Name())
-		if e.IsDir() {
-			if err := copyDirForTest(s, d); err != nil {
-				return err
-			}
-			continue
-		}
-		b, err := os.ReadFile(s)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(d, b, 0o600); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // Pro R27 P2: hostname "v1" must not rewrite schema suffix reinframe.*.v1.

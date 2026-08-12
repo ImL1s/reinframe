@@ -272,17 +272,57 @@ func redactLocalIdentity(s string) string {
 		// hostname is a short common word (e.g. "build" in grok_build, "go" in goos)
 		// (Pro R10 P2).
 		if h != "" && h != "localhost" && len(h) > 1 {
-			// Skip post-marshal hostname redaction when the host collides with
-			// structured JSON/schema values (Pro R23 P2: hostname "linux" must
-			// not rewrite report_generator_goos). Privacy scan still uses the
-			// full candidate set via contentHasLocalIdentityLeak.
-			if !hostnameUnsafeForPostMarshalRedact(h) {
-				s = redactHostnameToken(s, h)
-			}
+		// Free-text path always redacts hostname, including unsafe GOOS/schema tokens
+			// (Pro R28 P2). Structure-aware writeJSON keeps typed enum fields intact.
+			s = redactHostnameToken(s, h)
 		}
 	}
 	// Local account names in path/ownership contexts only — never unrestricted
 	// substring replace (Codex P2: USER=go must not rewrite "goos").
+	s = redactLocalAccountNames(s)
+	s = redactLsOwnership(s)
+	return s
+}
+
+// redactLocalIdentityAlways is free-text redaction used by field-aware writers.
+func redactLocalIdentityAlways(s string) string {
+	return redactLocalIdentity(s)
+}
+
+// redactPathsAndAccounts redacts path/account tokens without runtime-hostname
+// replacement (hostname already handled per free-text field before marshal).
+func redactPathsAndAccounts(s string) string {
+	if s == "" {
+		return s
+	}
+	for _, key := range []string{"HOME", "USERPROFILE"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			s = replacePathVariants(s, v, "[HOME]")
+		}
+	}
+	for _, key := range []string{"TEMP", "TMP", "TMPDIR"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" && len(v) > 2 {
+			s = replacePathVariants(s, v, "[TMP]")
+		}
+	}
+	s = localUsersPath.ReplaceAllString(s, "[HOME]")
+	s = localUnixHomePath.ReplaceAllString(s, "[HOME]")
+	s = winUsersPath.ReplaceAllString(s, "[HOME]")
+	s = winUsersPathEscaped.ReplaceAllString(s, "[HOME]")
+	s = winUsersPathSlash.ReplaceAllString(s, "[HOME]")
+	s = localVarFoldersPath.ReplaceAllStringFunc(s, func(p string) string {
+		return "[TMP:" + sha256Hex(p)[:16] + "]"
+	})
+	s = localTmpPath.ReplaceAllStringFunc(s, func(p string) string {
+		return "[TMP:" + sha256Hex(p)[:16] + "]"
+	})
+	s = winTempPath.ReplaceAllStringFunc(s, func(p string) string {
+		return "[TMP:" + sha256Hex(p)[:16] + "]"
+	})
+	s = winTempPathEscaped.ReplaceAllStringFunc(s, func(p string) string {
+		return "[TMP:" + sha256Hex(p)[:16] + "]"
+	})
+	s = localHostname.ReplaceAllString(s, "[HOSTNAME]")
 	s = redactLocalAccountNames(s)
 	s = redactLsOwnership(s)
 	return s

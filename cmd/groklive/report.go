@@ -37,8 +37,16 @@ type liveReportOutcome struct {
 func runReport(args []string) {
 	fs := flag.NewFlagSet("report", flag.ExitOnError)
 	out := fs.String("evidence-out", "", "evidence directory")
+	ctxIn := fs.String("scan-context-in", "", "optional external live_scan_context JSON (outside evidence-out)")
 	_ = fs.Parse(args)
 	evDir := mustAbs(*out, "--evidence-out")
+	if s := strings.TrimSpace(*ctxIn); s != "" {
+		abs, err := filepath.Abs(s)
+		if err != nil {
+			fail(fmt.Errorf("groklive report: --scan-context-in: %w", err))
+		}
+		scanContextInPath = abs
+	}
 	outcome, err := generateLiveReport(evDir)
 	if err != nil {
 		fail(err)
@@ -833,10 +841,11 @@ func scanPrivacy(evDir string) map[string]any {
 			fails = append(fails, "nested_directory:"+e.Name())
 			continue
 		}
-		// Control-plane hostname token stores: never count as evidence content.
-		// Legacy public name is scrubbed after formal report; portable sidecar is
-		// private transfer state (Pro R17/R27).
+		// Any raw scan-context control file under evidence is a publication failure
+		// (Pro R28 P1) — do not silently skip; mark incomplete.
 		if e.Name() == liveScanContextFile || e.Name() == liveScanContextPortableFile {
+			seen++
+			fails = append(fails, "scan_context_in_evidence:"+e.Name())
 			continue
 		}
 		full := filepath.Join(evDir, e.Name())
@@ -1089,9 +1098,16 @@ const liveGrokExeSchema = "reinframe.live_grok_executable.v1"
 const (
 	liveScanContextSchema = "reinframe.live_scan_context.v1"
 	liveScanContextFile   = "live_scan_context.json"
-	// Portable private sidecar travels with evidence for cross-host re-eval (Pro R27 P1).
-	// Skipped by privacy scan; not a public evidence claim.
+	// Legacy accidental under-evidence portable name (Pro R28 P1): never write;
+	// presence in evidence is a privacy failure.
 	liveScanContextPortableFile = ".live_scan_context.private.json"
+)
+
+// External scan-context transfer paths (Pro R28 P1). Must stay outside --evidence-out.
+// Set via report/all flags or tests; empty means private-cache only.
+var (
+	scanContextOutPath string
+	scanContextInPath  string
 )
 
 // liveIdentity holds a verified live-executor identity (never the report generator).
@@ -1379,14 +1395,27 @@ func writeLiveScanContext(evDir, scanContextID string) error {
 		return err
 	}
 	_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
+	_ = os.Remove(filepath.Join(evDir, liveScanContextPortableFile))
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		return err
 	}
-	// Portable sidecar: same bytes, travels with evidence for another report-generator
-	// host's load path (Pro R27 P1). Privacy scan skips this name; not public content.
-	portable := filepath.Join(evDir, liveScanContextPortableFile)
-	if err := os.WriteFile(portable, b, 0o600); err != nil {
-		return fmt.Errorf("writeLiveScanContext: portable sidecar: %w", err)
+	// Optional external transfer path — must NOT be under evidence (Pro R28 P1).
+	if out := strings.TrimSpace(scanContextOutPath); out != "" {
+		outAbs, err := filepath.Abs(out)
+		if err != nil {
+			return fmt.Errorf("writeLiveScanContext: scan-context-out abs: %w", err)
+		}
+		if under, err := pathContainedIn(outAbs, evAbs); err != nil {
+			return fmt.Errorf("writeLiveScanContext: scan-context-out containment: %w", err)
+		} else if under {
+			return fmt.Errorf("writeLiveScanContext: --scan-context-out must be outside evidence directory")
+		}
+		if err := os.MkdirAll(filepath.Dir(outAbs), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(outAbs, b, 0o600); err != nil {
+			return fmt.Errorf("writeLiveScanContext: write scan-context-out: %w", err)
+		}
 	}
 	return nil
 }
@@ -1440,46 +1469,37 @@ func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string)
 		}
 		doc, ok2, why := tryLoad(path)
 		if !ok2 {
-			// Portable sidecar (cross-host re-eval) then legacy in-evidence.
-			portable := filepath.Join(evDir, liveScanContextPortableFile)
-			docP, okP, whyP := tryLoad(portable)
-			if okP {
-				if docP.ID != expectedID {
-					return "", false, "scan_context_id mismatch (portable)"
+			// External import path (outside evidence) for cross-host re-eval (Pro R28 P1).
+			if in := strings.TrimSpace(scanContextInPath); in != "" {
+				inAbs, aErr := filepath.Abs(in)
+				if aErr != nil {
+					return "", false, "scan-context-in abs: " + aErr.Error()
 				}
-				// Import into this host's private cache for subsequent loads.
-				if b, rErr := os.ReadFile(portable); rErr == nil {
-					if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr == nil {
-						_ = os.WriteFile(path, b, 0o600)
+				evAbs, _ := filepath.Abs(evDir)
+				if under, cErr := pathContainedIn(inAbs, filepath.Clean(evAbs)); cErr == nil && under {
+					return "", false, "scan-context-in must be outside evidence directory"
+				}
+				docIn, okIn, whyIn := tryLoad(inAbs)
+				if okIn {
+					if docIn.ID != expectedID {
+						return "", false, "scan_context_id mismatch (import)"
 					}
-				}
-				return docP.Hostname, true, ""
-			}
-			legacy := filepath.Join(evDir, liveScanContextFile)
-			doc2, ok3, _ := tryLoad(legacy)
-			if !ok3 {
-				if whyP != "" && whyP != "missing" {
-					return "", false, why + "; portable:" + whyP
-				}
-				return "", false, why
-			}
-			if doc2.ID != expectedID {
-				return "", false, "scan_context_id mismatch (legacy)"
-			}
-			// Migrate to private.
-			if b, rErr := os.ReadFile(legacy); rErr == nil {
-				if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr == nil {
-					if wErr := os.WriteFile(path, b, 0o600); wErr == nil {
-						_ = os.Remove(legacy)
+					// Import into this host private cache.
+					if b, rErr := os.ReadFile(inAbs); rErr == nil {
+						if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr == nil {
+							_ = os.WriteFile(path, b, 0o600)
+						}
 					}
+					return docIn.Hostname, true, ""
 				}
+				return "", false, why + "; import:" + whyIn
 			}
-			return doc2.Hostname, true, ""
+			// In-evidence control files are publication violations, not load sources.
+			return "", false, why
 		}
 		if doc.ID != expectedID {
 			return "", false, "scan_context_id mismatch"
 		}
-		_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
 		return doc.Hostname, true, ""
 	}
 
@@ -1531,22 +1551,23 @@ func privacyScanHostnames(evDir string, ctxHost string, ctxOK bool) []string {
 	return out
 }
 
-// scrubLegacyInEvidenceScanContext removes any leftover bare-hostname control file
-// from the evidence directory (legacy location). Private cache path is retained
-// so report re-runs still work (Pro R18 P1/P2).
+// scrubLegacyInEvidenceScanContext removes any leftover bare-hostname control files
+// from the evidence directory. Private cache path is retained so report re-runs work.
+// Both legacy public and accidental portable under-evidence names are removed (Pro R28).
 func scrubLegacyInEvidenceScanContext(evDir string) error {
-	path := filepath.Join(evDir, liveScanContextFile)
-	err := os.Remove(path)
-	if err == nil || os.IsNotExist(err) {
-		// Verify absent.
-		if _, stErr := os.Lstat(path); stErr == nil {
-			return fmt.Errorf("scrubLegacyInEvidenceScanContext: %s still present after remove", liveScanContextFile)
-		} else if !os.IsNotExist(stErr) {
-			return fmt.Errorf("scrubLegacyInEvidenceScanContext: verify: %w", stErr)
+	for _, name := range []string{liveScanContextFile, liveScanContextPortableFile} {
+		path := filepath.Join(evDir, name)
+		err := os.Remove(path)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("scrubLegacyInEvidenceScanContext: %s: %w", name, err)
 		}
-		return nil
+		if _, stErr := os.Lstat(path); stErr == nil {
+			return fmt.Errorf("scrubLegacyInEvidenceScanContext: %s still present after remove", name)
+		} else if !os.IsNotExist(stErr) {
+			return fmt.Errorf("scrubLegacyInEvidenceScanContext: verify %s: %w", name, stErr)
+		}
 	}
-	return fmt.Errorf("scrubLegacyInEvidenceScanContext: %w", err)
+	return nil
 }
 
 // writeLiveIdentity records the live executor binary identity for later report provenance.

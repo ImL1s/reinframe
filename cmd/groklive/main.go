@@ -59,6 +59,8 @@ func runAll(args []string) {
 	project := fs.String("project", "", "disposable project root")
 	out := fs.String("evidence-out", "", "evidence directory")
 	hooksBin := fs.String("grokhooks", "", "path to grokhooks binary")
+	ctxOut := fs.String("scan-context-out", "", "optional external live_scan_context JSON path (outside evidence-out)")
+	ctxIn := fs.String("scan-context-in", "", "optional external live_scan_context JSON for report (outside evidence-out)")
 	_ = fs.Parse(args)
 	if !*live {
 		fail(fmt.Errorf("groklive all: --live required"))
@@ -70,13 +72,27 @@ func runAll(args []string) {
 	// live_identity.json captures the live executor binary (distinct from a later report re-run).
 	// Write failure is fatal — report must not fall back to the generator identity.
 	evDir := mustAbs(*out, "--evidence-out")
+	if s := strings.TrimSpace(*ctxOut); s != "" {
+		abs, err := filepath.Abs(s)
+		if err != nil {
+			fail(fmt.Errorf("groklive all: --scan-context-out: %w", err))
+		}
+		scanContextOutPath = abs
+	}
 	if err := ensureLiveIdentity(evDir); err != nil {
 		fail(fmt.Errorf("groklive all: live_identity: %w", err))
 	}
 	runPreflight([]string{"--grok-executable", *exe, "--evidence-out", *out})
 	runHooks([]string{"--live", "--grok-executable", *exe, "--project", *project, "--evidence-out", *out, "--grokhooks", *hooksBin})
 	runACP([]string{"--live", "--grok-executable", *exe, "--project", *project, "--evidence-out", *out})
-	runReport([]string{"--evidence-out", *out})
+	reportArgs := []string{"--evidence-out", *out}
+	if s := strings.TrimSpace(*ctxIn); s != "" {
+		reportArgs = append(reportArgs, "--scan-context-in", s)
+	} else if s := strings.TrimSpace(*ctxOut); s != "" {
+		// Same campaign re-report on another host can use the export path.
+		reportArgs = append(reportArgs, "--scan-context-in", s)
+	}
+	runReport(reportArgs)
 }
 
 func mustAbs(p, name string) string {
@@ -99,18 +115,63 @@ func writeJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	// Field-aware identity redaction before marshal (Pro R28 P2): structured enum /
+	// platform keys keep typed values; free-text strings always get path+hostname redact
+	// including unsafe hostnames like "linux"/"go"/"transport".
+	v = redactIdentityInValue(v)
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	// Defense-in-depth: redact local host identity before any evidence lands on disk.
-	// Skip hostnames that collide with structured platform/schema tokens (Pro R23 P2);
-	// still fail closed if a platform field was rewritten to [HOSTNAME].
-	s := redactLocalIdentity(string(b))
+	// Path/account redaction only on serialized form (no whole-document hostname pass).
+	s := redactPathsAndAccounts(string(b))
 	if err := validatePostRedactPlatformFields(s); err != nil {
 		return err
 	}
 	return os.WriteFile(path, []byte(s), 0o600)
+}
+
+// closedStructuredJSONKey reports keys whose string values must not be hostname-redacted.
+func closedStructuredJSONKey(k string) bool {
+	switch k {
+	case "goos", "goarch", "live_goos", "live_goarch",
+		"report_generator_goos", "report_generator_goarch",
+		"final_disposition", "disposition", "strongest_proven", "status", "class",
+		"src", "live_binary_commit_src", "report_generator_commit_src", "schema",
+		"scan_context_id", "live_binary_commit", "report_generator_commit",
+		"grok_executable_sha256", "grokhooks_executable_sha256",
+		"grok_executable_path_sha256", "grokhooks_executable_path_sha256",
+		"grok_executable_basename", "grokhooks_executable_basename":
+		return true
+	default:
+		return false
+	}
+}
+
+// redactIdentityInValue walks maps/slices and redacts free-text strings only.
+func redactIdentityInValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, val := range x {
+			if closedStructuredJSONKey(k) {
+				out[k] = val
+				continue
+			}
+			out[k] = redactIdentityInValue(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, val := range x {
+			out[i] = redactIdentityInValue(val)
+		}
+		return out
+	case string:
+		return redactLocalIdentityAlways(x)
+	default:
+		return v
+	}
 }
 
 func loadScenarioMap(dir string) map[string]ScenarioResult {

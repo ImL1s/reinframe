@@ -1059,9 +1059,17 @@ func isHarnessOwnedEvidenceFilename(name string) bool {
 		"RUN.md", "PRIVACY_ERRATA.md", "SUPERSEDED.md":
 		return true
 	}
-	// Formal report / RUN artifacts from the generator.
-	if strings.HasPrefix(base, "issue-") && (strings.HasSuffix(base, ".json") || strings.HasSuffix(base, ".md")) {
-		return true
+	// Formal reports from generateLiveReport only:
+	// issue-167-live-v2-<version>-<os>-<YYYY-MM-DD>.{json,md}
+	// Not arbitrary issue-* (Pro R42 P2: issue-[build-01].json must still scan).
+	if strings.HasPrefix(base, "issue-167-live-v2-") {
+		if strings.HasSuffix(base, ".json") || strings.HasSuffix(base, ".md") {
+			// Generator basenames never include host-token delimiters like [].
+			if strings.ContainsAny(base, "[]{}()") {
+				return false
+			}
+			return true
+		}
 	}
 	return false
 }

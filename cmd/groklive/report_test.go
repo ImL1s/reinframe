@@ -2235,6 +2235,61 @@ func TestScanPrivacy_HarnessOwnedFilenameNotHostLeak(t *testing.T) {
 	}
 }
 
+// Pro R42 P2: issue-* wildcard must not exempt host-bearing names like issue-[build-01].json.
+func TestScanPrivacy_IssuePrefixNotBroadExempt(t *testing.T) {
+	t.Parallel()
+	if isHarnessOwnedEvidenceFilename("issue-[build-01].json") {
+		t.Fatal("issue-[build-01].json must not be harness-owned")
+	}
+	if !isHarnessOwnedEvidenceFilename("issue-167-live-v2-grok-1.0.0-darwin-2026-08-12.json") {
+		t.Fatal("canonical formal report basename must be harness-owned")
+	}
+	dir := t.TempDir()
+	live := "build-01"
+	if err := os.WriteFile(filepath.Join(dir, "issue-["+live+"].json"), []byte(`{"ok":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+	cache := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cache, nil }
+	scanID := "abcdef0123456789abcdef0123456789"
+	path, err := liveScanContextPath(dir, scanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"schema":%q,"scan_context_id":%q,"live_hostname":%q,"at":"t"}`, liveScanContextSchema, scanID, live)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	idBody := fmt.Sprintf(`{"schema":%q,"live_binary_commit":%q,"live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":%q,"live_goarch":%q,"scan_context_id":%q,"at":"t"}`,
+		liveIdentitySchema, testFullRev, runtime.GOOS, runtime.GOARCH, scanID)
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(idBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := scanPrivacy(dir)
+	if p["complete"] == true {
+		t.Fatalf("issue-[build-01].json must fail privacy complete: %+v", p)
+	}
+	found := false
+	fails, _ := p["failure_classes"].([]string)
+	for _, f := range fails {
+		if strings.Contains(f, "local_identity_filename:issue-[build-01].json") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("want local_identity_filename for issue-[build-01].json; got %v", fails)
+	}
+}
+
 // Pro R40 P2: scan-context-in must not write through a pre-planted private-cache symlink.
 func TestLoadLiveScanContext_ImportRefusesCacheSymlink(t *testing.T) {
 	prevC, prevD := reinframeCommit, reinframeDirty

@@ -311,6 +311,50 @@ func TestUpdateStrongCorrelation_RequiresSessionUpdateMethod(t *testing.T) {
 	if !ok {
 		t.Fatalf("session/update with matching requestId should correlate: why=%s", why)
 	}
+	// Canonical JSON-RPC method is authoritative (Pro R24 P2): session/request_permission
+	// with a sessionUpdate-shaped body must not upgrade via shape fallback.
+	u4 := map[string]any{
+		"method": "session/request_permission",
+		"params": map[string]any{
+			"sessionUpdate":  "agent_message_chunk",
+			"interventionId": "iv-1",
+			"requestId":      float64(42),
+		},
+		// Also flatten identity for UpdateStrongCorrelation readers.
+		"sessionId":      "s1",
+		"interventionId": "iv-1",
+		"requestId":      float64(42),
+		"sessionUpdate":  "agent_message_chunk",
+	}
+	ok, why = UpdateStrongCorrelation(u4, "iv-1", "", 42)
+	if ok {
+		t.Fatalf("canonical method session/request_permission must not correlate via shape: why=%s", why)
+	}
+	// method vs _method disagreement → fail closed.
+	u5 := map[string]any{
+		"method":         "session/update",
+		"_method":        "session/request_permission",
+		"sessionId":      "s1",
+		"interventionId": "iv-1",
+		"requestId":      float64(42),
+		"sessionUpdate":  "agent_message_chunk",
+	}
+	ok, why = UpdateStrongCorrelation(u5, "iv-1", "", 42)
+	if ok {
+		t.Fatalf("method/_method disagreement must fail closed: why=%s", why)
+	}
+	// Canonical method session/update alone is enough.
+	u6 := map[string]any{
+		"method":         "session/update",
+		"sessionId":      "s1",
+		"interventionId": "iv-1",
+		"requestId":      float64(42),
+		"sessionUpdate":  "agent_message_chunk",
+	}
+	ok, why = UpdateStrongCorrelation(u6, "iv-1", "", 42)
+	if !ok {
+		t.Fatalf("canonical method session/update should correlate: why=%s", why)
+	}
 }
 
 func TestUpdateStrongCorrelation_IgnoresAgentContentSpoof(t *testing.T) {

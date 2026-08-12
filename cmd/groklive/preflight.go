@@ -35,6 +35,17 @@ func runPreflight(args []string) {
 		})
 	}
 
+	// Bind live identity BEFORE binary resolution / any preflight.json write so a
+	// binary_absent failure does not lock the evidence dir against retry once Grok
+	// is installed (Pro R24 P2: hasExistingLiveEvidenceWithoutIdentity + preflight.json).
+	var evDir string
+	if *out != "" {
+		evDir = mustAbs(*out, "--evidence-out")
+		if err := ensureLiveIdentity(evDir); err != nil {
+			fail(fmt.Errorf("groklive preflight: live_identity: %w", err))
+		}
+	}
+
 	// uname / go
 	outB, errB, code := runCapture("uname", "-a")
 	add("uname -a", code, outB, errB)
@@ -71,8 +82,11 @@ func runPreflight(args []string) {
 			"why_code": "repository code cannot install or authenticate the Grok Build CLI",
 		}
 		printJSON(rep)
-		if *out != "" {
-			_ = writeJSON(filepath.Join(*out, "preflight.json"), rep)
+		if evDir != "" {
+			// Identity already bound above; persisting preflight is safe for retry.
+			if err := writeJSON(filepath.Join(evDir, "preflight.json"), rep); err != nil {
+				fail(err)
+			}
 		}
 		os.Exit(1)
 	}
@@ -82,15 +96,10 @@ func runPreflight(args []string) {
 	rep["binary"] = base
 	rep["binary_path_sha256"] = sha256Hex(abs)
 
-	// Content-bind live harness + Grok CLI BEFORE probes so version/help/initialize
-	// evidence cannot come from a different binary than the recorded hash (Codex P2).
+	// Content-bind Grok CLI BEFORE probes so version/help/initialize evidence cannot
+	// come from a different binary than the recorded hash (Codex P2).
 	// After probes, re-verify the same binding (create-or-verify is idempotent).
-	var evDir string
-	if *out != "" {
-		evDir = mustAbs(*out, "--evidence-out")
-		if err := ensureLiveIdentity(evDir); err != nil {
-			fail(fmt.Errorf("groklive preflight: live_identity: %w", err))
-		}
+	if evDir != "" {
 		if err := ensureGrokExecutableIdentity(evDir, abs); err != nil {
 			fail(fmt.Errorf("groklive preflight: live_grok_executable: %w", err))
 		}

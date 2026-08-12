@@ -1019,21 +1019,32 @@ func firstRequestID(m map[string]any) (int64, bool) {
 
 // isSessionUpdateNotification reports whether the update is a session/update
 // notification (not an unrelated ACP method carrying identity fields).
+//
+// Method precedence (Pro R24 P2):
+//  1. Canonical JSON-RPC "method" is authoritative when present.
+//  2. Internal reader "_method" (top-level or params) next.
+//  3. If both method and _method are present and disagree → fail closed.
+//  4. Shape-only fallback (sessionUpdate key) only when neither method field exists.
 func isSessionUpdateNotification(u map[string]any) bool {
 	if u == nil {
 		return false
 	}
-	if m, _ := u["_method"].(string); m != "" {
-		return m == "session/update"
+	method := strings.TrimSpace(asStringField(u, "method"))
+	internal := strings.TrimSpace(asStringField(u, "_method"))
+	if p, _ := u["params"].(map[string]any); p != nil && internal == "" {
+		internal = strings.TrimSpace(asStringField(p, "_method"))
 	}
-	if p, _ := u["params"].(map[string]any); p != nil {
-		if m, _ := p["_method"].(string); m != "" {
-			return m == "session/update"
-		}
+	if method != "" && internal != "" && method != internal {
+		return false
+	}
+	if method != "" {
+		return method == "session/update"
+	}
+	if internal != "" {
+		return internal == "session/update"
 	}
 	// Unwrapped fixtures/tests without a method field: accept only when the body
-	// looks like a session/update (sessionUpdate key present). Non-session
-	// methods must set _method explicitly so they cannot upgrade ACK.
+	// looks like a session/update (sessionUpdate key present).
 	if _, ok := u["sessionUpdate"]; ok {
 		return true
 	}
@@ -1053,6 +1064,15 @@ func isSessionUpdateNotification(u map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// asStringField returns a map value only when it is a non-empty string type.
+func asStringField(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	s, _ := m[key].(string)
+	return s
 }
 
 func (c *GrokACPClient) failAllPending(err error) {

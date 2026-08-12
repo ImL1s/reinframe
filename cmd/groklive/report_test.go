@@ -1480,6 +1480,43 @@ func TestEnsureLiveIdentity_RefuseRetrofitOntoExistingEvidence(t *testing.T) {
 	}
 }
 
+// Pro R24 P2: binary_absent must not lock evidence dir against retry.
+// Fixed order: ensureLiveIdentity before preflight.json on the binary_absent path.
+func TestPreflightBinaryAbsentThenRetrySameDir(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+
+	dir := t.TempDir()
+	// Step 1 (fixed preflight order): bind identity first.
+	if err := ensureLiveIdentity(dir); err != nil {
+		t.Fatalf("identity before binary resolution: %v", err)
+	}
+	// Step 2: binary_absent persists preflight.json (same dir).
+	absent := map[string]any{
+		"usable": false,
+		"blocker": map[string]any{
+			"class": "binary_absent",
+		},
+	}
+	if err := writeJSON(filepath.Join(dir, "preflight.json"), absent); err != nil {
+		t.Fatal(err)
+	}
+	// Step 3: Grok becomes available; same-directory retry must still accept identity.
+	if err := ensureLiveIdentity(dir); err != nil {
+		t.Fatalf("retry after binary_absent preflight must not refuse: %v", err)
+	}
+	// Control: preflight without prior identity still refuses retrofit.
+	locked := t.TempDir()
+	if err := os.WriteFile(filepath.Join(locked, "preflight.json"), []byte(`{"usable":false,"blocker":{"class":"binary_absent"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureLiveIdentity(locked); err == nil || !strings.Contains(err.Error(), "refuse to retrofit") {
+		t.Fatalf("preflight without identity must still refuse: %v", err)
+	}
+}
+
 func TestEnsureLiveIdentity_RejectsMalformedExisting(t *testing.T) {
 	prevC, prevD := reinframeCommit, reinframeDirty
 	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })

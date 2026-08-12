@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -1076,13 +1077,90 @@ const (
 
 // liveIdentity holds a verified live-executor identity (never the report generator).
 type liveIdentity struct {
-	Commit string
-	Dirty  bool
-	Src    string
-	GOOS   string
-	GOARCH string
-	OK     bool
-	Err    string // non-empty when OK is false
+	Commit        string
+	Dirty         bool
+	Src           string
+	GOOS          string
+	GOARCH        string
+	ScanContextID string // binds private hostname context to this campaign (Pro R19)
+	OK            bool
+	Err           string // non-empty when OK is false
+}
+
+// privateCacheRootFn is overridable in tests (Pro R19: inject XDG-style roots).
+var privateCacheRootFn = defaultPrivateCacheRoot
+
+func defaultPrivateCacheRoot() (string, error) {
+	if d, err := os.UserCacheDir(); err == nil && strings.TrimSpace(d) != "" {
+		return d, nil
+	}
+	if d, err := os.UserConfigDir(); err == nil && strings.TrimSpace(d) != "" {
+		return d, nil
+	}
+	return "", fmt.Errorf("no user cache/config dir")
+}
+
+func newScanContextID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// pathContainedIn reports whether child is equal to parent or a nested path under it
+// after Abs + symlink resolution (handles macOS /var → /private/var).
+func pathContainedIn(child, parent string) (bool, error) {
+	pAbs, err := filepath.Abs(parent)
+	if err != nil {
+		return false, err
+	}
+	if pEval, err := filepath.EvalSymlinks(pAbs); err == nil {
+		pAbs = pEval
+	} else {
+		pAbs = filepath.Clean(pAbs)
+	}
+	cAbs, err := filepath.Abs(child)
+	if err != nil {
+		return false, err
+	}
+	cAbs = filepath.Clean(cAbs)
+	if cEval, err := filepath.EvalSymlinks(cAbs); err == nil {
+		cAbs = cEval
+	} else {
+		// Resolve the longest existing ancestor, then re-join the suffix.
+		suffix := ""
+		cur := cAbs
+		for {
+			if e, err := filepath.EvalSymlinks(cur); err == nil {
+				if suffix == "" {
+					cAbs = e
+				} else {
+					cAbs = filepath.Join(e, suffix)
+				}
+				break
+			}
+			dir := filepath.Dir(cur)
+			if dir == cur {
+				break
+			}
+			base := filepath.Base(cur)
+			if suffix == "" {
+				suffix = base
+			} else {
+				suffix = filepath.Join(base, suffix)
+			}
+			cur = dir
+		}
+	}
+	rel, err := filepath.Rel(pAbs, cAbs)
+	if err != nil {
+		return false, err
+	}
+	if rel == "." {
+		return true, nil
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)), nil
 }
 
 // isValidGOOS / isValidGOARCH reject path traversal and non-platform tokens before
@@ -1110,32 +1188,46 @@ func isValidGOARCH(s string) bool {
 	}
 }
 
-// liveScanContextPath returns the private (non-evidence) path for the bare live
-// hostname control file. Evidence dirs stay publishable; re-report still works
-// because context is keyed by absolute evidence path (Pro R18 P1/P2).
-func liveScanContextPath(evDir string) (string, error) {
+// liveScanContextPath returns the private path for the bare live hostname control
+// file, keyed by evidence path + campaign scan_context_id (Pro R18/R19).
+// Rejects paths that resolve under the evidence directory (XDG_CACHE_HOME traps).
+func liveScanContextPath(evDir, scanContextID string) (string, error) {
+	if strings.TrimSpace(scanContextID) == "" || len(scanContextID) < 16 {
+		return "", fmt.Errorf("liveScanContextPath: scan_context_id required")
+	}
 	abs, err := filepath.Abs(evDir)
 	if err != nil {
 		return "", err
 	}
 	abs = filepath.Clean(abs)
-	sum := sha256.Sum256([]byte(abs))
-	base, err := os.UserCacheDir()
+	sum := sha256.Sum256([]byte(abs + "\n" + scanContextID))
+	base, err := privateCacheRootFn()
 	if err != nil || strings.TrimSpace(base) == "" {
-		// Durable-enough fallback under user config, not the evidence tree.
-		base, err = os.UserConfigDir()
-		if err != nil || strings.TrimSpace(base) == "" {
-			return "", fmt.Errorf("liveScanContextPath: no user cache/config dir")
-		}
+		return "", fmt.Errorf("liveScanContextPath: cache root: %w", err)
 	}
 	dir := filepath.Join(base, "reinframe-groklive", "live_scan_context")
-	return filepath.Join(dir, hex.EncodeToString(sum[:16])+".json"), nil
+	path := filepath.Join(dir, hex.EncodeToString(sum[:16])+".json")
+	// Containment: never write private control inside evidence (Pro R19 P1).
+	under, err := pathContainedIn(path, abs)
+	if err != nil {
+		return "", fmt.Errorf("liveScanContextPath: containment: %w", err)
+	}
+	if under {
+		return "", fmt.Errorf("liveScanContextPath: private path %s is inside evidence %s", path, abs)
+	}
+	under, err = pathContainedIn(dir, abs)
+	if err != nil {
+		return "", fmt.Errorf("liveScanContextPath: dir containment: %w", err)
+	}
+	if under {
+		return "", fmt.Errorf("liveScanContextPath: private dir %s is inside evidence %s", dir, abs)
+	}
+	return path, nil
 }
 
 // writeLiveScanContext records the live host's hostname outside the evidence
-// directory (no writeJSON redaction; private control path only).
-// Empty / localhost / single-char hostnames are refused (Pro R17/R18).
-func writeLiveScanContext(evDir string) error {
+// directory, bound to scanContextID (Pro R17–R19).
+func writeLiveScanContext(evDir, scanContextID string) error {
 	h, err := os.Hostname()
 	if err != nil {
 		return fmt.Errorf("writeLiveScanContext: hostname: %w", err)
@@ -1144,7 +1236,7 @@ func writeLiveScanContext(evDir string) error {
 	if h == "" || h == "localhost" || len(h) <= 1 {
 		return fmt.Errorf("writeLiveScanContext: empty/localhost/short hostname cannot bind live scan context")
 	}
-	path, err := liveScanContextPath(evDir)
+	path, err := liveScanContextPath(evDir, scanContextID)
 	if err != nil {
 		return fmt.Errorf("writeLiveScanContext: path: %w", err)
 	}
@@ -1156,90 +1248,121 @@ func writeLiveScanContext(evDir string) error {
 		evAbs = a
 	}
 	b, err := json.MarshalIndent(map[string]any{
-		"schema":        liveScanContextSchema,
-		"live_hostname": h,
-		"evidence_dir":  filepath.Clean(evAbs),
-		"at":            stamp(),
+		"schema":           liveScanContextSchema,
+		"scan_context_id":  scanContextID,
+		"live_hostname":    h,
+		"evidence_dir":     filepath.Clean(evAbs),
+		"at":               stamp(),
 	}, "", "  ")
 	if err != nil {
 		return err
 	}
-	// Best-effort: remove any legacy in-evidence control file so packages stay clean.
 	_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
 	return os.WriteFile(path, b, 0o600)
 }
 
+type liveScanContextDoc struct {
+	Hostname string
+	ID       string
+}
+
 // parseLiveScanContextBytes validates a live_scan_context document body.
-func parseLiveScanContextBytes(b []byte) (hostname string, ok bool, reason string) {
+func parseLiveScanContextBytes(b []byte) (liveScanContextDoc, bool, string) {
 	var m map[string]any
 	if err := json.Unmarshal(b, &m); err != nil {
-		return "", false, "malformed"
+		return liveScanContextDoc{}, false, "malformed"
 	}
 	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveScanContextSchema {
-		return "", false, "schema invalid"
+		return liveScanContextDoc{}, false, "schema invalid"
 	}
 	h, okH := m["live_hostname"].(string)
 	h = strings.TrimSpace(h)
 	if !okH || h == "" || h == "localhost" || len(h) <= 1 {
-		return "", false, "live_hostname empty"
+		return liveScanContextDoc{}, false, "live_hostname empty"
 	}
-	return h, true, ""
+	id, _ := m["scan_context_id"].(string)
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) < 16 {
+		return liveScanContextDoc{}, false, "scan_context_id missing"
+	}
+	return liveScanContextDoc{Hostname: h, ID: id}, true, ""
 }
 
-// loadLiveScanContext validates the private scan context (fail-closed).
-// Prefer the private cache path; migrate once from a legacy in-evidence file.
+// loadLiveScanContext validates private scan context (fail-closed) and binds it
+// to live_identity.scan_context_id when identity is present (Pro R19 P1).
 func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string) {
-	path, pathErr := liveScanContextPath(evDir)
-	if pathErr == nil {
-		h, ok2, why := loadLiveScanContextFile(path)
-		if ok2 {
-			// Drop legacy in-evidence copy if present (publish hygiene).
-			_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
-			return h, true, ""
-		}
-		// Private file present but invalid → fail closed (no silent legacy fallback).
-		if why != "missing" {
-			return "", false, why
+	expectedID := ""
+	if id := loadLiveIdentity(evDir); id.OK {
+		expectedID = id.ScanContextID
+		if expectedID == "" {
+			return "", false, "live_identity missing scan_context_id"
 		}
 	}
-	// Legacy in-evidence path: accept once, migrate to private, then delete legacy.
-	legacy := filepath.Join(evDir, liveScanContextFile)
-	h, ok2, why := loadLiveScanContextFile(legacy)
-	if !ok2 {
+
+	tryLoad := func(path string) (liveScanContextDoc, bool, string) {
+		return loadLiveScanContextFile(path)
+	}
+
+	if expectedID != "" {
+		path, pathErr := liveScanContextPath(evDir, expectedID)
 		if pathErr != nil {
 			return "", false, "private path: " + pathErr.Error()
 		}
-		return "", false, why
-	}
-	if pathErr == nil {
-		if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr == nil {
+		doc, ok2, why := tryLoad(path)
+		if !ok2 {
+			// Also try legacy in-evidence with ID match (migrate).
+			legacy := filepath.Join(evDir, liveScanContextFile)
+			doc2, ok3, _ := tryLoad(legacy)
+			if !ok3 {
+				return "", false, why
+			}
+			if doc2.ID != expectedID {
+				return "", false, "scan_context_id mismatch (legacy)"
+			}
+			// Migrate to private.
 			if b, rErr := os.ReadFile(legacy); rErr == nil {
-				if wErr := os.WriteFile(path, b, 0o600); wErr == nil {
-					_ = os.Remove(legacy)
+				if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr == nil {
+					if wErr := os.WriteFile(path, b, 0o600); wErr == nil {
+						_ = os.Remove(legacy)
+					}
 				}
 			}
+			return doc2.Hostname, true, ""
 		}
+		if doc.ID != expectedID {
+			return "", false, "scan_context_id mismatch"
+		}
+		_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
+		return doc.Hostname, true, ""
 	}
-	return h, true, ""
+
+	// No live_identity yet: optional context (privacy does not require it).
+	// Cannot resolve private path without ID — only legacy in-evidence file.
+	legacy := filepath.Join(evDir, liveScanContextFile)
+	doc, ok2, why := tryLoad(legacy)
+	if !ok2 {
+		return "", false, why
+	}
+	return doc.Hostname, true, ""
 }
 
-func loadLiveScanContextFile(path string) (hostname string, ok bool, reason string) {
+func loadLiveScanContextFile(path string) (liveScanContextDoc, bool, string) {
 	st, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", false, "missing"
+			return liveScanContextDoc{}, false, "missing"
 		}
-		return "", false, "unreadable: " + err.Error()
+		return liveScanContextDoc{}, false, "unreadable: " + err.Error()
 	}
 	if st.Mode()&os.ModeSymlink != 0 {
-		return "", false, "symlink"
+		return liveScanContextDoc{}, false, "symlink"
 	}
 	if !st.Mode().IsRegular() {
-		return "", false, "not regular file"
+		return liveScanContextDoc{}, false, "not regular file"
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", false, "unreadable: " + err.Error()
+		return liveScanContextDoc{}, false, "unreadable: " + err.Error()
 	}
 	return parseLiveScanContextBytes(b)
 }
@@ -1288,19 +1411,31 @@ func writeLiveIdentity(evDir string) error {
 	if !isValidGOOS(runtime.GOOS) || !isValidGOARCH(runtime.GOARCH) {
 		return fmt.Errorf("writeLiveIdentity: unexpected runtime platform %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
-	if err := writeLiveScanContext(evDir); err != nil {
+	scanID, err := newScanContextID()
+	if err != nil {
+		return fmt.Errorf("writeLiveIdentity: scan_context_id: %w", err)
+	}
+	if err := writeLiveScanContext(evDir, scanID); err != nil {
 		return fmt.Errorf("writeLiveIdentity: scan context: %w", err)
 	}
-	return writeJSON(filepath.Join(evDir, "live_identity.json"), map[string]any{
+	if err := writeJSON(filepath.Join(evDir, "live_identity.json"), map[string]any{
 		"schema":                 liveIdentitySchema,
 		"live_binary_commit":     rev,
 		"live_binary_dirty":      dirty,
 		"live_binary_commit_src": src,
 		// Platform of the live campaign host (Pro R10 P2: do not attribute generator GOOS).
-		"live_goos":   runtime.GOOS,
-		"live_goarch": runtime.GOARCH,
-		"at":          stamp(),
-	})
+		"live_goos":         runtime.GOOS,
+		"live_goarch":       runtime.GOARCH,
+		"scan_context_id":   scanID,
+		"at":                stamp(),
+	}); err != nil {
+		// Roll back private context so a partial identity cannot leave a stale host token.
+		if path, pErr := liveScanContextPath(evDir, scanID); pErr == nil {
+			_ = os.Remove(path)
+		}
+		return err
+	}
+	return nil
 }
 
 // ensureLiveIdentity creates live_identity.json if missing, or verifies an existing file
@@ -1426,7 +1561,13 @@ func parseLiveIdentityJSON(b []byte) (liveIdentity, error) {
 	if !isValidGOARCH(goarch) {
 		return liveIdentity{}, fmt.Errorf("live_identity.json live_goarch %q not a known GOARCH", goarch)
 	}
-	return liveIdentity{Commit: commit, Dirty: dirty, Src: src, GOOS: goos, GOARCH: goarch, OK: true}, nil
+	// Campaign nonce binding private hostname context (Pro R19 P1).
+	scanID, _ := m["scan_context_id"].(string)
+	scanID = strings.TrimSpace(scanID)
+	if scanID == "" || len(scanID) < 16 {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing scan_context_id")
+	}
+	return liveIdentity{Commit: commit, Dirty: dirty, Src: src, GOOS: goos, GOARCH: goarch, ScanContextID: scanID, OK: true}, nil
 }
 
 // loadLiveIdentity loads and validates live_identity.json. On any failure OK=false and

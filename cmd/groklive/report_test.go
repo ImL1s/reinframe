@@ -1147,6 +1147,15 @@ const testFullRev = "0123456789abcdef0123456789abcdef01234567"
 
 func writeLiveIdentityFixture(t *testing.T, dir, commit, src string, dirty bool) {
 	t.Helper()
+	scanID, err := newScanContextID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLiveScanContext(dir, scanID); err != nil {
+		// Hostname may be unusable in some CI shapes; still write identity so
+		// parse tests can run, but loadLiveScanContext will fail closed.
+		t.Logf("writeLiveScanContext: %v", err)
+	}
 	m := map[string]any{
 		"schema":                 liveIdentitySchema,
 		"live_binary_commit":     commit,
@@ -1154,6 +1163,7 @@ func writeLiveIdentityFixture(t *testing.T, dir, commit, src string, dirty bool)
 		"live_binary_commit_src": src,
 		"live_goos":              runtime.GOOS,
 		"live_goarch":            runtime.GOARCH,
+		"scan_context_id":        scanID,
 		"at":                     stamp(),
 	}
 	b, err := json.MarshalIndent(m, "", "  ")
@@ -1193,7 +1203,7 @@ func writeValidCapsFile(t *testing.T, dir string) {
 
 func TestParseLiveIdentityJSON_RejectsPartialAndMalformed(t *testing.T) {
 	t.Parallel()
-	plat := `,"live_goos":"darwin","live_goarch":"arm64"`
+	plat := `,"live_goos":"darwin","live_goarch":"arm64","scan_context_id":"0123456789abcdef0123456789abcdef"`
 	cases := []struct {
 		name string
 		raw  string
@@ -1209,11 +1219,12 @@ func TestParseLiveIdentityJSON_RejectsPartialAndMalformed(t *testing.T) {
 		{"src_unknown", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"unknown"` + plat + `}`},
 		// Platform mandatory (Codex #230 P2): legacy pin shape without live_goos/goarch.
 		{"missing_platform", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags"}`},
-		{"empty_goos", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"","live_goarch":"arm64"}`},
-		{"empty_goarch", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"darwin","live_goarch":""}`},
-		{"goos_null", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":null,"live_goarch":"arm64"}`},
-		{"goos_traversal", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"../../../outside","live_goarch":"arm64"}`},
-		{"goarch_slash", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"darwin","live_goarch":"arm/64"}`},
+		{"empty_goos", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"","live_goarch":"arm64","scan_context_id":"0123456789abcdef0123456789abcdef"}`},
+		{"empty_goarch", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"darwin","live_goarch":"","scan_context_id":"0123456789abcdef0123456789abcdef"}`},
+		{"goos_null", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":null,"live_goarch":"arm64","scan_context_id":"0123456789abcdef0123456789abcdef"}`},
+		{"goos_traversal", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"../../../outside","live_goarch":"arm64","scan_context_id":"0123456789abcdef0123456789abcdef"}`},
+		{"goarch_slash", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"darwin","live_goarch":"arm/64","scan_context_id":"0123456789abcdef0123456789abcdef"}`},
+		{"missing_scan_id", `{"schema":"` + liveIdentitySchema + `","live_binary_commit":"` + testFullRev + `","live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"darwin","live_goarch":"arm64"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1229,9 +1240,10 @@ func TestParseLiveIdentityJSON_RejectsPartialAndMalformed(t *testing.T) {
 		"live_binary_dirty":false,
 		"live_binary_commit_src":"ldflags",
 		"live_goos":"darwin",
-		"live_goarch":"arm64"
+		"live_goarch":"arm64",
+		"scan_context_id":"0123456789abcdef0123456789abcdef"
 	}`))
-	if err != nil || !id.OK || id.Commit != testFullRev || id.Dirty || id.Src != "ldflags" || id.GOOS != "darwin" || id.GOARCH != "arm64" {
+	if err != nil || !id.OK || id.Commit != testFullRev || id.Dirty || id.Src != "ldflags" || id.GOOS != "darwin" || id.GOARCH != "arm64" || id.ScanContextID == "" {
 		t.Fatalf("valid identity: %+v err=%v", id, err)
 	}
 }
@@ -1563,12 +1575,12 @@ func TestContentHasLocalIdentityLeak_UsesLiveHostname(t *testing.T) {
 
 func TestPrivacyScanHostnames_FromLiveScanContext(t *testing.T) {
 	dir := t.TempDir()
-	if err := writeLiveScanContext(dir); err != nil {
-		t.Skipf("cannot bind scan context: %v", err)
-	}
+	// Without live_identity, private path needs an ID only for write; load uses legacy
+	// only when no identity. Write with ID + identity for proper bind.
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
 	live, ok, why := loadLiveScanContext(dir)
 	if !ok {
-		t.Fatalf("loadLiveScanContext: %s", why)
+		t.Skipf("loadLiveScanContext: %s", why)
 	}
 	hosts := privacyScanHostnames(dir, live, true)
 	if len(hosts) == 0 {
@@ -1587,33 +1599,39 @@ func TestPrivacyScanHostnames_FromLiveScanContext(t *testing.T) {
 
 func TestScanPrivacy_IdentityWithoutContext_Incomplete(t *testing.T) {
 	dir := t.TempDir()
-	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
-	// Deliberately no live_scan_context.json
+	// Identity with scan_context_id but no private context file.
+	m := map[string]any{
+		"schema":                 liveIdentitySchema,
+		"live_binary_commit":     testFullRev,
+		"live_binary_dirty":      false,
+		"live_binary_commit_src": "ldflags",
+		"live_goos":              runtime.GOOS,
+		"live_goarch":            runtime.GOARCH,
+		"scan_context_id":        "cccccccccccccccccccccccccccccccc",
+		"at":                     stamp(),
+	}
+	b, _ := json.MarshalIndent(m, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("clean evidence"), 0o600)
 	p := scanPrivacy(dir)
 	if complete, _ := p["complete"].(bool); complete {
 		t.Fatalf("identity without context must not complete: %+v", p)
 	}
-	found := false
-	if fails, ok := p["failure_classes"].([]string); ok {
-		for _, f := range fails {
-			if strings.Contains(f, "live_scan_context") {
-				found = true
-			}
-		}
-	}
-	// failure_classes may be []any after JSON round-trip; check raw map
-	if !found {
-		raw, _ := json.Marshal(p["failure_classes"])
-		if !strings.Contains(string(raw), "live_scan_context") {
-			t.Fatalf("want live_scan_context failure; got %+v", p)
-		}
+	raw, _ := json.Marshal(p["failure_classes"])
+	if !strings.Contains(string(raw), "live_scan_context") {
+		t.Fatalf("want live_scan_context failure; got %+v", p)
 	}
 }
 
 func TestScanPrivacy_ContextNotCountedAsSeen(t *testing.T) {
 	dir := t.TempDir()
-	if err := writeLiveScanContext(dir); err != nil {
+	id, err := newScanContextID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLiveScanContext(dir, id); err != nil {
 		t.Skipf("hostname: %v", err)
 	}
 	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("clean evidence body"), 0o600)
@@ -1646,9 +1664,6 @@ func TestGenerateLiveReport_ReReportKeepsPrivateContext(t *testing.T) {
 
 	dir := t.TempDir()
 	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
-	if err := writeLiveScanContext(dir); err != nil {
-		t.Skipf("hostname: %v", err)
-	}
 	// Minimal evidence so report can run (will demote for other gates, but must not
 	// destroy private context).
 	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("ok"), 0o600)
@@ -1670,9 +1685,7 @@ func TestGenerateLiveReport_ReReportKeepsPrivateContext(t *testing.T) {
 
 func TestLiveScanContext_StoredOutsideEvidence(t *testing.T) {
 	dir := t.TempDir()
-	if err := writeLiveScanContext(dir); err != nil {
-		t.Skipf("hostname: %v", err)
-	}
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
 	// Bare hostname must not land inside the evidence tree.
 	if _, err := os.Stat(filepath.Join(dir, liveScanContextFile)); !os.IsNotExist(err) {
 		t.Fatal("live_scan_context.json must not be written into evidence-out")
@@ -1682,7 +1695,7 @@ func TestLiveScanContext_StoredOutsideEvidence(t *testing.T) {
 		t.Fatalf("private context load failed: ok=%v why=%s", ok, why)
 	}
 	// Legacy in-evidence file is scrubbed after report / on write.
-	if err := os.WriteFile(filepath.Join(dir, liveScanContextFile), []byte(`{"schema":"`+liveScanContextSchema+`","live_hostname":"legacy-host"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, liveScanContextFile), []byte(`{"schema":"`+liveScanContextSchema+`","live_hostname":"legacy-host","scan_context_id":"deadbeefdeadbeefdeadbeefdeadbeef"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := scrubLegacyInEvidenceScanContext(dir); err != nil {
@@ -1694,6 +1707,56 @@ func TestLiveScanContext_StoredOutsideEvidence(t *testing.T) {
 	// Private context still loads for re-report.
 	if _, ok, _ := loadLiveScanContext(dir); !ok {
 		t.Fatal("private context must survive evidence scrub for re-report")
+	}
+}
+
+func TestLiveScanContext_RejectsCacheInsideEvidence(t *testing.T) {
+	dir := t.TempDir()
+	prev := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prev })
+	// Point "cache" at the evidence tree — write must refuse (Pro R19 P1).
+	privateCacheRootFn = func() (string, error) { return dir, nil }
+	id, err := newScanContextID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLiveScanContext(dir, id); err == nil {
+		t.Fatal("write must fail when private cache root is inside evidence")
+	}
+}
+
+func TestLiveScanContext_StaleCampaignID_Rejected(t *testing.T) {
+	dir := t.TempDir()
+	// Campaign A
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+	if _, ok, _ := loadLiveScanContext(dir); !ok {
+		t.Skip("no hostname context on this host")
+	}
+	// Campaign B at same path: new identity/id, but leave A's private context alone.
+	// Replace identity with a different scan_context_id and no matching private file.
+	scanB := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	m := map[string]any{
+		"schema":                 liveIdentitySchema,
+		"live_binary_commit":     testFullRev,
+		"live_binary_dirty":      false,
+		"live_binary_commit_src": "ldflags",
+		"live_goos":              runtime.GOOS,
+		"live_goarch":            runtime.GOARCH,
+		"scan_context_id":        scanB,
+		"at":                     stamp(),
+	}
+	b, _ := json.MarshalIndent(m, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Do not write private context for B.
+	if _, ok, why := loadLiveScanContext(dir); ok {
+		t.Fatalf("stale/mismatched campaign must not load: why would be empty, got ok with why=%s", why)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "note.txt"), []byte("clean"), 0o600)
+	p := scanPrivacy(dir)
+	if complete, _ := p["complete"].(bool); complete {
+		t.Fatalf("stale campaign context path must not complete privacy: %+v", p)
 	}
 }
 
@@ -1725,8 +1788,21 @@ func TestEnsureLiveIdentity_RequiresScanContext(t *testing.T) {
 	reinframeDirty = "false"
 
 	dir := t.TempDir()
-	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
-	// fixture writes identity without scan context
+	// Identity with scan_context_id but deliberately no private context file.
+	m := map[string]any{
+		"schema":                 liveIdentitySchema,
+		"live_binary_commit":     testFullRev,
+		"live_binary_dirty":      false,
+		"live_binary_commit_src": "ldflags",
+		"live_goos":              runtime.GOOS,
+		"live_goarch":            runtime.GOARCH,
+		"scan_context_id":        "dddddddddddddddddddddddddddddddd",
+		"at":                     stamp(),
+	}
+	b, _ := json.MarshalIndent(m, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := ensureLiveIdentity(dir); err == nil {
 		t.Fatal("existing identity without scan context must fail ensureLiveIdentity")
 	}

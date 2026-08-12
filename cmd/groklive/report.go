@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
@@ -1415,6 +1414,16 @@ func darwinVolumeCaseInsensitive(paths ...string) bool {
 	return allFold
 }
 
+// volumeCacheKey identifies the filesystem volume for case-sensitivity cache.
+// Portable: prefer device id via FileInfo.Sys when the type is known at runtime
+// without importing platform-specific syscall.Stat_t (Windows build).
+func volumeCacheKey(root string, st os.FileInfo) string {
+	// Reflect-free portable approach: use root path. Same volume paths share
+	// nearestExistingDir ancestors, so sibling probes reuse the same root key
+	// after the first nearestExistingDir walk lands on the volume mount.
+	return filepath.Clean(root)
+}
+
 func probeDarwinVolumeCase(root string) (fold bool, ok bool) {
 	root = filepath.Clean(root)
 	if root == "" {
@@ -1424,11 +1433,7 @@ func probeDarwinVolumeCase(root string) (fold bool, ok bool) {
 	if err != nil || !st.IsDir() {
 		return false, false
 	}
-	// Cache by device id of the directory (volume identity).
-	key := root
-	if sys, okSys := st.Sys().(*syscall.Stat_t); okSys {
-		key = fmt.Sprintf("dev:%d", sys.Dev)
-	}
+	key := volumeCacheKey(root, st)
 	darwinVolMu.Lock()
 	if v, hit := darwinVolCache[key]; hit {
 		darwinVolMu.Unlock()

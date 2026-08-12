@@ -2414,12 +2414,53 @@ func TestContentHasLocalIdentityLeak_InvalidClosedFieldNotExempt(t *testing.T) {
 	if !contentHasLocalIdentityLeak(`{"src":"build-01"}`, "build-01") {
 		t.Fatal(`invalid src value must leak`)
 	}
+	// Pro R32 P1: broad reinframe.* must not blank hostname-bearing schema values.
+	if !contentHasLocalIdentityLeak(`{"schema":"reinframe.x/build-01.v1"}`, "build-01") {
+		t.Fatal(`reinframe.x/build-01.v1 must remain scannable for host=build-01`)
+	}
 	// Valid closed enums still exempt (host token that is not an enum value).
 	if contentHasLocalIdentityLeak(`{"status":"PASS","goos":"linux"}`, "linux") {
 		t.Fatal("valid goos enum must remain exempt")
 	}
 	if contentHasLocalIdentityLeak(`{"status":"PASS","final_disposition":"NO_GO"}`, "build-01") {
 		t.Fatal("valid closed enums must not false-flag unrelated host")
+	}
+	if contentHasLocalIdentityLeak(`{"schema":"reinframe.live_identity.v1"}`, "build-01") {
+		t.Fatal("known schema registry entry must not false-flag")
+	}
+}
+
+// Pro R32 P1: cross-host report redaction must rewrite imported live hostname.
+func TestWriteJSON_RedactsImportedLiveHostname(t *testing.T) {
+	prev := append([]string(nil), extraRedactHostnames...)
+	t.Cleanup(func() { extraRedactHostnames = prev })
+	liveHost := "live-executor-host-99"
+	setExtraRedactHostnames(liveHost)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenarios.json")
+	m := map[string]ScenarioResult{
+		"HOOK-ALLOW-001": {
+			ID:     "HOOK-ALLOW-001",
+			Status: "PASS",
+			Detail: "transport ok on live-executor-host-99 and live-executor-host-99.corp",
+		},
+	}
+	if err := writeJSON(path, m); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(b)
+	if strings.Contains(raw, liveHost) {
+		t.Fatalf("imported live hostname residual in writeJSON: %s", raw)
+	}
+	if !strings.Contains(raw, "[HOSTNAME]") {
+		t.Fatalf("expected [HOSTNAME] placeholder: %s", raw)
+	}
+	if !strings.Contains(raw, `"status": "PASS"`) && !strings.Contains(raw, `"status":"PASS"`) {
+		t.Fatalf("status enum corrupted: %s", raw)
 	}
 }
 

@@ -1216,9 +1216,9 @@ func (c *GrokACPClient) readLoop() {
 			} else {
 				params["_method"] = msg.Method
 			}
-			if msg.Method == "session/update" {
-				c.NoteSessionVisible()
-			}
+			// Do NOT auto-upgrade LastACKLayer here (Pro R32 P2). session_visible is
+			// only recorded via NoteSessionVisible after source-correlated matching
+			// (actuator / acp_live). Bare session/update delivery is not proof.
 			select {
 			case c.updates <- params:
 			default:

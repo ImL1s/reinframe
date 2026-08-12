@@ -84,6 +84,13 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	// Floor: disposition may only demote after this point.
 	floor := disp
 
+	// Bind imported live-executor hostnames into free-text redactors before any
+	// writeJSON/Markdown emission (Pro R32 P1: cross-host residual live host).
+	if ctxHost, ctxOK, _ := loadLiveScanContext(evDir); ctxOK {
+		setExtraRedactHostnames(ctxHost)
+		defer clearExtraRedactHostnames()
+	}
+
 	// Privacy scan: complete-or-fail (#215/#219).
 	privacy := scanPrivacy(evDir)
 
@@ -996,17 +1003,15 @@ func isClosedStructuredEnumValue(key, val string) bool {
 			return true
 		}
 	case "schema":
-		// Known reinframe schema ids only — not arbitrary host-like strings.
+		// Explicit schema registry only (Pro R32 P1: no broad reinframe.* fallback
+		// that can blank hostname-bearing values like reinframe.x/build-01.v1).
 		switch val {
 		case liveIdentitySchema, liveScanContextSchema,
 			"reinframe.grok_build_live_control.v2",
 			"reinframe.grok_build_acp.v1",
-			"reinframe.grok_build.v1":
+			"reinframe.grok_build.v1",
+			"reinframe.grok_build_live_control.v1":
 			return true
-		}
-		if strings.HasPrefix(val, "reinframe.") && !strings.ContainsAny(val, " \t\r\n") {
-			// Accept other reinframe.* schema ids that are not hostname-shaped.
-			return strings.Count(val, ".") >= 2
 		}
 	}
 	return false

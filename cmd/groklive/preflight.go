@@ -232,8 +232,35 @@ func redactSecrets(s string) string {
 // project roots outside HOME/TMP (Pro R31/R32 P1).
 var liveProjectRoot string
 
+// extraRedactHostnames are additional host tokens to rewrite (imported live-executor
+// hostname on cross-host report generation). Generator os.Hostname alone is not enough
+// (Pro R32 P1).
+var extraRedactHostnames []string
+
 func setLiveProjectRoot(p string) {
 	liveProjectRoot = filepath.Clean(strings.TrimSpace(p))
+}
+
+func setExtraRedactHostnames(hosts ...string) {
+	out := make([]string, 0, len(hosts))
+	seen := map[string]struct{}{}
+	for _, h := range hosts {
+		h = strings.TrimSpace(h)
+		if h == "" || h == "localhost" || len(h) <= 1 {
+			continue
+		}
+		key := strings.ToLower(h)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, h)
+	}
+	extraRedactHostnames = out
+}
+
+func clearExtraRedactHostnames() {
+	extraRedactHostnames = nil
 }
 
 func redactLiveProjectRoot(s string) string {
@@ -291,10 +318,14 @@ func redactLocalIdentity(s string) string {
 		// hostname is a short common word (e.g. "build" in grok_build, "go" in goos)
 		// (Pro R10 P2).
 		if h != "" && h != "localhost" && len(h) > 1 {
-		// Free-text path always redacts hostname, including unsafe GOOS/schema tokens
+			// Free-text path always redacts hostname, including unsafe GOOS/schema tokens
 			// (Pro R28 P2). Structure-aware writeJSON keeps typed enum fields intact.
 			s = redactHostnameToken(s, h)
 		}
+	}
+	// Imported live-executor hostnames (cross-host derived report) — Pro R32 P1.
+	for _, h := range extraRedactHostnames {
+		s = redactHostnameToken(s, h)
 	}
 	// Local account names in path/ownership contexts only — never unrestricted
 	// substring replace (Codex P2: USER=go must not rewrite "goos").

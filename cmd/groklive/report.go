@@ -954,14 +954,80 @@ func scanPrivacy(evDir string) map[string]any {
 	return out
 }
 
-// structuredJSONEnumValueRE blanks closed enum/platform JSON string values so a
-// hostname that collides with GOOS/GOARCH/schema tokens (e.g. "linux") cannot
-// false-positive privacy leaks on structured provenance fields (Pro R26 P2).
-// Free-text fields (stdout/stderr/detail) are left intact for residual scan.
-var structuredJSONEnumValueRE = regexp.MustCompile(
-	`"(?:goos|goarch|live_goos|live_goarch|report_generator_goos|report_generator_goarch|` +
+// structuredJSONEnumPairRE matches candidate closed structured key/value pairs.
+// Only validated enum values are blanked — arbitrary values under the same keys
+// must remain visible to hostname scan (Pro R31 P1).
+var structuredJSONEnumPairRE = regexp.MustCompile(
+	`"(?P<key>goos|goarch|live_goos|live_goarch|report_generator_goos|report_generator_goarch|` +
 		`final_disposition|disposition|strongest_proven|status|class|src|` +
-		`live_binary_commit_src|report_generator_commit_src|schema)"\s*:\s*"[^"]*"`)
+		`live_binary_commit_src|report_generator_commit_src|schema)"\s*:\s*"(?P<val>[^"]*)"`)
+
+// isClosedStructuredEnumValue reports whether val is a field-specific closed enum
+// for a structured key. Invalid/arbitrary values must NOT be exempted from leak scan.
+func isClosedStructuredEnumValue(key, val string) bool {
+	switch key {
+	case "goos", "live_goos", "report_generator_goos":
+		return isValidGOOS(val)
+	case "goarch", "live_goarch", "report_generator_goarch":
+		return isValidGOARCH(val)
+	case "final_disposition", "disposition":
+		switch val {
+		case "GO", "LIMITED_GO", "MORE_DATA", "NO_GO":
+			return true
+		}
+	case "strongest_proven":
+		switch val {
+		case "transport", "session_visible", "explicit", "unknown":
+			return true
+		}
+	case "status":
+		switch val {
+		case "PASS", "FAIL", "NOT_RUN", "INCONCLUSIVE":
+			return true
+		}
+	case "class":
+		switch val {
+		case "binary_absent", "other_external_environment":
+			return true
+		}
+	case "src", "live_binary_commit_src", "report_generator_commit_src":
+		switch val {
+		case "ldflags", "vcs", "unknown":
+			return true
+		}
+	case "schema":
+		// Known reinframe schema ids only — not arbitrary host-like strings.
+		switch val {
+		case liveIdentitySchema, liveScanContextSchema,
+			"reinframe.grok_build_live_control.v2",
+			"reinframe.grok_build_acp.v1",
+			"reinframe.grok_build.v1":
+			return true
+		}
+		if strings.HasPrefix(val, "reinframe.") && !strings.ContainsAny(val, " \t\r\n") {
+			// Accept other reinframe.* schema ids that are not hostname-shaped.
+			return strings.Count(val, ".") >= 2
+		}
+	}
+	return false
+}
+
+// blankClosedStructuredEnumValues removes only field-validated closed enum values
+// so hostnames colliding with GOOS/GOARCH tokens do not false-flag (Pro R26 P2),
+// while invalid values under the same keys stay scannable (Pro R31 P1).
+func blankClosedStructuredEnumValues(s string) string {
+	return structuredJSONEnumPairRE.ReplaceAllStringFunc(s, func(m string) string {
+		sub := structuredJSONEnumPairRE.FindStringSubmatch(m)
+		if len(sub) < 3 {
+			return m
+		}
+		key, val := sub[1], sub[2]
+		if isClosedStructuredEnumValue(key, val) {
+			return `"":""`
+		}
+		return m
+	})
+}
 
 // contentHasLocalIdentityLeak reports home/tmp absolute paths or .local hostnames in evidence.
 // Covers Unix and Windows (including JSON-escaped backslashes after Marshal).
@@ -991,15 +1057,15 @@ func contentHasLocalIdentityLeak(s string, extraHostnames ...string) bool {
 	// Always strip [HOSTNAME] placeholders first so mixed placeholder+raw fails (Codex P1).
 	// Match token boundaries only — unrestricted Contains false-flags schema ids when
 	// hostname is a common word like "build" (Codex P2 on tip 608cdcc).
-	// Blank closed structured enum/platform values before hostname token scan so a
-	// host named "linux"/"go" does not false-flag goos/disposition fields (Pro R26 P2).
+	// Blank only validated closed structured enum/platform values before hostname
+	// token scan (Pro R26 P2 + Pro R31 P1: invalid status values remain scannable).
 	hosts := make([]string, 0, 2+len(extraHostnames))
 	if h, err := os.Hostname(); err == nil {
 		hosts = append(hosts, h)
 	}
 	hosts = append(hosts, extraHostnames...)
 	strippedHost := strings.ReplaceAll(s, "[HOSTNAME]", "")
-	strippedHost = structuredJSONEnumValueRE.ReplaceAllString(strippedHost, `"":""`)
+	strippedHost = blankClosedStructuredEnumValues(strippedHost)
 	seenH := map[string]struct{}{}
 	for _, h := range hosts {
 		h = strings.TrimSpace(h)

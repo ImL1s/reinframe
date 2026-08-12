@@ -1080,7 +1080,22 @@ func isSessionUpdateNotification(u map[string]any) bool {
 		}
 	}
 	if anyPresent {
-		return accepted == "session/update"
+		if accepted != "session/update" {
+			return false
+		}
+		// JSON-RPC notifications must not carry request/response markers.
+		// A method-bearing envelope with top-level id/result/error is a request or
+		// response, not a session/update notification (Pro R31 P2).
+		if _, ok := u["id"]; ok {
+			return false
+		}
+		if _, ok := u["result"]; ok {
+			return false
+		}
+		if _, ok := u["error"]; ok {
+			return false
+		}
+		return true
 	}
 
 	// Methodless JSON-RPC-shaped envelopes must fail closed (Pro R26 P2):

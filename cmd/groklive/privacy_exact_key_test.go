@@ -306,6 +306,24 @@ func TestRedactHostnameToken_DoesNotCorruptSchemaIDs(t *testing.T) {
 	if strings.Contains(outSA, `"hosts":"build `) || strings.Contains(outSA, ` build"`) {
 		t.Fatalf("multi-pass left residual host: %s", outSA)
 	}
+
+	// Pro R31 P2: multipass must be idempotent when host is "hostname".
+	for _, h := range []string{"hostname", "hostname.example.com", "HOSTNAME"} {
+		in := "node hostname ready; also hostname.example.com"
+		once := redactHostnameToken(in, h)
+		twice := redactHostnameToken(once, h)
+		if once != twice {
+			t.Fatalf("redactHostnameToken not idempotent for host=%q: once=%q twice=%q", h, once, twice)
+		}
+		if strings.Contains(once, "[[") || strings.Count(once, "[HOSTNAME]") > 4 {
+			t.Fatalf("nested placeholders for host=%q: %q", h, once)
+		}
+		// Already-redacted input must stay stable.
+		stable := redactHostnameToken("[HOSTNAME] and [HOSTNAME]", h)
+		if stable != "[HOSTNAME] and [HOSTNAME]" {
+			t.Fatalf("placeholder rematch for host=%q: %q", h, stable)
+		}
+	}
 }
 
 func TestHostnameTokenPresent_MatchesRedactorBoundaries(t *testing.T) {

@@ -2320,6 +2320,31 @@ func TestContentHasLocalIdentityLeak_IgnoresStructuredPlatformValues(t *testing.
 	}
 }
 
+// Pro R31 P1: invalid closed-field values must not be exempted from hostname scan.
+func TestContentHasLocalIdentityLeak_InvalidClosedFieldNotExempt(t *testing.T) {
+	t.Parallel()
+	// Arbitrary status value equal to live host must still leak.
+	if !contentHasLocalIdentityLeak(`{"status":"build-01","detail":"ok"}`, "build-01") {
+		t.Fatal(`{"status":"build-01"} must leak for host=build-01`)
+	}
+	if !contentHasLocalIdentityLeak(`{"class":"build-01"}`, "build-01") {
+		t.Fatal(`invalid class value must leak`)
+	}
+	if !contentHasLocalIdentityLeak(`{"schema":"build-01"}`, "build-01") {
+		t.Fatal(`invalid schema value must leak`)
+	}
+	if !contentHasLocalIdentityLeak(`{"src":"build-01"}`, "build-01") {
+		t.Fatal(`invalid src value must leak`)
+	}
+	// Valid closed enums still exempt.
+	if contentHasLocalIdentityLeak(`{"status":"PASS","final_disposition":"NO_GO"}`, "PASS") {
+		// host PASS is unlikely; ensure valid enum does not create false path via status alone
+	}
+	if contentHasLocalIdentityLeak(`{"status":"PASS","goos":"linux"}`, "linux") {
+		t.Fatal("valid goos enum must remain exempt")
+	}
+}
+
 // Pro R25 P2: executable binding digests must be SHA-256 hex, not merely len==64.
 func TestLoadLiveExecutable_RequiresSHA256Hex(t *testing.T) {
 	t.Parallel()

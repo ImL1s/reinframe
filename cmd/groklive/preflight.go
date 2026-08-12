@@ -411,6 +411,13 @@ func hostnameTokenPresent(s, host string) bool {
 	return false
 }
 
+// hostPlaceholderSentinel temporarily replaces [HOSTNAME] during multipass so a
+// machine named "hostname" cannot rematch the placeholder (Pro R31 P2).
+const (
+	hostPlaceholderToken    = "[HOSTNAME]"
+	hostPlaceholderSentinel = "\x00RF_HOST_PH\x00"
+)
+
 // redactHostnameToken replaces a runtime hostname only as a whole token so short
 // hostnames cannot mutate JSON keys or schema ids (Pro R10 P2). FQDN forms of the
 // short name are replaced with [HOSTNAME] (Pro R21/R22). Longer candidates first.
@@ -419,6 +426,9 @@ func hostnameTokenPresent(s, host string) bool {
 // need multi-pass replacement: RE2 has no lookaround, so the right-boundary group
 // is consumed by the first match and the next host would otherwise remain raw
 // (Pro R30 P1). Loop until fixed-point (bounded).
+//
+// Existing [HOSTNAME] placeholders are protected with a sentinel during multipass
+// so host=="hostname" cannot expand [[HOSTNAME]] nested (Pro R31 P2 idempotence).
 func redactHostnameToken(s, host string) string {
 	if s == "" || host == "" {
 		return s
@@ -432,19 +442,21 @@ func redactHostnameToken(s, host string) string {
 			}
 		}
 	}
+	// Protect prior placeholders from rematch when host is "hostname" / FQDN label.
+	s = strings.ReplaceAll(s, hostPlaceholderToken, hostPlaceholderSentinel)
 	for _, h := range cands {
 		re := hostnameTokenRE(h)
 		// Multi-pass: each ReplaceAllString only covers non-overlapping matches;
 		// shared delimiters leave residual hosts for the next pass (Pro R30 P1).
 		for pass := 0; pass < 64; pass++ {
-			next := re.ReplaceAllString(s, `${1}[HOSTNAME]${3}`)
+			next := re.ReplaceAllString(s, `${1}`+hostPlaceholderSentinel+`${3}`)
 			if next == s {
 				break
 			}
 			s = next
 		}
 	}
-	return s
+	return strings.ReplaceAll(s, hostPlaceholderSentinel, hostPlaceholderToken)
 }
 
 // redactLocalAccountNames rewrites env account names only as path segments.

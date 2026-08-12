@@ -412,6 +412,52 @@ func TestUpdateStrongCorrelation_RequiresSessionUpdateMethod(t *testing.T) {
 	if !ok {
 		t.Fatalf("unwrapped sessionUpdate body should still correlate: why=%s", why)
 	}
+
+	// Pro R31 P2: JSON-RPC request (top-level id) is not a session/update notification.
+	uReq := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      float64(7),
+		"method":  "session/update",
+		"params": map[string]any{
+			"requestId":     float64(42),
+			"sessionUpdate": "agent_message_chunk",
+		},
+		"sessionId":      "s1",
+		"interventionId": "iv-1",
+		"requestId":      float64(42),
+		"sessionUpdate":  "agent_message_chunk",
+	}
+	ok, why = UpdateStrongCorrelation(uReq, "iv-1", "", 42)
+	if ok {
+		t.Fatalf("JSON-RPC request with id must not correlate as notification: why=%s", why)
+	}
+	uWithResult := map[string]any{
+		"jsonrpc":        "2.0",
+		"id":             float64(1),
+		"result":         map[string]any{"ok": true},
+		"method":         "session/update",
+		"sessionId":      "s1",
+		"interventionId": "iv-1",
+		"requestId":      float64(42),
+		"sessionUpdate":  "agent_message_chunk",
+	}
+	ok, why = UpdateStrongCorrelation(uWithResult, "iv-1", "", 42)
+	if ok {
+		t.Fatalf("JSON-RPC response markers must not correlate: why=%s", why)
+	}
+	// True notification (method, no id) still correlates.
+	uNotif := map[string]any{
+		"jsonrpc":        "2.0",
+		"method":         "session/update",
+		"sessionId":      "s1",
+		"interventionId": "iv-1",
+		"requestId":      float64(42),
+		"sessionUpdate":  "agent_message_chunk",
+	}
+	ok, why = UpdateStrongCorrelation(uNotif, "iv-1", "", 42)
+	if !ok {
+		t.Fatalf("true session/update notification must still correlate: why=%s", why)
+	}
 }
 
 func TestUpdateStrongCorrelation_IgnoresAgentContentSpoof(t *testing.T) {

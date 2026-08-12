@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
@@ -1332,51 +1333,133 @@ func pathContainedIn(child, parent string) (bool, error) {
 	return underLexical(cReal, pReal) || underLexical(cAbs, pAbs) || underLexical(cReal, pAbs), nil
 }
 
-// pathVolumeCaseInsensitive reports whether lexical path comparison should fold
-// case. Windows always; darwin when the volume is case-insensitive; never on
-// typical Linux (Pro R33 P2: /workspace/cache vs /workspace/Cache are distinct).
-// os.SameFile still catches real case-aliases when both paths exist.
-func pathVolumeCaseInsensitive() bool {
+// pathVolumeCaseInsensitive reports whether lexical path comparison for the
+// given paths should fold case. Windows always folds; Linux never; Darwin probes
+// the target volume (not the process temp dir) so mixed APFS mounts are correct
+// (Pro R33 P2 + Pro R34 P2). os.SameFile still catches real case-aliases when
+// both paths exist.
+func pathVolumeCaseInsensitive(paths ...string) bool {
 	switch runtime.GOOS {
 	case "windows":
 		return true
 	case "darwin":
-		return darwinPathCaseInsensitive()
+		return darwinVolumeCaseInsensitive(paths...)
 	default:
 		return false
 	}
 }
 
 var (
-	darwinCaseOnce sync.Once
-	darwinCaseFold bool
+	darwinVolMu    sync.Mutex
+	darwinVolCache = map[string]bool{} // key: device id string of probe root
 )
 
-func darwinPathCaseInsensitive() bool {
-	darwinCaseOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "rf-case-probe-*")
-		if err != nil {
-			// Fail open toward case-sensitive (safer for Linux-like layouts).
-			darwinCaseFold = false
-			return
+// nearestExistingDir walks up to the first existing directory for probing.
+func nearestExistingDir(p string) string {
+	p = filepath.Clean(p)
+	if p == "" {
+		return ""
+	}
+	cur := p
+	for {
+		if st, err := os.Stat(cur); err == nil {
+			if st.IsDir() {
+				return cur
+			}
+			return filepath.Dir(cur)
 		}
-		defer func() { _ = os.RemoveAll(dir) }()
-		// Create "a"; if Stat("A") succeeds on the same entry, volume folds case.
-		p := filepath.Join(dir, "a")
-		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
-			darwinCaseFold = false
-			return
+		next := filepath.Dir(cur)
+		if next == cur {
+			return ""
 		}
-		alt := filepath.Join(dir, "A")
-		stA, errA := os.Stat(p)
-		stB, errB := os.Stat(alt)
-		if errA != nil || errB != nil {
-			darwinCaseFold = false
-			return
+		cur = next
+	}
+}
+
+func darwinVolumeCaseInsensitive(paths ...string) bool {
+	// Prefer an existing ancestor of the caller paths so the probe runs on the
+	// same volume as evidence/cache (Pro R34 P2). Fall back to system temp only
+	// when no path is usable.
+	var roots []string
+	for _, p := range paths {
+		if d := nearestExistingDir(p); d != "" {
+			roots = append(roots, d)
 		}
-		darwinCaseFold = os.SameFile(stA, stB)
-	})
-	return darwinCaseFold
+	}
+	if len(roots) == 0 {
+		if t := os.TempDir(); t != "" {
+			roots = append(roots, t)
+		}
+	}
+	if len(roots) == 0 {
+		return false
+	}
+	// If any compared path's volume is case-sensitive, do not fold (safe for
+	// mixed mounts: SameFile still catches true aliases on folding volumes).
+	allFold := true
+	any := false
+	for _, root := range roots {
+		fold, ok := probeDarwinVolumeCase(root)
+		if !ok {
+			continue
+		}
+		any = true
+		if !fold {
+			allFold = false
+			break
+		}
+	}
+	if !any {
+		return false
+	}
+	return allFold
+}
+
+func probeDarwinVolumeCase(root string) (fold bool, ok bool) {
+	root = filepath.Clean(root)
+	if root == "" {
+		return false, false
+	}
+	st, err := os.Stat(root)
+	if err != nil || !st.IsDir() {
+		return false, false
+	}
+	// Cache by device id of the directory (volume identity).
+	key := root
+	if sys, okSys := st.Sys().(*syscall.Stat_t); okSys {
+		key = fmt.Sprintf("dev:%d", sys.Dev)
+	}
+	darwinVolMu.Lock()
+	if v, hit := darwinVolCache[key]; hit {
+		darwinVolMu.Unlock()
+		return v, true
+	}
+	darwinVolMu.Unlock()
+
+	// Probe inside root: create unique subdir to avoid collisions.
+	probeDir, err := os.MkdirTemp(root, ".rf-case-probe-*")
+	if err != nil {
+		// Unwritable volume: fail open toward case-sensitive.
+		return false, false
+	}
+	defer func() { _ = os.RemoveAll(probeDir) }()
+	p := filepath.Join(probeDir, "a")
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		return false, false
+	}
+	alt := filepath.Join(probeDir, "A")
+	stA, errA := os.Stat(p)
+	stB, errB := os.Stat(alt)
+	if errA != nil || errB != nil {
+		// Case-sensitive: "A" does not exist as alias of "a".
+		fold = false
+	} else {
+		fold = os.SameFile(stA, stB)
+	}
+	darwinVolMu.Lock()
+	darwinVolCache[key] = fold
+	darwinVolMu.Unlock()
+	return fold, true
 }
 
 func underLexical(child, parent string) bool {
@@ -1389,8 +1472,8 @@ func underLexical(child, parent string) bool {
 	sep := string(os.PathSeparator)
 	// Case-sensitive volumes (Linux, case-sensitive APFS): exact match only.
 	// Unconditional ToLower falsely merges /workspace/cache with /workspace/Cache
-	// (Pro R33 P2).
-	if !pathVolumeCaseInsensitive() {
+	// (Pro R33 P2). Volume-scoped on Darwin (Pro R34 P2).
+	if !pathVolumeCaseInsensitive(child, parent) {
 		if strings.HasPrefix(child, parent+sep) {
 			return true
 		}
@@ -1435,7 +1518,7 @@ func equalFoldPath(a, b string) bool {
 	if a == b {
 		return true
 	}
-	if !pathVolumeCaseInsensitive() {
+	if !pathVolumeCaseInsensitive(a, b) {
 		return false
 	}
 	return strings.EqualFold(a, b)

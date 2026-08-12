@@ -2430,12 +2430,13 @@ func TestContentHasLocalIdentityLeak_InvalidClosedFieldNotExempt(t *testing.T) {
 	}
 }
 
-// Pro R33 P2: case-sensitive FS must not fold /cache vs /Cache as containment.
+// Pro R33 P2 / R34 P2: case-sensitive volume must not fold /cache vs /Cache.
 func TestPathContainedIn_CaseSensitiveSiblingDirs(t *testing.T) {
-	if pathVolumeCaseInsensitive() {
-		t.Skip("volume is case-insensitive; sibling Cache/cache collapse")
-	}
 	base := t.TempDir()
+	// Probe the actual volume of base (not a global temp-only flag).
+	if pathVolumeCaseInsensitive(base) {
+		t.Skip("this volume is case-insensitive; sibling Cache/cache collapse")
+	}
 	cache := filepath.Join(base, "cache")
 	evidence := filepath.Join(base, "Cache")
 	if err := os.MkdirAll(cache, 0o700); err != nil {
@@ -2467,6 +2468,12 @@ func TestPathContainedIn_CaseSensitiveSiblingDirs(t *testing.T) {
 	under3, err := pathContainedIn(child, evidence)
 	if err != nil || !under3 {
 		t.Fatalf("true nested path must be contained: under=%v err=%v", under3, err)
+	}
+	// Volume probe must be scoped to the path (Pro R34): same volume answer for
+	// base vs a nested path; empty args do not crash.
+	_ = pathVolumeCaseInsensitive()
+	if pathVolumeCaseInsensitive(base) != pathVolumeCaseInsensitive(child) {
+		t.Fatal("same-volume paths must share case-sensitivity answer")
 	}
 }
 

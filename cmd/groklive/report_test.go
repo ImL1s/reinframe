@@ -2172,10 +2172,10 @@ func TestScanPrivacy_HarnessOwnedFilenameNotHostLeak(t *testing.T) {
 	if isHarnessOwnedEvidenceFilename("preflight.log") {
 		t.Fatal("user-supplied preflight.log must remain scannable")
 	}
-	// Direct scan helper: hostname preflight must not flag the fixed basename.
-	if contentHasLocalIdentityLeak("preflight.json", "preflight") {
-		// content of the name alone — harness exemption is in scanPrivacy, not contentHas...
-		// contentHasLocalIdentityLeak still sees host token; exemption is scanPrivacy only.
+	// contentHasLocalIdentityLeak still sees host token in the basename string;
+	// exemption is applied only in scanPrivacy (not in the raw content helper).
+	if !contentHasLocalIdentityLeak("preflight.json", "preflight") {
+		t.Fatal("raw helper should still detect host token in basename string")
 	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "preflight.json"), []byte(`{"usable":true}`), 0o600); err != nil {

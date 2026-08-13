@@ -1007,14 +1007,7 @@ func scanPrivacy(evDir string) map[string]any {
 			!strings.Contains(s, "no token") && !strings.Contains(s, "token field") {
 			out["token_fields_in_auth_envelope"] = true
 		}
-		for _, pat := range []string{"sk-", "xai-", "Bearer ", "eyJ"} {
-			if strings.Contains(s, pat) {
-				if strings.Contains(s, "[REDACTED]") && pat != "eyJ" {
-					continue
-				}
-				hits++
-			}
-		}
+		hits += countSecretPatternHits(s)
 		// Nested JSON + escaped keys (e.g. trust_launch stdout embedding "thought").
 		if contentHasPrivateReasoning(b) {
 			rawThoughts = true
@@ -1262,6 +1255,42 @@ func filenameIdentityHosts(extraHostnames ...string) []string {
 	return out
 }
 
+// redactedSecretPlaceholderRE matches canonical redacted secret forms so residual
+// raw prefixes remain scannable (Pro R52 P1: mixed redacted+raw in one document).
+var redactedSecretPlaceholderRE = regexp.MustCompile(
+	`(?i)(?:xai-|sk-)\[REDACTED\]|Bearer\s*\[REDACTED\]`,
+)
+
+// stripCanonicalRedactedSecrets removes known placeholder forms only; raw secrets
+// that share a document with a placeholder must still be detected.
+func stripCanonicalRedactedSecrets(s string) string {
+	return redactedSecretPlaceholderRE.ReplaceAllString(s, "")
+}
+
+// countSecretPatternHits counts residual secret prefixes after removing redacted
+// placeholders (shared by scanPrivacy and exact-output gate).
+func countSecretPatternHits(s string) int {
+	residual := stripCanonicalRedactedSecrets(s)
+	n := 0
+	for _, pat := range []string{"sk-", "xai-", "Bearer ", "eyJ"} {
+		if strings.Contains(residual, pat) {
+			n++
+		}
+	}
+	return n
+}
+
+// secretPatternLeak reports whether residual secret material remains.
+func secretPatternLeak(s string) (bool, string) {
+	residual := stripCanonicalRedactedSecrets(s)
+	for _, pat := range []string{"sk-", "xai-", "Bearer ", "eyJ"} {
+		if strings.Contains(residual, pat) {
+			return true, "secret_pattern:" + pat
+		}
+	}
+	return false, ""
+}
+
 // emittedArtifactPrivacyLeak reports whether a prospective formal-report basename
 // or body would publish private material (Pro R51 exact-output privacy gate).
 func emittedArtifactPrivacyLeak(name string, body []byte, extraHostnames ...string) (bool, string) {
@@ -1275,14 +1304,8 @@ func emittedArtifactPrivacyLeak(name string, body []byte, extraHostnames ...stri
 	if contentHasLocalIdentityLeak(s, extraHostnames...) {
 		return true, "local_identity"
 	}
-	for _, pat := range []string{"sk-", "xai-", "Bearer ", "eyJ"} {
-		if strings.Contains(s, pat) {
-			// Allow redacted placeholders.
-			if strings.Contains(s, "[REDACTED]") && pat != "eyJ" {
-				continue
-			}
-			return true, "secret_pattern:" + pat
-		}
+	if leak, why := secretPatternLeak(s); leak {
+		return true, why
 	}
 	return false, ""
 }

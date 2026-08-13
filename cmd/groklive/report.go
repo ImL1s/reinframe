@@ -396,11 +396,7 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		}
 	}
 	if leak, why := emittedArtifactPrivacyLeak(filepath.Base(mdPath), []byte(md), nameHosts...); leak {
-		// MD may embed free-text; demote and refuse rather than publish.
-		reasons = append(reasons, "emitted Markdown privacy leak: "+why)
-		if disp == "GO" || disp == "LIMITED_GO" {
-			disp = "NO_GO"
-		}
+		// MD may embed free-text; refuse rather than publish.
 		return liveReportOutcome{}, fmt.Errorf("refusing to write privacy-leaking formal Markdown: %s", why)
 	}
 

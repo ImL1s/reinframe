@@ -2342,8 +2342,9 @@ func readRegularFile(path string) ([]byte, error) {
 }
 
 // fileContentSHA256 returns the hex SHA-256 of a regular file's contents (not the
-// path string). Stat before open rejects FIFO/device; open uses O_NONBLOCK on
-// unix so a TOCTOU swap to FIFO cannot hang; FD Stat re-validates (Pro R45/R46).
+// path string). Intentional Stat (follows symlink) for real executables, then
+// O_NONBLOCK open WITHOUT O_NOFOLLOW; SameFile binds pre/post open so a target
+// swap is rejected while legitimate --grok-executable symlinks work (Pro R50).
 func fileContentSHA256(path string) (string, error) {
 	// Pre-open Stat (follows one symlink hop for real executables).
 	st, err := os.Stat(path)
@@ -2353,7 +2354,7 @@ func fileContentSHA256(path string) (string, error) {
 	if !st.Mode().IsRegular() {
 		return "", fmt.Errorf("not a regular file")
 	}
-	f, err := openFileReadNoBlock(path)
+	f, err := openFileReadNoBlockFollow(path)
 	if err != nil {
 		return "", err
 	}
@@ -2364,6 +2365,9 @@ func fileContentSHA256(path string) (string, error) {
 	}
 	if !st2.Mode().IsRegular() {
 		return "", fmt.Errorf("not a regular file")
+	}
+	if !os.SameFile(st, st2) {
+		return "", fmt.Errorf("file identity changed between stat and open")
 	}
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {

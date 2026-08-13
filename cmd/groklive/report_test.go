@@ -3289,6 +3289,26 @@ func TestEnsureExecutable_RejectsNonRegular(t *testing.T) {
 	}
 }
 
+// Pro R50 P2: ensure* must accept a legitimate symlink to a regular executable.
+func TestEnsureExecutable_AcceptsSymlinkToRegular(t *testing.T) {
+	dir := t.TempDir()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "grok-link")
+	if err := os.Symlink(self, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	ev := t.TempDir()
+	if err := ensureGrokExecutableIdentity(ev, link); err != nil {
+		t.Fatalf("symlink grok executable must bind: %v", err)
+	}
+	if err := ensureGrokhooksExecutable(ev, link); err != nil {
+		t.Fatalf("symlink grokhooks executable must bind: %v", err)
+	}
+}
+
 // Pro R47–R48 P2: evidence control files must refuse FIFO without hang.
 func TestEvidenceLoaders_RejectFIFO(t *testing.T) {
 	dir := t.TempDir()

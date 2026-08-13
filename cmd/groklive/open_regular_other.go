@@ -10,3 +10,8 @@ import "os"
 func openFileReadNoBlock(path string) (*os.File, error) {
 	return os.Open(path)
 }
+
+// openFileReadNoBlockFollow is the executable-hash path (may follow one symlink).
+func openFileReadNoBlockFollow(path string) (*os.File, error) {
+	return os.Open(path)
+}

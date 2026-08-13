@@ -133,7 +133,9 @@ exit "$EC"
 	if err != nil {
 		fail(err)
 	}
-	_ = writeJSON(filepath.Join(evDir, "hooks_doctor_pre_trust.json"), doc)
+	if err := writeJSON(filepath.Join(evDir, "hooks_doctor_pre_trust.json"), doc); err != nil {
+		fail(fmt.Errorf("groklive hooks: write hooks_doctor_pre_trust: %w", err))
+	}
 
 	trustCmd := exec.Command(grok, "--no-auto-update", "--trust", "--cwd", proj, "-p", "Say TRUST_OK and stop.", "--output-format", "json", "--max-turns", "1")
 	trustCmd.Dir = proj
@@ -154,9 +156,13 @@ exit "$EC"
 			"error":      err.Error(),
 		}
 	}
-	_ = writeJSON(filepath.Join(evDir, "trust_launch.json"), trustRec)
+	if err := writeJSON(filepath.Join(evDir, "trust_launch.json"), trustRec); err != nil {
+		fail(fmt.Errorf("groklive hooks: write trust_launch: %w", err))
+	}
 	doc2, errDoc2 := mgr.Doctor()
-	_ = writeJSON(filepath.Join(evDir, "hooks_doctor_post_trust.json"), doc2)
+	if err := writeJSON(filepath.Join(evDir, "hooks_doctor_post_trust.json"), doc2); err != nil {
+		fail(fmt.Errorf("groklive hooks: write hooks_doctor_post_trust: %w", err))
+	}
 	if errDoc2 != nil {
 		set("TRUST-001", "FAIL", "doctor after --trust: "+errDoc2.Error(), nil)
 	} else if !doc2.OK {

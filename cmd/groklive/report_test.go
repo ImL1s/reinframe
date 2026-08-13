@@ -3289,18 +3289,22 @@ func TestEnsureExecutable_RejectsNonRegular(t *testing.T) {
 	}
 }
 
-// Pro R47 P2: evidence control files must refuse FIFO without hang (scenarios / identity).
+// Pro R47–R48 P2: evidence control files must refuse FIFO without hang.
 func TestEvidenceLoaders_RejectFIFO(t *testing.T) {
 	dir := t.TempDir()
 	sc := filepath.Join(dir, "scenarios.json")
 	id := filepath.Join(dir, "live_identity.json")
+	man := filepath.Join(dir, "acp_manifest.json")
 	if err := mkfifo(sc); err != nil {
 		t.Skipf("mkfifo: %v", err)
 	}
 	if err := mkfifo(id); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan struct{}, 2)
+	if err := mkfifo(man); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{}, 3)
 	go func() {
 		m := loadScenarioMap(dir)
 		if len(m) != 0 {
@@ -3315,12 +3319,63 @@ func TestEvidenceLoaders_RejectFIFO(t *testing.T) {
 		}
 		done <- struct{}{}
 	}()
-	for i := 0; i < 2; i++ {
+	go func() {
+		if v := loadOptionalJSON(man); v != nil {
+			t.Error("FIFO acp_manifest must load as nil")
+		}
+		done <- struct{}{}
+	}()
+	for i := 0; i < 3; i++ {
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
 			t.Fatal("evidence loader hung on FIFO")
 		}
+	}
+}
+
+// Pro R48 P2: --scan-context-in FIFO must not hang import.
+func TestLoadLiveScanContext_RejectsImportFIFO(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() {
+		reinframeCommit, reinframeDirty = prevC, prevD
+		scanContextInPath = ""
+	})
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+	cache := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cache, nil }
+
+	dir := t.TempDir()
+	ext := filepath.Join(t.TempDir(), "ctx-import.json")
+	if err := mkfifo(ext); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	scanContextInPath = ext
+	// Identity with scan_context_id but NO private cache context — forces import path.
+	scanID := "abcdef0123456789abcdef0123456789"
+	idBody := fmt.Sprintf(`{"schema":%q,"live_binary_commit":%q,"live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":%q,"live_goarch":%q,"scan_context_id":%q,"at":"t"}`,
+		liveIdentitySchema, testFullRev, runtime.GOOS, runtime.GOARCH, scanID)
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(idBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		_, ok, why := loadLiveScanContext(dir)
+		if ok {
+			t.Error("import FIFO must not succeed")
+		}
+		if why == "" {
+			t.Error("want failure reason")
+		}
+		done <- struct{}{}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scan-context-in FIFO hung")
 	}
 }
 

@@ -1927,7 +1927,7 @@ func exportLiveScanContextOut(evDir, scanContextID string) error {
 	if doc.ID != scanContextID {
 		return fmt.Errorf("export scan-context-out: scan_context_id mismatch")
 	}
-	b, err := os.ReadFile(path)
+	b, err := readRegularFile(path)
 	if err != nil {
 		return fmt.Errorf("export scan-context-out read: %w", err)
 	}
@@ -2005,7 +2005,8 @@ func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string)
 					return "", false, "scan-context-in must be outside evidence directory"
 				}
 				// Single-read binding (Pro R41 P2): parse and persist the same bytes.
-				b, rErr := os.ReadFile(inAbs)
+				// Regular-file / nonblocking (Pro R48 P2: import FIFO must not hang).
+				b, rErr := readRegularFile(inAbs)
 				if rErr != nil {
 					return "", false, why + "; import read: " + rErr.Error()
 				}
@@ -2045,22 +2046,21 @@ func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string)
 }
 
 func loadLiveScanContextFile(path string) (liveScanContextDoc, bool, string) {
-	st, err := os.Lstat(path)
+	// Single regular-file open (nonblocking on unix) — no Lstat→ReadFile TOCTOU (Pro R48).
+	b, err := readRegularFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return liveScanContextDoc{}, false, "missing"
 		}
-		return liveScanContextDoc{}, false, "unreadable: " + err.Error()
-	}
-	if st.Mode()&os.ModeSymlink != 0 {
-		return liveScanContextDoc{}, false, "symlink"
-	}
-	if !st.Mode().IsRegular() {
-		return liveScanContextDoc{}, false, "not regular file"
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return liveScanContextDoc{}, false, "unreadable: " + err.Error()
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "symlink"):
+			return liveScanContextDoc{}, false, "symlink"
+		case strings.Contains(msg, "not a regular file"):
+			return liveScanContextDoc{}, false, "not regular file"
+		default:
+			return liveScanContextDoc{}, false, "unreadable: " + msg
+		}
 	}
 	return parseLiveScanContextBytes(b)
 }
@@ -2558,7 +2558,8 @@ func pick(m map[string]ScenarioResult, ids ...string) map[string]ScenarioResult 
 }
 
 func loadOptionalJSON(path string) any {
-	b, err := os.ReadFile(path)
+	// Nonblocking regular-file read (Pro R48 P2: acp_manifest FIFO must not hang report).
+	b, err := readRegularFile(path)
 	if err != nil {
 		return nil
 	}

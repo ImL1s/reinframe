@@ -337,7 +337,33 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	report["limitations"] = reasons
 	report["final_disposition"] = disp
 
-	base := fmt.Sprintf("issue-167-live-v2-%s-%s-%s", sanitizeVersion(ver), osName, day)
+	verForName := sanitizeVersion(ver)
+	base := fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, osName, day)
+	// Prospective formal basenames must not publish host identity (Pro R45 P1).
+	// scanPrivacy ran before we knew the output names; refuse host-bearing names
+	// at write time (demote + rewrite to a non-leaking version token).
+	ctxHost, ctxOK, _ := loadLiveScanContext(evDir)
+	nameHosts := privacyScanHostnames(evDir, ctxHost, ctxOK)
+	if leak, _ := filenameIdentityLeak(base+".json", nameHosts...); leak {
+		reasons = append(reasons, "formal report basename would publish host identity")
+		if disp == "GO" || disp == "LIMITED_GO" {
+			disp = "NO_GO"
+		}
+		disp = demoteFloor(floor, disp)
+		report["final_disposition"] = disp
+		report["limitations"] = reasons
+		verForName = "redacted"
+		base = fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, osName, day)
+		if leak2, _ := filenameIdentityLeak(base+".json", nameHosts...); leak2 {
+			// Host still collides after redaction (e.g. crosses into GOOS); force
+			// platform token to unknown so fixed spans cannot complete the host.
+			osName = "unknown"
+			base = fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, osName, day)
+			if leak3, _ := filenameIdentityLeak(base+".json", nameHosts...); leak3 {
+				return liveReportOutcome{}, fmt.Errorf("refusing to write host-bearing formal report basename")
+			}
+		}
+	}
 	jsonPath := filepath.Join(evDir, base+".json")
 	mdPath := filepath.Join(evDir, base+".md")
 	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v2.schema.json")
@@ -946,10 +972,10 @@ func scanPrivacy(evDir string) map[string]any {
 			hits++
 			fails = append(fails, "local_identity:"+e.Name())
 		}
-		// Filenames also publish identity (Pro R35 P1). Fixed harness basenames are
-		// fully exempt (preflight.json vs host=preflight). Formal report names are
-		// NOT fully exempt: only the version segment is host-scanned so a spoofed
-		// issue-167-live-v2-build-01-darwin-2026-08-12.json still fails (Pro R44 P1).
+			// Filenames also publish identity (Pro R35 P1). Fixed harness basenames are
+		// fully exempt (preflight.json vs host=preflight). Formal report names use
+		// span-aware host matching: fixed GOOS/date/prefix alone may collide, but
+		// any match overlapping the free version segment fails (Pro R44/R45).
 		if leak, why := filenameIdentityLeak(e.Name(), scanHosts...); leak {
 			hits++
 			fails = append(fails, "local_identity_filename:"+e.Name()+why)
@@ -1112,27 +1138,106 @@ func isHarnessOwnedEvidenceFilename(name string) bool {
 	return false
 }
 
-// formalLiveReportBasenameRE matches generator formal report basenames and captures
-// the version segment for host scanning (Pro R44 P1).
+// formalLiveReportBasenameRE matches generator formal report basenames.
+// Groups: 1=prefix, 2=version, 3=goos, 4=date, 5=ext.
 // issue-167-live-v2-<ver>-<goos|unknown>-YYYY-MM-DD.{json,md}
 var formalLiveReportBasenameRE = regexp.MustCompile(
-	`^issue-167-live-v2-([A-Za-z0-9._-]{1,48})-` +
-		`(?:unknown|aix|android|darwin|dragonfly|freebsd|hurd|illumos|ios|js|linux|nacl|netbsd|openbsd|plan9|solaris|wasip1|windows|zos)-` +
-		`\d{4}-\d{2}-\d{2}\.(?:json|md)$`,
+	`^(issue-167-live-v2-)([A-Za-z0-9._-]{1,48})-` +
+		`(unknown|aix|android|darwin|dragonfly|freebsd|hurd|illumos|ios|js|linux|nacl|netbsd|openbsd|plan9|solaris|wasip1|windows|zos)-` +
+		`(\d{4}-\d{2}-\d{2})\.(json|md)$`,
 )
 
+// formalVersionByteSpan returns the [start,end) byte span of the free version
+// segment in a formal report basename, if the name matches the generator shape.
+func formalVersionByteSpan(base string) (start, end int, ok bool) {
+	loc := formalLiveReportBasenameRE.FindStringSubmatchIndex(base)
+	// Indices: 0,1 full; 2,3 g1; 4,5 g2 (version); ...
+	if loc == nil || len(loc) < 6 || loc[4] < 0 || loc[5] < 0 {
+		return 0, 0, false
+	}
+	return loc[4], loc[5], true
+}
+
+// filenameHostTokenRanges returns [start,end) ranges of host token matches in s
+// using the same filename-boundary rules as filenameHostTokenPresent.
+func filenameHostTokenRanges(s, host string) [][2]int {
+	host = strings.TrimSpace(host)
+	if s == "" || host == "" {
+		return nil
+	}
+	re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(` + regexp.QuoteMeta(host) + `)([^A-Za-z0-9]|$)`)
+	ms := re.FindAllStringSubmatchIndex(s, -1)
+	if len(ms) == 0 {
+		return nil
+	}
+	out := make([][2]int, 0, len(ms))
+	for _, m := range ms {
+		// Group 2 is the host body.
+		if len(m) >= 6 && m[4] >= 0 && m[5] >= m[4] {
+			out = append(out, [2]int{m[4], m[5]})
+		}
+	}
+	return out
+}
+
+func rangesOverlap(a0, a1, b0, b1 int) bool {
+	return a0 < b1 && b0 < a1
+}
+
+// filenameIdentityHosts collects generator + extra hostnames for filename token scan.
+func filenameIdentityHosts(extraHostnames ...string) []string {
+	hosts := make([]string, 0, 2+len(extraHostnames))
+	if h, err := os.Hostname(); err == nil {
+		if t := strings.TrimSpace(h); t != "" {
+			hosts = append(hosts, t)
+		}
+	}
+	hosts = append(hosts, extraHostnames...)
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		h = strings.TrimSpace(h)
+		if h == "" || h == "localhost" || len(h) <= 1 {
+			continue
+		}
+		key := strings.ToLower(h)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, h)
+	}
+	return out
+}
+
 // filenameIdentityLeak reports whether a basename publishes a host token.
-// Fixed harness names: never. Formal reports: scan only the version component.
+// Fixed harness names: never.
+// Formal reports (Pro R45): fixed-only collisions (GOOS/date/prefix alone) are
+// exempt, but any host match that overlaps or crosses the free version span fails.
 // All other names: full filename host scan.
 func filenameIdentityLeak(name string, extraHostnames ...string) (bool, string) {
 	base := filepath.Base(name)
 	if isHarnessOwnedEvidenceFilename(base) {
 		return false, ""
 	}
-	if m := formalLiveReportBasenameRE.FindStringSubmatch(base); len(m) == 2 {
-		// Only the free version segment can carry a host; fixed prefix/GOOS/date/ext skipped.
-		if filenameHasLocalIdentityLeak(m[1], extraHostnames...) {
+	if verStart, verEnd, ok := formalVersionByteSpan(base); ok {
+		// Host wholly inside the free version segment (plus path-style name leaks).
+		ver := base[verStart:verEnd]
+		if filenameHasLocalIdentityLeak(ver, extraHostnames...) {
 			return true, ""
+		}
+		// Span-aware (Pro R45): host token on the FULL basename fails iff its match
+		// range intersects the version span — catches cross-boundary hosts such as
+		// build-01-darwin with version=build-01+goos=darwin, or v2-build-01 with
+		// version=build-01 (fixed-only GOOS/date/prefix collisions stay exempt).
+		for _, h := range filenameIdentityHosts(extraHostnames...) {
+			for _, cand := range hostnameCandidates(h) {
+				for _, r := range filenameHostTokenRanges(base, cand) {
+					if rangesOverlap(r[0], r[1], verStart, verEnd) {
+						return true, ""
+					}
+				}
+			}
 		}
 		return false, ""
 	}
@@ -2184,13 +2289,62 @@ func loadLiveIdentity(evDir string) liveIdentity {
 	return id
 }
 
-// fileContentSHA256 returns the hex SHA-256 of file contents (not the path string).
+// readRegularFile refuses non-regular destinations (Lstat) before Open, then
+// re-checks mode on the FD and returns contents (Pro R45 P2: no FIFO hang).
+func readRegularFile(path string) ([]byte, error) {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("symlink")
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	const maxBindingBytes = 1 << 20
+	if st.Size() < 0 || st.Size() > maxBindingBytes {
+		return nil, fmt.Errorf("binding file too large")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	st2, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st2.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	return io.ReadAll(io.LimitReader(f, maxBindingBytes+1))
+}
+
+// fileContentSHA256 returns the hex SHA-256 of a regular file's contents (not the
+// path string). Stat before Open rejects FIFO/device without blocking on Open;
+// a second Stat on the FD rejects a TOCTOU swap before unbounded Copy (Pro R45 P2).
 func fileContentSHA256(path string) (string, error) {
+	// Pre-open Stat (follows one symlink hop for real executables).
+	st, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !st.Mode().IsRegular() {
+		return "", fmt.Errorf("not a regular file")
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = f.Close() }()
+	st2, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !st2.Mode().IsRegular() {
+		return "", fmt.Errorf("not a regular file")
+	}
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return "", err
@@ -2209,17 +2363,10 @@ func ensureGrokExecutableIdentity(evDir, grokExe string) error {
 	if err != nil {
 		return fmt.Errorf("ensureGrokExecutableIdentity: abs: %w", err)
 	}
-	st, err := os.Stat(abs)
-	if err != nil {
-		return fmt.Errorf("ensureGrokExecutableIdentity: stat %s: %w", abs, err)
-	}
-	// Refuse FIFO/device/dir before unbounded hash copy (Codex GraphQL P2).
-	if !st.Mode().IsRegular() {
-		return fmt.Errorf("ensureGrokExecutableIdentity: %s is not a regular file", abs)
-	}
+	// Hash via single open+Stat on the same FD (rejects FIFO/device; Pro R45 P2).
 	sum, err := fileContentSHA256(abs)
 	if err != nil {
-		return fmt.Errorf("ensureGrokExecutableIdentity: hash: %w", err)
+		return fmt.Errorf("ensureGrokExecutableIdentity: hash %s: %w", abs, err)
 	}
 	if err := os.MkdirAll(evDir, 0o700); err != nil {
 		return err
@@ -2229,10 +2376,10 @@ func ensureGrokExecutableIdentity(evDir, grokExe string) error {
 		if st.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("ensureGrokExecutableIdentity: live_grok_executable.json is a symlink")
 		}
-		if st.IsDir() {
-			return fmt.Errorf("ensureGrokExecutableIdentity: live_grok_executable.json is a directory")
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("ensureGrokExecutableIdentity: live_grok_executable.json is not a regular file")
 		}
-		b, err := os.ReadFile(path)
+		b, err := readRegularFile(path)
 		if err != nil {
 			return fmt.Errorf("ensureGrokExecutableIdentity: read existing: %w", err)
 		}
@@ -2298,17 +2445,10 @@ func ensureGrokhooksExecutable(evDir, hooksExe string) error {
 	if err != nil {
 		return fmt.Errorf("ensureGrokhooksExecutable: abs: %w", err)
 	}
-	st, err := os.Stat(abs)
-	if err != nil {
-		return fmt.Errorf("ensureGrokhooksExecutable: stat %s: %w", abs, err)
-	}
-	// Refuse FIFO/device/dir before unbounded hash copy (Codex GraphQL P2).
-	if !st.Mode().IsRegular() {
-		return fmt.Errorf("ensureGrokhooksExecutable: %s is not a regular file", abs)
-	}
+	// Hash via single open+Stat on the same FD (rejects FIFO/device; Pro R45 P2).
 	sum, err := fileContentSHA256(abs)
 	if err != nil {
-		return fmt.Errorf("ensureGrokhooksExecutable: hash: %w", err)
+		return fmt.Errorf("ensureGrokhooksExecutable: hash %s: %w", abs, err)
 	}
 	if err := os.MkdirAll(evDir, 0o700); err != nil {
 		return err
@@ -2318,10 +2458,10 @@ func ensureGrokhooksExecutable(evDir, hooksExe string) error {
 		if st.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("ensureGrokhooksExecutable: live_grokhooks_executable.json is a symlink")
 		}
-		if st.IsDir() {
-			return fmt.Errorf("ensureGrokhooksExecutable: live_grokhooks_executable.json is a directory")
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("ensureGrokhooksExecutable: live_grokhooks_executable.json is not a regular file")
 		}
-		b, err := os.ReadFile(path)
+		b, err := readRegularFile(path)
 		if err != nil {
 			return fmt.Errorf("ensureGrokhooksExecutable: read existing: %w", err)
 		}

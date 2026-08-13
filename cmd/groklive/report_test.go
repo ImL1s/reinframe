@@ -2362,6 +2362,90 @@ func TestScanPrivacy_FormalPrefixHostEmbedStillLeaks(t *testing.T) {
 	if leak, _ := filenameIdentityLeak("issue-167-live-v2-grok-1.0.0-darwin-2026-08-12.json", "build-01"); leak {
 		t.Fatal("canonical formal name must not leak for unrelated host")
 	}
+	// Fixed-only GOOS collision must not false-flag (host=darwin, platform=darwin).
+	if leak, _ := filenameIdentityLeak("issue-167-live-v2-grok-1.0.0-darwin-2026-08-12.json", "darwin"); leak {
+		t.Fatal("fixed GOOS-only host collision must not leak")
+	}
+	// Pro R45: host spans version+GOOS.
+	if leak, _ := filenameIdentityLeak("issue-167-live-v2-build-01-darwin-2026-08-13.json", "build-01-darwin"); !leak {
+		t.Fatal("host build-01-darwin crossing version+GOOS must leak")
+	}
+	// Pro R45: host spans fixed prefix tail + version.
+	if leak, _ := filenameIdentityLeak("issue-167-live-v2-build-01-darwin-2026-08-13.json", "v2-build-01"); !leak {
+		t.Fatal("host v2-build-01 crossing prefix+version must leak")
+	}
+}
+
+// Pro R45 P1: first generateLiveReport must not publish a host-bearing formal basename.
+func TestGenerateLiveReport_RefusesHostBearingFormalName(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() {
+		reinframeCommit, reinframeDirty = prevC, prevD
+	})
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+	cache := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cache, nil }
+
+	dir := t.TempDir()
+	// Live host that joins version fragment + GOOS in the formal basename.
+	liveHost := "build-01-darwin"
+	scanID := "abcdef0123456789abcdef0123456789"
+	path, err := liveScanContextPath(dir, scanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"schema":%q,"scan_context_id":%q,"live_hostname":%q,"at":"t"}`, liveScanContextSchema, scanID, liveHost)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Force GOOS=darwin so version=build-01 + goos forms live host.
+	idBody := fmt.Sprintf(`{"schema":%q,"live_binary_commit":%q,"live_binary_dirty":false,"live_binary_commit_src":"ldflags","live_goos":"darwin","live_goarch":"arm64","scan_context_id":%q,"at":"t"}`,
+		liveIdentitySchema, testFullRev, scanID)
+	if err := os.WriteFile(filepath.Join(dir, "live_identity.json"), []byte(idBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Preflight version becomes the free version segment.
+	pf := fmt.Sprintf(`{"usable":true,"version":"build-01"}`)
+	if err := os.WriteFile(filepath.Join(dir, "preflight.json"), []byte(pf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Minimal scenarios so report can generate (disposition may be MORE_DATA).
+	if err := os.WriteFile(filepath.Join(dir, "scenarios.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := generateLiveReport(dir)
+	if err != nil {
+		t.Fatalf("generateLiveReport: %v", err)
+	}
+	// Must not write the host-bearing name.
+	bad := filepath.Join(dir, "issue-167-live-v2-build-01-darwin-"+time.Now().UTC().Format("2006-01-02")+".json")
+	if _, err := os.Stat(bad); err == nil {
+		t.Fatalf("must not write host-bearing formal name %s", bad)
+	}
+	// Redacted (or unknown-platform) formal name may exist; must not contain full host.
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		n := e.Name()
+		if strings.HasPrefix(n, "issue-167-live-v2-") && strings.HasSuffix(n, ".json") {
+			if strings.Contains(n, "build-01-darwin") {
+				t.Fatalf("written formal name still embeds host: %s", n)
+			}
+			if leak, _ := filenameIdentityLeak(n, liveHost); leak {
+				t.Fatalf("written formal name still leaks for %s: %s", liveHost, n)
+			}
+		}
+	}
+	_ = out
 }
 
 // Pro R40 P2: scan-context-in must not write through a pre-planted private-cache symlink.
@@ -3127,8 +3211,8 @@ func TestSafeWriteFile_ReplacesExistingRegular(t *testing.T) {
 	}
 }
 
-// Codex GraphQL P2: non-regular --grok-executable / --grokhooks must fail
-// before unbounded fileContentSHA256 (FIFO hang).
+// Codex GraphQL P2 / Pro R45 P2: non-regular --grok-executable / --grokhooks and
+// pre-planted binding artifacts must fail before unbounded read/hash.
 func TestEnsureExecutable_RejectsNonRegular(t *testing.T) {
 	dir := t.TempDir()
 	// Directory is non-regular for Mode().IsRegular().
@@ -3144,20 +3228,37 @@ func TestEnsureExecutable_RejectsNonRegular(t *testing.T) {
 		t.Skipf("mkfifo unavailable: %v", err)
 	}
 	// Bound the hang risk: identity check must return without opening the FIFO for copy.
-	done := make(chan error, 2)
+	done := make(chan error, 4)
 	go func() { done <- ensureGrokExecutableIdentity(dir, fifo) }()
 	go func() { done <- ensureGrokhooksExecutable(dir, fifo) }()
-	for i := 0; i < 2; i++ {
+	// Pre-planted binding FIFO at the artifact path (Pro R45 P2).
+	bindGrok := filepath.Join(dir, "live_grok_executable.json")
+	bindHooks := filepath.Join(dir, "live_grokhooks_executable.json")
+	if err := mkfifo(bindGrok); err != nil {
+		t.Fatal(err)
+	}
+	if err := mkfifo(bindHooks); err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { done <- ensureGrokExecutableIdentity(dir, self) }()
+	go func() { done <- ensureGrokhooksExecutable(dir, self) }()
+	for i := 0; i < 4; i++ {
 		select {
 		case err := <-done:
 			if err == nil {
-				t.Fatal("FIFO executable must be refused")
+				t.Fatal("non-regular executable/binding must be refused")
 			}
-			if !strings.Contains(err.Error(), "not a regular file") {
+			if !strings.Contains(err.Error(), "not a regular file") &&
+				!strings.Contains(err.Error(), "regular file") {
+				// hash path may wrap as "hash ...: not a regular file"
 				t.Fatalf("want not a regular file; got %v", err)
 			}
 		case <-time.After(2 * time.Second):
-			t.Fatal("ensure* hung on FIFO — must reject before hash copy")
+			t.Fatal("ensure* hung on FIFO — must reject before hash/read")
 		}
 	}
 }

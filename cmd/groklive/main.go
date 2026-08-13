@@ -158,8 +158,10 @@ func writeJSON(path string, v any) error {
 }
 
 // safeWriteFile writes evidence artifacts without following symlinks (Pro R37 P2).
-// Rejects existing symlink/non-regular destinations; uses same-dir temp + rename
-// so a dangling symlink cannot redirect content outside the evidence tree.
+// Rejects existing symlink/non-regular destinations; uses same-dir temp + rename.
+// When replacing an existing regular file, renames the old file aside first and
+// restores it if the new install fails — never delete-before-rename (Pro R46 P2 /
+// GraphQL: preserve destination until replacement succeeds; Windows-safe).
 func safeWriteFile(path string, data []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -197,7 +199,8 @@ func safeWriteFile(path string, data []byte, perm os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	// Re-check before rename (shrink TOCTOU window).
+	// Re-check before install (shrink TOCTOU window).
+	var bakName string
 	if st, err := os.Lstat(path); err == nil {
 		if st.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("safeWriteFile: destination became symlink %s", path)
@@ -205,17 +208,30 @@ func safeWriteFile(path string, data []byte, perm os.FileMode) error {
 		if !st.Mode().IsRegular() {
 			return fmt.Errorf("safeWriteFile: destination became non-regular %s", path)
 		}
-		// Windows cannot rename over an existing file. After refusing symlink /
-		// non-regular destinations, remove the regular file so the atomic rename
-		// of the temp sibling can succeed on all platforms (Codex GraphQL P2).
-		if err := os.Remove(path); err != nil {
+		// Move old aside (unique name) so Windows rename of tmp→path can succeed
+		// while retaining restore-on-failure (Pro R46 P2).
+		bak, err := os.CreateTemp(dir, ".tmp-bak-*")
+		if err != nil {
+			return err
+		}
+		bakName = bak.Name()
+		_ = bak.Close()
+		_ = os.Remove(bakName) // free the name for Rename
+		if err := os.Rename(path, bakName); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 	if err := os.Rename(tmpName, path); err != nil {
+		// Restore previous artifact if we moved it aside.
+		if bakName != "" {
+			_ = os.Rename(bakName, path)
+		}
 		return err
+	}
+	if bakName != "" {
+		_ = os.Remove(bakName)
 	}
 	ok = true
 	return nil

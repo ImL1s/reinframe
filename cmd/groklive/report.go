@@ -337,8 +337,11 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	report["limitations"] = reasons
 	report["final_disposition"] = disp
 
+	// nameOS is filename-only platform token; must not mutate factual report
+	// provenance goos/live_goos used in JSON + Markdown (Pro R46 P2).
+	nameOS := osName
 	verForName := sanitizeVersion(ver)
-	base := fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, osName, day)
+	base := fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, nameOS, day)
 	// Prospective formal basenames must not publish host identity (Pro R45 P1).
 	// scanPrivacy ran before we knew the output names; refuse host-bearing names
 	// at write time (demote + rewrite to a non-leaking version token).
@@ -353,12 +356,12 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		report["final_disposition"] = disp
 		report["limitations"] = reasons
 		verForName = "redacted"
-		base = fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, osName, day)
+		base = fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, nameOS, day)
 		if leak2, _ := filenameIdentityLeak(base+".json", nameHosts...); leak2 {
 			// Host still collides after redaction (e.g. crosses into GOOS); force
-			// platform token to unknown so fixed spans cannot complete the host.
-			osName = "unknown"
-			base = fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, osName, day)
+			// filename platform token only — JSON/MD provenance stay on osName.
+			nameOS = "unknown"
+			base = fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, nameOS, day)
 			if leak3, _ := filenameIdentityLeak(base+".json", nameHosts...); leak3 {
 				return liveReportOutcome{}, fmt.Errorf("refusing to write host-bearing formal report basename")
 			}
@@ -2289,8 +2292,9 @@ func loadLiveIdentity(evDir string) liveIdentity {
 	return id
 }
 
-// readRegularFile refuses non-regular destinations (Lstat) before Open, then
-// re-checks mode on the FD and returns contents (Pro R45 P2: no FIFO hang).
+// readRegularFile refuses non-regular destinations (Lstat) then opens with
+// O_NONBLOCK (unix) so a FIFO cannot hang Open; re-checks mode on the FD
+// (Pro R45/R46 P2).
 func readRegularFile(path string) ([]byte, error) {
 	st, err := os.Lstat(path)
 	if err != nil {
@@ -2306,7 +2310,7 @@ func readRegularFile(path string) ([]byte, error) {
 	if st.Size() < 0 || st.Size() > maxBindingBytes {
 		return nil, fmt.Errorf("binding file too large")
 	}
-	f, err := os.Open(path)
+	f, err := openFileReadNoBlock(path)
 	if err != nil {
 		return nil, err
 	}
@@ -2322,8 +2326,8 @@ func readRegularFile(path string) ([]byte, error) {
 }
 
 // fileContentSHA256 returns the hex SHA-256 of a regular file's contents (not the
-// path string). Stat before Open rejects FIFO/device without blocking on Open;
-// a second Stat on the FD rejects a TOCTOU swap before unbounded Copy (Pro R45 P2).
+// path string). Stat before open rejects FIFO/device; open uses O_NONBLOCK on
+// unix so a TOCTOU swap to FIFO cannot hang; FD Stat re-validates (Pro R45/R46).
 func fileContentSHA256(path string) (string, error) {
 	// Pre-open Stat (follows one symlink hop for real executables).
 	st, err := os.Stat(path)
@@ -2333,7 +2337,7 @@ func fileContentSHA256(path string) (string, error) {
 	if !st.Mode().IsRegular() {
 		return "", fmt.Errorf("not a regular file")
 	}
-	f, err := os.Open(path)
+	f, err := openFileReadNoBlock(path)
 	if err != nil {
 		return "", err
 	}
@@ -2410,7 +2414,7 @@ func ensureGrokExecutableIdentity(evDir, grokExe string) error {
 
 // loadLiveGrokExecutableOK reports whether live_grok_executable.json is complete.
 func loadLiveGrokExecutableOK(evDir string) (ok bool, reason string) {
-	b, err := os.ReadFile(filepath.Join(evDir, "live_grok_executable.json"))
+	b, err := readRegularFile(filepath.Join(evDir, "live_grok_executable.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, "live_grok_executable.json missing"
@@ -2505,7 +2509,7 @@ func hasHookScenarios(scenarios map[string]ScenarioResult) bool {
 
 // loadLiveGrokhooksExecutableOK reports whether live_grokhooks_executable.json is complete.
 func loadLiveGrokhooksExecutableOK(evDir string) (ok bool, reason string) {
-	b, err := os.ReadFile(filepath.Join(evDir, "live_grokhooks_executable.json"))
+	b, err := readRegularFile(filepath.Join(evDir, "live_grokhooks_executable.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, "live_grokhooks_executable.json missing"

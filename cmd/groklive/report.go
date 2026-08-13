@@ -1152,7 +1152,7 @@ var formalLiveReportBasenameRE = regexp.MustCompile(
 func formalVersionByteSpan(base string) (start, end int, ok bool) {
 	loc := formalLiveReportBasenameRE.FindStringSubmatchIndex(base)
 	// Indices: 0,1 full; 2,3 g1; 4,5 g2 (version); ...
-	if loc == nil || len(loc) < 6 || loc[4] < 0 || loc[5] < 0 {
+	if len(loc) < 6 || loc[4] < 0 || loc[5] < 0 {
 		return 0, 0, false
 	}
 	return loc[4], loc[5], true

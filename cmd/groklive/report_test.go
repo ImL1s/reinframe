@@ -2411,8 +2411,7 @@ func TestGenerateLiveReport_RefusesHostBearingFormalName(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Preflight version becomes the free version segment.
-	pf := fmt.Sprintf(`{"usable":true,"version":"build-01"}`)
-	if err := os.WriteFile(filepath.Join(dir, "preflight.json"), []byte(pf), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "preflight.json"), []byte(`{"usable":true,"version":"build-01"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Minimal scenarios so report can generate (disposition may be MORE_DATA).

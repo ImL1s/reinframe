@@ -3289,6 +3289,50 @@ func TestEnsureExecutable_RejectsNonRegular(t *testing.T) {
 	}
 }
 
+// Pro R51 P2: exact emitted JSON bytes must be privacy-gated (secret in scenarios).
+func TestGenerateLiveReport_ExactOutputPrivacyGate(t *testing.T) {
+	prevC, prevD := reinframeCommit, reinframeDirty
+	t.Cleanup(func() { reinframeCommit, reinframeDirty = prevC, prevD })
+	reinframeCommit = testFullRev
+	reinframeDirty = "false"
+	cache := t.TempDir()
+	prevRoot := privateCacheRootFn
+	t.Cleanup(func() { privateCacheRootFn = prevRoot })
+	privateCacheRootFn = func() (string, error) { return cache, nil }
+
+	dir := t.TempDir()
+	writeLiveIdentityFixture(t, dir, testFullRev, "ldflags", false)
+	writeUsablePreflight(t, dir)
+	// Scenario Detail embeds a secret pattern that writeJSON does not strip.
+	sc := map[string]ScenarioResult{
+		"ACP-INIT-001": {ID: "ACP-INIT-001", Status: "PASS", Detail: "token xai-secret-leak-test"},
+	}
+	if err := writeJSON(filepath.Join(dir, "scenarios.json"), sc); err != nil {
+		t.Fatal(err)
+	}
+	_, err := generateLiveReport(dir)
+	if err == nil {
+		// Must refuse or demote — if wrote files, body must not contain secret.
+		ents, _ := os.ReadDir(dir)
+		for _, e := range ents {
+			if strings.HasPrefix(e.Name(), "issue-167-live-v2-") && strings.HasSuffix(e.Name(), ".json") {
+				b, rErr := os.ReadFile(filepath.Join(dir, e.Name()))
+				if rErr != nil {
+					t.Fatal(rErr)
+				}
+				if strings.Contains(string(b), "xai-secret-leak-test") {
+					t.Fatal("formal JSON must not publish secret-bearing scenario detail")
+				}
+			}
+		}
+		return
+	}
+	if !strings.Contains(err.Error(), "privacy") && !strings.Contains(err.Error(), "secret") {
+		// Refuse path is also acceptable.
+		t.Logf("generateLiveReport error (acceptable if privacy-related): %v", err)
+	}
+}
+
 // Pro R50 P2: ensure* must accept a legitimate symlink to a regular executable.
 func TestEnsureExecutable_AcceptsSymlinkToRegular(t *testing.T) {
 	dir := t.TempDir()

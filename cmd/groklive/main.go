@@ -129,32 +129,41 @@ func fail(err error) {
 	os.Exit(1)
 }
 
-func writeJSON(path string, v any) error {
+// serializeJSONEvidence returns the redacted on-disk form of v (same bytes writeJSON emits).
+func serializeJSONEvidence(v any) ([]byte, error) {
 	// Normalize typed maps/structs/slices into map[string]any / []any via JSON
 	// (Pro R29 P1): map[string]ScenarioResult and []string otherwise bypass the walker.
 	raw, err := json.Marshal(v)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var normalized any
 	if err := dec.Decode(&normalized); err != nil {
-		return err
+		return nil, err
 	}
 	// Field-aware identity redaction: structured enum/platform keys keep values;
 	// free-text strings always get path+hostname redact (incl. unsafe hostnames).
 	normalized = redactIdentityInValue(normalized)
 	b, err := json.MarshalIndent(normalized, "", "  ")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Path/account redaction only on serialized form (no whole-document hostname pass).
 	s := redactPathsAndAccounts(string(b))
 	if err := validatePostRedactPlatformFields(s); err != nil {
+		return nil, err
+	}
+	return []byte(s), nil
+}
+
+func writeJSON(path string, v any) error {
+	b, err := serializeJSONEvidence(v)
+	if err != nil {
 		return err
 	}
-	return safeWriteFile(path, []byte(s), 0o600)
+	return safeWriteFile(path, b, 0o600)
 }
 
 // safeWriteFile writes evidence artifacts without following symlinks (Pro R37 P2).

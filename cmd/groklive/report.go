@@ -371,13 +371,52 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	mdPath := filepath.Join(evDir, base+".md")
 	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v2.schema.json")
 
-	// Write JSON first; only then MD/schema once disk JSON is schema-valid.
-	if err := writeJSON(jsonPath, report); err != nil {
-		return liveReportOutcome{}, err
-	}
-	onDisk, err := os.ReadFile(jsonPath)
+	// Exact-output privacy gate (Pro R51 P2): privacy-scan the precise bytes that
+	// will be written, not only earlier independent evidence reads.
+	jsonBody, err := serializeJSONEvidence(report)
 	if err != nil {
 		return liveReportOutcome{}, err
+	}
+	md := redactLocalIdentity(renderMD(report, disp, ack, ver, osName, reasons, scenarios))
+	if leak, why := emittedArtifactPrivacyLeak(filepath.Base(jsonPath), jsonBody, nameHosts...); leak {
+		reasons = append(reasons, "emitted JSON privacy leak: "+why)
+		if disp == "GO" || disp == "LIMITED_GO" {
+			disp = "NO_GO"
+		}
+		disp = demoteFloor(floor, disp)
+		report["final_disposition"] = disp
+		report["limitations"] = reasons
+		jsonBody, err = serializeJSONEvidence(report)
+		if err != nil {
+			return liveReportOutcome{}, err
+		}
+		md = redactLocalIdentity(renderMD(report, disp, ack, ver, osName, reasons, scenarios))
+		if leak2, why2 := emittedArtifactPrivacyLeak(filepath.Base(jsonPath), jsonBody, nameHosts...); leak2 {
+			return liveReportOutcome{}, fmt.Errorf("refusing to write privacy-leaking formal JSON: %s", why2)
+		}
+	}
+	if leak, why := emittedArtifactPrivacyLeak(filepath.Base(mdPath), []byte(md), nameHosts...); leak {
+		// MD may embed free-text; demote and refuse rather than publish.
+		reasons = append(reasons, "emitted Markdown privacy leak: "+why)
+		if disp == "GO" || disp == "LIMITED_GO" {
+			disp = "NO_GO"
+		}
+		return liveReportOutcome{}, fmt.Errorf("refusing to write privacy-leaking formal Markdown: %s", why)
+	}
+
+	// Write JSON first; only then MD/schema once disk JSON is schema-valid.
+	if err := safeWriteFile(jsonPath, jsonBody, 0o600); err != nil {
+		return liveReportOutcome{}, err
+	}
+	onDisk, err := readRegularFile(jsonPath)
+	if err != nil {
+		_ = os.Remove(jsonPath)
+		return liveReportOutcome{}, err
+	}
+	// Ensure on-disk bytes match the gated emission (no TOCTOU rewrite).
+	if !bytes.Equal(onDisk, jsonBody) {
+		_ = os.Remove(jsonPath)
+		return liveReportOutcome{}, fmt.Errorf("written report bytes differ from privacy-gated emission")
 	}
 	var diskReport map[string]any
 	if err := json.Unmarshal(onDisk, &diskReport); err != nil {
@@ -389,7 +428,6 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		return liveReportOutcome{}, fmt.Errorf("written report fails committed schema: %w", err)
 	}
 
-	md := redactLocalIdentity(renderMD(report, disp, ack, ver, osName, reasons, scenarios))
 	// Formal Markdown + schema are evidence destinations: never follow symlinks
 	// (Pro R38 P2: complete the R37 safe-write contract).
 	if err := safeWriteFile(mdPath, []byte(md), 0o600); err != nil {
@@ -919,17 +957,25 @@ func scanPrivacy(evDir string) map[string]any {
 			continue
 		}
 		// Bounded nonblocking open + FD recheck so a regular→FIFO TOCTOU cannot hang
-		// the privacy scan (Pro R47 P2). LimitReader is a hard cap.
+		// the privacy scan (Pro R47 P2). SameFile binds Lstat→open (Pro R51).
+		// LimitReader is a hard cap.
 		f, err := openFileReadNoBlock(full)
 		if err != nil {
 			skipped++
 			fails = append(fails, "unreadable:"+e.Name())
 			continue
 		}
-		if st2, sErr := f.Stat(); sErr != nil || !st2.Mode().IsRegular() {
+		st2, sErr := f.Stat()
+		if sErr != nil || !st2.Mode().IsRegular() {
 			_ = f.Close()
 			skipped++
 			fails = append(fails, "non_regular:"+e.Name())
+			continue
+		}
+		if !os.SameFile(fi, st2) {
+			_ = f.Close()
+			skipped++
+			fails = append(fails, "identity_changed:"+e.Name())
 			continue
 		}
 		lr := io.LimitReader(f, int64(maxPrivacyFileBytes)+1)
@@ -1218,6 +1264,31 @@ func filenameIdentityHosts(extraHostnames ...string) []string {
 		out = append(out, h)
 	}
 	return out
+}
+
+// emittedArtifactPrivacyLeak reports whether a prospective formal-report basename
+// or body would publish private material (Pro R51 exact-output privacy gate).
+func emittedArtifactPrivacyLeak(name string, body []byte, extraHostnames ...string) (bool, string) {
+	if leak, _ := filenameIdentityLeak(name, extraHostnames...); leak {
+		return true, "filename_identity"
+	}
+	if contentHasPrivateReasoning(body) {
+		return true, "private_reasoning"
+	}
+	s := string(body)
+	if contentHasLocalIdentityLeak(s, extraHostnames...) {
+		return true, "local_identity"
+	}
+	for _, pat := range []string{"sk-", "xai-", "Bearer ", "eyJ"} {
+		if strings.Contains(s, pat) {
+			// Allow redacted placeholders.
+			if strings.Contains(s, "[REDACTED]") && pat != "eyJ" {
+				continue
+			}
+			return true, "secret_pattern:" + pat
+		}
+	}
+	return false, ""
 }
 
 // filenameIdentityLeak reports whether a basename publishes a host token.

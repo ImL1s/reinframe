@@ -1898,6 +1898,7 @@ func writeScanContextOutFile(evAbs string, b []byte) error {
 // exportLiveScanContextOut copies the validated private scan context for this
 // campaign to --scan-context-out when set (Pro R30 P2: resume existing identity).
 // Fail if the user requested export but the private file cannot be read or written.
+// Single-read bind (Pro R49 P2): parse, ID-check, and export the same byte slice.
 func exportLiveScanContextOut(evDir, scanContextID string) error {
 	out := strings.TrimSpace(scanContextOutPath)
 	if out == "" {
@@ -1907,33 +1908,25 @@ func exportLiveScanContextOut(evDir, scanContextID string) error {
 	if scanContextID == "" {
 		return fmt.Errorf("export scan-context-out: empty scan_context_id")
 	}
+	// Ensure private context exists (may import --scan-context-in once).
+	if h, ok, why := loadLiveScanContext(evDir); !ok || strings.TrimSpace(h) == "" {
+		return fmt.Errorf("export scan-context-out: private context: %s", why)
+	}
 	path, err := liveScanContextPath(evDir, scanContextID)
 	if err != nil {
 		return fmt.Errorf("export scan-context-out path: %w", err)
 	}
-	doc, ok, why := loadLiveScanContextFile(path)
-	if !ok {
-		// Allow external --scan-context-in already imported into cache by loadLiveScanContext.
-		// Re-resolve via load after optional import side effects.
-		if h, ok2, why2 := loadLiveScanContext(evDir); !ok2 || h == "" {
-			return fmt.Errorf("export scan-context-out: private context: %s; reload: %s", why, why2)
-		}
-		// loadLiveScanContext may have imported; re-read private path.
-		doc, ok, why = loadLiveScanContextFile(path)
-		if !ok {
-			return fmt.Errorf("export scan-context-out: private context after import: %s", why)
-		}
-	}
-	if doc.ID != scanContextID {
-		return fmt.Errorf("export scan-context-out: scan_context_id mismatch")
-	}
+	// One open → one byte slice for parse, ID check, and portable export.
 	b, err := readRegularFile(path)
 	if err != nil {
 		return fmt.Errorf("export scan-context-out read: %w", err)
 	}
-	// Re-validate bytes before shipping (symlink/malformed already handled by load).
-	if _, ok2, why2 := parseLiveScanContextBytes(b); !ok2 {
-		return fmt.Errorf("export scan-context-out reparse: %s", why2)
+	doc, ok, why := parseLiveScanContextBytes(b)
+	if !ok {
+		return fmt.Errorf("export scan-context-out parse: %s", why)
+	}
+	if doc.ID != scanContextID {
+		return fmt.Errorf("export scan-context-out: scan_context_id mismatch")
 	}
 	evAbs := evDir
 	if a, e := filepath.Abs(evDir); e == nil {
@@ -2299,26 +2292,29 @@ func loadLiveIdentity(evDir string) liveIdentity {
 	return id
 }
 
-// readRegularFile refuses non-regular destinations (Lstat) then opens with
-// O_NONBLOCK (unix) so a FIFO cannot hang Open; re-checks mode on the FD
-// (Pro R45/R46 P2).
+// readRegularFile opens with no-follow/nonblocking semantics (unix), validates
+// the opened FD is a regular file within the size cap, and returns contents.
+// Pre-open Lstat is optional hardening; SameFile binds it to the opened object
+// so a path swap cannot accept different regular-file bytes (Pro R49 P2).
 func readRegularFile(path string) ([]byte, error) {
-	st, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if st.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("symlink")
-	}
-	if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("not a regular file")
-	}
 	const maxBindingBytes = 1 << 20
-	if st.Size() < 0 || st.Size() > maxBindingBytes {
-		return nil, fmt.Errorf("binding file too large")
+	var pre os.FileInfo
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("symlink")
+		}
+		if !st.Mode().IsRegular() {
+			return nil, fmt.Errorf("not a regular file")
+		}
+		pre = st
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	} else {
+		return nil, err
 	}
 	f, err := openFileReadNoBlock(path)
 	if err != nil {
+		// O_NOFOLLOW on a symlink surfaces ELOOP / "too many levels" etc.
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
@@ -2329,7 +2325,20 @@ func readRegularFile(path string) ([]byte, error) {
 	if !st2.Mode().IsRegular() {
 		return nil, fmt.Errorf("not a regular file")
 	}
-	return io.ReadAll(io.LimitReader(f, maxBindingBytes+1))
+	if pre != nil && !os.SameFile(pre, st2) {
+		return nil, fmt.Errorf("file identity changed between lstat and open")
+	}
+	if st2.Size() < 0 || st2.Size() > maxBindingBytes {
+		return nil, fmt.Errorf("binding file too large")
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxBindingBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > maxBindingBytes {
+		return nil, fmt.Errorf("binding file too large")
+	}
+	return b, nil
 }
 
 // fileContentSHA256 returns the hex SHA-256 of a regular file's contents (not the

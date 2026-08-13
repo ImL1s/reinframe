@@ -7,8 +7,9 @@ import (
 	"syscall"
 )
 
-// openFileReadNoBlock opens path for reading with O_NONBLOCK so a FIFO does not
-// hang the process in Open before mode validation (Pro R46 P2).
+// openFileReadNoBlock opens path for reading with O_NONBLOCK|O_NOFOLLOW so a
+// FIFO does not hang Open and a symlink planted after Lstat cannot redirect
+// the open (Pro R46/R49 P2).
 func openFileReadNoBlock(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 }

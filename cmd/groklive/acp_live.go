@@ -64,7 +64,9 @@ func runACP(args []string) {
 	})
 	if err != nil {
 		set("ACP-INIT-001", "FAIL", "start: "+err.Error(), nil)
-		_ = saveScenarioMap(evDir, scenarios)
+		if sErr := saveScenarioMap(evDir, scenarios); sErr != nil {
+			fmt.Fprintln(os.Stderr, "groklive acp: save scenarios: "+sErr.Error())
+		}
 		// Post-start fail path: reverify binding before process exit (Pro R41 P2).
 		// fail() uses os.Exit and would skip deferred Close/reverify.
 		if reErr := ensureGrokExecutableIdentity(evDir, grok); reErr != nil {
@@ -91,7 +93,9 @@ func runACP(args []string) {
 	initCancel()
 	if err != nil {
 		set("ACP-INIT-001", "FAIL", err.Error(), nil)
-		_ = saveScenarioMap(evDir, scenarios)
+		if sErr := saveScenarioMap(evDir, scenarios); sErr != nil {
+			fmt.Fprintln(os.Stderr, "groklive acp: save scenarios: "+sErr.Error())
+		}
 		exitFail(err)
 	}
 	pv, _ := initRes["protocolVersion"].(float64)
@@ -321,14 +325,18 @@ func runACP(args []string) {
 		fail(fmt.Errorf("groklive acp: live_grok_executable post-probe: %w", err))
 	}
 
-	_ = saveScenarioMap(evDir, scenarios)
+	if err := saveScenarioMap(evDir, scenarios); err != nil {
+		fail(fmt.Errorf("groklive acp: save scenarios: %w", err))
+	}
 	// Digest always recomputed from post-handshake foundation (nil wire caps → empty dig would fail closed).
-	_ = writeJSON(filepath.Join(evDir, "acp_manifest.json"), map[string]any{
+	if err := writeJSON(filepath.Join(evDir, "acp_manifest.json"), map[string]any{
 		"pre_handshake":  pre,
 		"post_handshake": post,
 		"auth_methods":   neg.AuthMethods,
 		"caps_digest":    adapter.CapsDigestFromFoundation(post),
-	})
+	}); err != nil {
+		fail(fmt.Errorf("groklive acp: write acp_manifest: %w", err))
+	}
 	fmt.Println(`{"ok":true,"action":"acp","scenarios":` + fmt.Sprintf("%d", len(scenarios)) + `}`)
 }
 

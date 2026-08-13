@@ -100,7 +100,7 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	preflightPresent := false
 	preflightValid := false
 	preflightUsable := false
-	if b, err := os.ReadFile(filepath.Join(evDir, "preflight.json")); err == nil {
+	if b, err := readRegularFile(filepath.Join(evDir, "preflight.json")); err == nil {
 		preflightPresent = true
 		var pf map[string]any
 		if json.Unmarshal(b, &pf) != nil {
@@ -918,11 +918,18 @@ func scanPrivacy(evDir string) map[string]any {
 			fails = append(fails, "file_count_cap:"+e.Name())
 			continue
 		}
-		// Bounded read: Stat size already checked; LimitReader is a hard cap.
-		f, err := os.Open(full)
+		// Bounded nonblocking open + FD recheck so a regular→FIFO TOCTOU cannot hang
+		// the privacy scan (Pro R47 P2). LimitReader is a hard cap.
+		f, err := openFileReadNoBlock(full)
 		if err != nil {
 			skipped++
 			fails = append(fails, "unreadable:"+e.Name())
+			continue
+		}
+		if st2, sErr := f.Stat(); sErr != nil || !st2.Mode().IsRegular() {
+			_ = f.Close()
+			skipped++
+			fails = append(fails, "non_regular:"+e.Name())
 			continue
 		}
 		lr := io.LimitReader(f, int64(maxPrivacyFileBytes)+1)
@@ -2278,7 +2285,7 @@ func parseLiveIdentityJSON(b []byte) (liveIdentity, error) {
 // loadLiveIdentity loads and validates live_identity.json. On any failure OK=false and
 // Err is set — never substitutes the report-generator identity.
 func loadLiveIdentity(evDir string) liveIdentity {
-	b, err := os.ReadFile(filepath.Join(evDir, "live_identity.json"))
+	b, err := readRegularFile(filepath.Join(evDir, "live_identity.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return liveIdentity{Err: "live_identity.json missing"}

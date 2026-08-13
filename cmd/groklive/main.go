@@ -224,14 +224,19 @@ func safeWriteFile(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	if err := os.Rename(tmpName, path); err != nil {
-		// Restore previous artifact if we moved it aside.
+		// Restore previous artifact if we moved it aside; surface restore failure too.
 		if bakName != "" {
-			_ = os.Rename(bakName, path)
+			if rerr := os.Rename(bakName, path); rerr != nil {
+				return fmt.Errorf("safeWriteFile: install failed (%v) and restore failed (%w); previous at %s", err, rerr, bakName)
+			}
 		}
 		return err
 	}
 	if bakName != "" {
-		_ = os.Remove(bakName)
+		if err := os.Remove(bakName); err != nil {
+			// New file is installed; leftover bak is a hygiene failure, not silent OK.
+			return fmt.Errorf("safeWriteFile: installed %s but failed to remove backup %s: %w", path, bakName, err)
+		}
 	}
 	ok = true
 	return nil
@@ -282,7 +287,8 @@ func redactIdentityInValue(v any) any {
 
 func loadScenarioMap(dir string) map[string]ScenarioResult {
 	path := filepath.Join(dir, "scenarios.json")
-	b, err := os.ReadFile(path)
+	// Bound regular-file read so a FIFO/device cannot hang the phase (Pro R47 P2).
+	b, err := readRegularFile(path)
 	if err != nil {
 		return map[string]ScenarioResult{}
 	}

@@ -355,7 +355,9 @@ If the tool is denied, acknowledge and stop. Do not work around the denial.`,
 		fail(fmt.Errorf("groklive hooks: live_grokhooks_executable post-probe: %w", err))
 	}
 
-	_ = saveScenarioMap(evDir, scenarios)
+	if err := saveScenarioMap(evDir, scenarios); err != nil {
+		fail(fmt.Errorf("groklive hooks: save scenarios: %w", err))
+	}
 	fmt.Println(`{"ok":true,"action":"hooks"}`)
 }
 

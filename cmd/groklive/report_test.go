@@ -3289,6 +3289,41 @@ func TestEnsureExecutable_RejectsNonRegular(t *testing.T) {
 	}
 }
 
+// Pro R47 P2: evidence control files must refuse FIFO without hang (scenarios / identity).
+func TestEvidenceLoaders_RejectFIFO(t *testing.T) {
+	dir := t.TempDir()
+	sc := filepath.Join(dir, "scenarios.json")
+	id := filepath.Join(dir, "live_identity.json")
+	if err := mkfifo(sc); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	if err := mkfifo(id); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{}, 2)
+	go func() {
+		m := loadScenarioMap(dir)
+		if len(m) != 0 {
+			t.Error("FIFO scenarios must load as empty map")
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		li := loadLiveIdentity(dir)
+		if li.OK {
+			t.Error("FIFO live_identity must not OK")
+		}
+		done <- struct{}{}
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("evidence loader hung on FIFO")
+		}
+	}
+}
+
 // Pro R46 P2: safeWriteFile must restore previous content if install of new bytes fails.
 func TestSafeWriteFile_PreservesOldOnRenameFailure(t *testing.T) {
 	dir := t.TempDir()

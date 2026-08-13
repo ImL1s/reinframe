@@ -4,7 +4,7 @@
 
 Reinframe is a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go, powered by SQLite WAL state persistence and JSON-RPC 2.0 / NDJSON protocol interfaces.
 
-Working directory: /Users/iml1s/Documents/mine/reinframe
+Working directory: /Users/[USER]/Documents/mine/reinframe
 Integrity mode: development
 
 ## Requirements
@@ -32,7 +32,7 @@ Define all 22 canonical event and data structures (AgentSession, TaskEnvelope, A
 
 Reinframe is a cross-platform (Windows, macOS, Linux) Anti-Tunnel Supervision Harness for AI coding agents written in Go, powered by SQLite WAL state persistence and JSON-RPC 2.0 / NDJSON protocol interfaces.
 
-Working directory: /Users/iml1s/Documents/mine/reinframe
+Working directory: /Users/[USER]/Documents/mine/reinframe
 Integrity mode: development
 
 ## Requirements
@@ -66,7 +66,7 @@ Build SQLite WAL-backed event store (pkg/state/store.go), schema migration engin
 
 修復 reinframe 專案中由兩份獨立審計（4-Reviewer 內部審查 + GPT 5.6 Pro 外部審計）發現的全部 P0 Blocker 與 P1 問題。目標是將專案從「初期 foundation」提升至「架構正確、可驗證、可繼續實作後續 Issue」的狀態。
 
-Working directory: /Users/iml1s/Documents/mine/reinframe
+Working directory: /Users/[USER]/Documents/mine/reinframe
 Integrity mode: development
 
 ## Reference Material

@@ -230,19 +230,19 @@ func scenarioResultSchema() map[string]any {
 		"additionalProperties": false,
 		"required":             []string{"id", "status"},
 		"properties": map[string]any{
-			"id":                  map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-			"status":              map[string]any{"enum": []string{"PASS", "FAIL", "NOT_RUN", "INCONCLUSIVE"}},
-			"detail":              map[string]any{"type": "string", "maxLength": 2000},
-			"tool_name":           map[string]any{"type": "string", "maxLength": 256},
-			"ack_layer":           map[string]any{"type": "string", "maxLength": 64},
-			"host_outcome":        map[string]any{"type": "string", "maxLength": 256},
-			"at":                  map[string]any{"type": "string", "maxLength": 64},
-			"deny_direct_proof":   map[string]any{"type": "boolean"},
-			"fail_open_invoked":   map[string]any{"type": "boolean"},
-			"session_correlated":  map[string]any{"type": "boolean"},
-			"intervention_id":     map[string]any{"type": "string", "maxLength": 256},
-			"target_session_id":   map[string]any{"type": "string", "maxLength": 256},
-			"dedup_suppressed":    map[string]any{"type": "boolean"},
+			"id":                 map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+			"status":             map[string]any{"enum": []string{"PASS", "FAIL", "NOT_RUN", "INCONCLUSIVE"}},
+			"detail":             map[string]any{"type": "string", "maxLength": 2000},
+			"tool_name":          map[string]any{"type": "string", "maxLength": 256},
+			"ack_layer":          map[string]any{"type": "string", "maxLength": 64},
+			"host_outcome":       map[string]any{"type": "string", "maxLength": 256},
+			"at":                 map[string]any{"type": "string", "maxLength": 64},
+			"deny_direct_proof":  map[string]any{"type": "boolean"},
+			"fail_open_invoked":  map[string]any{"type": "boolean"},
+			"session_correlated": map[string]any{"type": "boolean"},
+			"intervention_id":    map[string]any{"type": "string", "maxLength": 256},
+			"target_session_id":  map[string]any{"type": "string", "maxLength": 256},
+			"dedup_suppressed":   map[string]any{"type": "boolean"},
 		},
 	}
 }
@@ -317,20 +317,32 @@ func closedSchemaV2() map[string]any {
 		"properties": map[string]any{
 			"schema_version": map[string]any{"const": LiveControlSchemaV2},
 			"provenance": closedObj(map[string]any{
-				"issue":                 map[string]any{"type": "integer"},
-				"generated_at":          map[string]any{"type": "string"},
-				"goos":                  map[string]any{"type": "string"},
-				"goarch":                map[string]any{"type": "string"},
-				"grok_version":          map[string]any{"type": "string"},
-				"grok_version_full":     map[string]any{"type": "string"},
-				"reinframe_commit":      map[string]any{"type": "string"},
-				"reinframe_dirty":       map[string]any{"type": "boolean"},
-				"reinframe_commit_src":  map[string]any{"type": "string"},
-				"starting_main_sha":     map[string]any{"type": "string"},
-				"main_tip_note":         map[string]any{"type": "string"},
-				"harness":               map[string]any{"type": "string"},
-				"evidence_binding_note": map[string]any{"type": "string"},
-				"schema_note":           map[string]any{"type": "string"},
+				"issue":                       map[string]any{"type": "integer"},
+				"generated_at":                map[string]any{"type": "string"},
+				"goos":                        map[string]any{"type": "string"},
+				"goarch":                      map[string]any{"type": "string"},
+				"grok_version":                map[string]any{"type": "string"},
+				"grok_version_full":           map[string]any{"type": "string"},
+				"reinframe_commit":            map[string]any{"type": "string"},
+				"reinframe_dirty":             map[string]any{"type": "boolean"},
+				"reinframe_commit_src":        map[string]any{"type": "string"},
+				"starting_main_sha":           map[string]any{"type": "string"},
+				"live_binary_commit":          map[string]any{"type": "string"},
+				"live_binary_dirty":           map[string]any{"type": "boolean"},
+				"live_binary_commit_src":      map[string]any{"type": "string"},
+				"report_generator_commit":     map[string]any{"type": "string"},
+				"report_generator_dirty":      map[string]any{"type": "boolean"},
+				"report_generator_commit_src": map[string]any{"type": "string"},
+				// Live vs report-generator platform (Pro R10/R11; Pro R38 P2 schema parity).
+				"live_goos":               map[string]any{"type": "string"},
+				"live_goarch":             map[string]any{"type": "string"},
+				"report_generator_goos":   map[string]any{"type": "string"},
+				"report_generator_goarch": map[string]any{"type": "string"},
+				"derived":                 map[string]any{"type": "boolean"},
+				"main_tip_note":           map[string]any{"type": "string"},
+				"harness":                 map[string]any{"type": "string"},
+				"evidence_binding_note":   map[string]any{"type": "string"},
+				"schema_note":             map[string]any{"type": "string"},
 			}, []string{"issue", "generated_at", "goos", "harness"}),
 			"entry_gates": closedObj(map[string]any{
 				"live_flag_required": map[string]any{"type": "boolean"},
@@ -391,14 +403,14 @@ func closedSchemaV2() map[string]any {
 				"type":                 "object",
 				"additionalProperties": false,
 				"properties": map[string]any{
-					"method":                    map[string]any{"type": "string"},
-					"complete":                  map[string]any{"type": "boolean"},
-					"files_seen":                map[string]any{"type": "integer"},
-					"files_scanned":             map[string]any{"type": "integer"},
-					"files_skipped":             map[string]any{"type": "integer"},
-					"bytes_scanned":             map[string]any{"type": "integer"},
-					"failure_classes":           map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-					"auth_json_read":            map[string]any{"type": "boolean"},
+					"method":          map[string]any{"type": "string"},
+					"complete":        map[string]any{"type": "boolean"},
+					"files_seen":      map[string]any{"type": "integer"},
+					"files_scanned":   map[string]any{"type": "integer"},
+					"files_skipped":   map[string]any{"type": "integer"},
+					"bytes_scanned":   map[string]any{"type": "integer"},
+					"failure_classes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"auth_json_read":  map[string]any{"type": "boolean"},
 					"auth_json_path_seen_in_honesty_notes_only": map[string]any{"type": "boolean"},
 					"auth_json_path_leak_suspected":             map[string]any{"type": "boolean"},
 					"token_fields_in_auth_envelope":             map[string]any{"type": "boolean"},
@@ -455,7 +467,13 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 		provAllowed := map[string]struct{}{
 			"issue": {}, "generated_at": {}, "goos": {}, "goarch": {}, "grok_version": {},
 			"grok_version_full": {}, "reinframe_commit": {}, "reinframe_dirty": {}, "reinframe_commit_src": {},
-			"starting_main_sha": {},
+			"starting_main_sha":  {},
+			"live_binary_commit": {}, "live_binary_dirty": {}, "live_binary_commit_src": {},
+			"report_generator_commit": {}, "report_generator_dirty": {}, "report_generator_commit_src": {},
+			// Live vs report-generator platform bind (Pro R10/R11; schema v2 + emit path).
+			"live_goos": {}, "live_goarch": {},
+			"report_generator_goos": {}, "report_generator_goarch": {},
+			"derived":       {},
 			"main_tip_note": {}, "harness": {}, "evidence_binding_note": {}, "schema_note": {},
 		}
 		for k := range prov {
@@ -540,10 +558,11 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 			}
 		}
 	}
-	// Recompute disposition and require match.
+	// Scenario ceiling from evaluateDisposition: final may only demote
+	// (privacy / live identity / executable binds), never promote (Pro R22 P2).
 	want, _ := evaluateDisposition(scenarios)
-	if disp != want {
-		errs = append(errs, "final_disposition mismatches evaluateDisposition want="+want+" got="+disp)
+	if dispositionRank(disp) > dispositionRank(want) {
+		errs = append(errs, "final_disposition above scenario ceiling want<="+want+" got="+disp)
 	}
 	// GO forbidden without correlation proofs.
 	if disp == "GO" {
@@ -568,4 +587,20 @@ func validateReportV2Basics(report map[string]any, scenarios map[string]Scenario
 		}
 	}
 	return errs
+}
+
+// dispositionRank is higher for better outcomes (GO best). Used for monotonic checks.
+func dispositionRank(d string) int {
+	switch d {
+	case "GO":
+		return 3
+	case "LIMITED_GO":
+		return 2
+	case "MORE_DATA":
+		return 1
+	case "NO_GO":
+		return 0
+	default:
+		return -1
+	}
 }

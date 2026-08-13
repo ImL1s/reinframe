@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -155,5 +156,269 @@ func TestValidateEvidencePrivacyRejects_CaseFoldedIdentityKeys(t *testing.T) {
 		if err := validateEvidencePrivacyRejects("scenario", payload); err == nil {
 			t.Fatalf("must reject case/type identity leak: %#v", payload)
 		}
+	}
+}
+
+func TestRedactLocalIdentity_HomeAndHostname(t *testing.T) {
+	t.Parallel()
+	in := `/Users/alice/.local/bin/grok on host-test.local path=/var/folders/9w/abc/project`
+	out := redactLocalIdentity(in)
+	if strings.Contains(out, "/Users/alice") || strings.Contains(out, "host-test.local") || strings.Contains(out, "/var/folders/") {
+		t.Fatalf("local identity leaked: %s", out)
+	}
+	if !strings.Contains(out, "[HOME]") || !strings.Contains(out, "[HOSTNAME]") || !strings.Contains(out, "[TMP:") {
+		t.Fatalf("expected redaction placeholders: %s", out)
+	}
+}
+
+func TestContentHasLocalIdentityLeak(t *testing.T) {
+	t.Parallel()
+	if !contentHasLocalIdentityLeak(`binary=/Users/foo/bar`) {
+		t.Fatal("want leak for /Users path")
+	}
+	if contentHasLocalIdentityLeak(`binary=grok path_sha256=abc hostname=[HOSTNAME]`) {
+		t.Fatal("redacted text must not leak")
+	}
+	// Mixed: one good placeholder must not mask a residual raw /tmp path.
+	if !contentHasLocalIdentityLeak(`ok=[TMP:abcd1234ef567890] bad=/tmp/alice/project`) {
+		t.Fatal("raw /tmp path must leak even when a [TMP:…] placeholder is present")
+	}
+	if contentHasLocalIdentityLeak(`only=[TMP:abcd1234ef567890] and /tmp alone`) {
+		t.Fatal("placeholder-only (and bare /tmp word without path segment) must not leak")
+	}
+	// Windows user + temp (raw and JSON-escaped).
+	if !contentHasLocalIdentityLeak(`C:\Users\Alice\project`) {
+		t.Fatal("want leak for Windows Users path")
+	}
+	if !contentHasLocalIdentityLeak(`C:\\Users\\Alice\\project`) {
+		t.Fatal("want leak for JSON-escaped Windows Users path")
+	}
+	if !contentHasLocalIdentityLeak(`C:\Users\Alice\AppData\Local\Temp\x`) {
+		t.Fatal("want leak for Windows Temp path")
+	}
+	if !contentHasLocalIdentityLeak(`C:\\Users\\Alice\\AppData\\Local\\Temp\\x`) {
+		t.Fatal("want leak for JSON-escaped Windows Temp path")
+	}
+}
+
+func TestRedactLsOwnership_StripsOwnerGroup(t *testing.T) {
+	t.Parallel()
+	in := "lrwxr-xr-x@ 1 alice  staff  27 Jun 18 00:14 [HOME]/.local/bin/grok"
+	out := redactLsOwnership(in)
+	if strings.Contains(out, "alice") || strings.Contains(out, "staff") {
+		t.Fatalf("owner/group leaked: %s", out)
+	}
+	if !strings.Contains(out, "[USER]") || !strings.Contains(out, "[GROUP]") {
+		t.Fatalf("expected placeholders: %s", out)
+	}
+	// Full redactLocalIdentity also covers env USER and ls.
+	out2 := redactLocalIdentity(in)
+	if strings.Contains(out2, "alice") {
+		t.Fatalf("redactLocalIdentity left owner: %s", out2)
+	}
+}
+
+func TestRedactLocalIdentity_RuntimeHostname(t *testing.T) {
+	t.Parallel()
+	h, err := os.Hostname()
+	if err != nil || strings.TrimSpace(h) == "" || h == "localhost" {
+		t.Skip("no usable runtime hostname")
+	}
+	in := "Darwin " + h + " 25.4.0 Darwin Kernel"
+	out := redactLocalIdentity(in)
+	if strings.Contains(out, h) {
+		t.Fatalf("runtime hostname not redacted: %s", out)
+	}
+	if !strings.Contains(out, "[HOSTNAME]") {
+		t.Fatalf("expected [HOSTNAME]: %s", out)
+	}
+	if !contentHasLocalIdentityLeak(in) {
+		t.Fatal("scanner must flag unredacted runtime hostname")
+	}
+	if contentHasLocalIdentityLeak(out) {
+		t.Fatal("redacted uname line must not leak")
+	}
+	// Mixed placeholder + residual raw hostname must still fail (Codex P1).
+	mixed := "host=[HOSTNAME] also raw=" + h
+	if !contentHasLocalIdentityLeak(mixed) {
+		t.Fatal("mixed placeholder+raw hostname must be a leak")
+	}
+}
+
+func TestRedactHostnameToken_DoesNotCorruptSchemaIDs(t *testing.T) {
+	t.Parallel()
+	// Unrestricted ReplaceAll of hostname "build" would rewrite grok_build schema ids.
+	in := `{"schema":"reinframe.grok_build_live_control.v2","goos":"darwin","note":"host build is online"}`
+	out := redactHostnameToken(in, "build")
+	if !strings.Contains(out, "grok_build") {
+		t.Fatalf("schema token corrupted: %s", out)
+	}
+	if !strings.Contains(out, "goos") {
+		t.Fatalf("goos key corrupted: %s", out)
+	}
+	if !strings.Contains(out, "[HOSTNAME]") {
+		t.Fatalf("standalone hostname token not redacted: %s", out)
+	}
+	// Short hostname "go" must not rewrite goos/goarch keys.
+	in2 := `{"goos":"linux","goarch":"amd64","msg":" go "}`
+	out2 := redactHostnameToken(in2, "go")
+	if !strings.Contains(out2, `"goos"`) || !strings.Contains(out2, `"goarch"`) {
+		t.Fatalf("goos/goarch keys corrupted: %s", out2)
+	}
+	if !strings.Contains(out2, "[HOSTNAME]") {
+		t.Fatalf("standalone go token not redacted: %s", out2)
+	}
+	// Case-insensitive redaction/scan (Pro R14 P1).
+	mixed := "Darwin BUILD-01 kernel; also build-01 and Build-01"
+	outM := redactHostnameToken(mixed, "BUILD-01")
+	if strings.Contains(outM, "BUILD-01") || strings.Contains(outM, "build-01") || strings.Contains(outM, "Build-01") {
+		t.Fatalf("case variants not redacted: %s", outM)
+	}
+	if !hostnameTokenPresent("uname says build-01", "BUILD-01") {
+		t.Fatal("scanner must detect case-variant hostname")
+	}
+	if hostnameTokenPresent("reinframe.grok_build_acp.v1", "BUILD") {
+		t.Fatal("case-insensitive matcher must still respect token boundaries")
+	}
+
+	// Pro R30 P1: adjacent hosts sharing a delimiter must all be redacted.
+	// Single-pass ReplaceAll consumes the shared boundary as ${3}, leaving the next raw.
+	for _, in := range []string{
+		"build-01 build-01",
+		"build-01,build-01",
+		"build-01 build-01 build-01",
+		"note=build-01;build-01;build-01",
+	} {
+		outAdj := redactHostnameToken(in, "build-01")
+		if strings.Contains(strings.ToLower(outAdj), "build-01") {
+			t.Fatalf("adjacent hostname residual: in=%q out=%q", in, outAdj)
+		}
+		if !strings.Contains(outAdj, "[HOSTNAME]") {
+			t.Fatalf("adjacent hostname not redacted: in=%q out=%q", in, outAdj)
+		}
+	}
+	// Schema ids must still be preserved under multi-pass.
+	schemaAdj := `{"schema":"reinframe.grok_build_live_control.v2","hosts":"build build"}`
+	outSA := redactHostnameToken(schemaAdj, "build")
+	if !strings.Contains(outSA, "grok_build") {
+		t.Fatalf("multi-pass corrupted schema: %s", outSA)
+	}
+	if strings.Contains(outSA, `"hosts":"build `) || strings.Contains(outSA, ` build"`) {
+		t.Fatalf("multi-pass left residual host: %s", outSA)
+	}
+
+	// Pro R31 P2: multipass must be idempotent when host is "hostname".
+	for _, h := range []string{"hostname", "hostname.example.com", "HOSTNAME"} {
+		in := "node hostname ready; also hostname.example.com"
+		once := redactHostnameToken(in, h)
+		twice := redactHostnameToken(once, h)
+		if once != twice {
+			t.Fatalf("redactHostnameToken not idempotent for host=%q: once=%q twice=%q", h, once, twice)
+		}
+		if strings.Contains(once, "[[") || strings.Count(once, "[HOSTNAME]") > 4 {
+			t.Fatalf("nested placeholders for host=%q: %q", h, once)
+		}
+		// Already-redacted input must stay stable.
+		stable := redactHostnameToken("[HOSTNAME] and [HOSTNAME]", h)
+		if stable != "[HOSTNAME] and [HOSTNAME]" {
+			t.Fatalf("placeholder rematch for host=%q: %q", h, stable)
+		}
+	}
+}
+
+func TestHostnameTokenPresent_MatchesRedactorBoundaries(t *testing.T) {
+	t.Parallel()
+	// Scanner and redactor must agree: embedded "build" is not a leak.
+	schema := `reinframe.grok_build_acp.v1 and reinframe.grok_build_live_control.v2`
+	if hostnameTokenPresent(schema, "build") {
+		t.Fatal("embedded build in schema id must not be a hostname token")
+	}
+	if hostnameTokenPresent(`{"goos":"linux"}`, "go") {
+		t.Fatal("goos key must not count as hostname token go")
+	}
+	if !hostnameTokenPresent("Darwin build 25.4.0", "build") {
+		t.Fatal("standalone build token must be detected")
+	}
+	// contentHasLocalIdentityLeak must not false-flag schema-only text when
+	// runtime hostname happens to be a common token (Codex P2).
+	// We cannot force os.Hostname(); instead assert token helper used by the scanner.
+	if contentHasLocalIdentityLeak(schema) && strings.Contains(schema, "/Users/") {
+		t.Fatal("unexpected path leak in schema fixture")
+	}
+	// Schema-only string has no path/.local; leak only if runtime hostname is
+	// an unrestricted substring — that is the bug we fixed via token boundaries.
+	// If this machine's hostname is "build", the old scanner would flag; new must not.
+	if h, err := os.Hostname(); err == nil {
+		h = strings.TrimSpace(h)
+		if h == "build" || h == "go" {
+			if contentHasLocalIdentityLeak(schema) {
+				t.Fatalf("schema-only evidence must not leak for hostname=%s", h)
+			}
+		}
+	}
+}
+
+func TestContentHasLocalIdentityLeak_MidLineLsOwner(t *testing.T) {
+	t.Parallel()
+	mid := `{"stdout":"lrwxr-xr-x@ 1 alice  staff  27 Jun 18 00:14 [HOME]/.local/bin/grok"}`
+	if !contentHasLocalIdentityLeak(mid) {
+		t.Fatal("mid-line ls owner must be a leak")
+	}
+	out := redactLocalIdentity(mid)
+	if strings.Contains(out, "alice") {
+		t.Fatalf("redact left owner: %s", out)
+	}
+	if contentHasLocalIdentityLeak(out) {
+		t.Fatalf("redacted mid-line ls must not leak: %s", out)
+	}
+}
+
+func TestRedactLocalIdentity_WindowsPaths(t *testing.T) {
+	t.Parallel()
+	in := `C:\Users\Alice\project and C:\\Users\\Alice\\AppData\\Local\\Temp\\run`
+	out := redactLocalIdentity(in)
+	if strings.Contains(out, `Users\Alice`) || strings.Contains(out, `Users\\Alice`) {
+		t.Fatalf("Windows user path leaked: %s", out)
+	}
+	if strings.Contains(out, `AppData`) || strings.Contains(out, `Temp\\run`) || strings.Contains(out, `Temp\run`) {
+		t.Fatalf("Windows temp path leaked: %s", out)
+	}
+	if !strings.Contains(out, "[HOME]") {
+		t.Fatalf("expected [HOME] placeholder: %s", out)
+	}
+	// writeJSON path: redaction after marshal must still catch escaped backslashes.
+	raw := `{"p":"C:\\Users\\Bob\\work"}`
+	got := redactLocalIdentity(raw)
+	if strings.Contains(got, "Bob") || strings.Contains(got, `Users\\`) {
+		t.Fatalf("JSON-escaped path not redacted: %s", got)
+	}
+}
+
+func TestRedactLocalIdentity_DoesNotCorruptGrokVersion(t *testing.T) {
+	// When USER is a common product token, version/prose must not be rewritten (Pro R12).
+	// Not parallel: uses t.Setenv.
+	t.Setenv("USER", "grok")
+	t.Setenv("LOGNAME", "grok")
+	t.Setenv("USERNAME", "grok")
+	in := `{"version":"grok 1.0.0 (3cd0d0cbcebe)","note":"agent stdio"}`
+	out := redactLocalIdentity(in)
+	if !strings.Contains(out, "grok 1.0.0") {
+		t.Fatalf("version token corrupted: %s", out)
+	}
+	if strings.Contains(out, "[USER] 1.0") {
+		t.Fatalf("account redaction rewrote version: %s", out)
+	}
+	// Scanner must also accept ordinary product/version text (Pro R13 P2).
+	if contentHasLocalIdentityLeak(in) {
+		t.Fatalf("scanner false-flagged product version as account leak: %s", in)
+	}
+	if contentHasLocalIdentityLeak(out) {
+		t.Fatalf("scanner false-flagged redacted product version: %s", out)
+	}
+	// Path segments still redacted.
+	pathIn := `/Users/grok/.local/bin/grok`
+	pathOut := redactLocalIdentity(pathIn)
+	if strings.Contains(pathOut, "/Users/grok/") {
+		t.Fatalf("path segment not redacted: %s", pathOut)
 	}
 }

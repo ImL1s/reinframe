@@ -156,8 +156,14 @@ func TestGrokACP_InitializeSessionPromptACK(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting update")
 	}
+	// Pro R32 P2: bare session/update must not auto-upgrade global ACK.
+	if c.LastACKLayer() != adapter.ACKLayerTransport {
+		t.Fatalf("bare update must stay transport, got %s", c.LastACKLayer())
+	}
+	// Correlated path still upgrades explicitly.
+	c.NoteSessionVisible()
 	if c.LastACKLayer() != adapter.ACKLayerSessionVisible {
-		t.Fatalf("want session_visible got %s", c.LastACKLayer())
+		t.Fatalf("want session_visible after NoteSessionVisible got %s", c.LastACKLayer())
 	}
 	if c.LastACKLayer() == adapter.ACKLayerExplicit {
 		t.Fatal("must not claim explicit")

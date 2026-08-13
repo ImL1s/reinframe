@@ -1,0 +1,128 @@
+{
+  "ACP-AUTH-001": {
+    "id": "ACP-AUTH-001",
+    "status": "PASS",
+    "detail": "delegated auth methodId=cached_token headless=true no token field",
+    "at": "2026-08-11T13:16:28Z"
+  },
+  "ACP-CLEANUP-001": {
+    "id": "ACP-CLEANUP-001",
+    "status": "PASS",
+    "detail": "Close completed; owned PID 98810 not alive",
+    "at": "2026-08-11T13:18:57Z"
+  },
+  "ACP-INIT-001": {
+    "id": "ACP-INIT-001",
+    "status": "PASS",
+    "detail": "protocolVersion=1 post_level=0 load=true cancel=false auth=[cached_token grok.com]",
+    "at": "2026-08-11T13:16:28Z"
+  },
+  "ACP-OPTIONAL-001": {
+    "id": "ACP-OPTIONAL-001",
+    "status": "INCONCLUSIVE",
+    "detail": "loadSession negotiated but failed: grok acp: session/load: Invalid params",
+    "at": "2026-08-11T13:18:51Z"
+  },
+  "ACP-SESSION-001": {
+    "id": "ACP-SESSION-001",
+    "status": "INCONCLUSIVE",
+    "detail": "prompt transport OK; post-prompt session-matched update lacks request/intervention/challenge identity \u2014 ACK remains transport",
+    "ack_layer": "transport",
+    "at": "2026-08-11T13:18:51Z",
+    "intervention_id": "issue167-live-advice-001",
+    "target_session_id": "0e5b7ff2b76f785919baca12c8d50425b37c74f22e16509f31a372ed9ecdfaa7",
+    "session_correlated": false
+  },
+  "ADVICE-DEDUP-001": {
+    "id": "ADVICE-DEDUP-001",
+    "status": "INCONCLUSIVE",
+    "detail": "second delivery accepted at transport; durable/business InterventionID suppression not proven in harness (#200)",
+    "at": "2026-08-11T13:18:53Z",
+    "intervention_id": "issue167-live-advice-001"
+  },
+  "CHALLENGE-001": {
+    "id": "CHALLENGE-001",
+    "status": "PASS",
+    "detail": "challenge text transported with ChallengeID preserved; #131 remains authoritative; no self-authorization claimed",
+    "at": "2026-08-11T13:18:55Z"
+  },
+  "HOOK-ALLOW-001": {
+    "id": "HOOK-ALLOW-001",
+    "status": "PASS",
+    "detail": "exit_err=<nil> stdout_bytes=49679 stderr=",
+    "tool_name": "run_terminal_command",
+    "host_outcome": "allowed",
+    "at": "2026-08-11T13:11:56Z"
+  },
+  "HOOK-DENY-001": {
+    "id": "HOOK-DENY-001",
+    "status": "PASS",
+    "detail": "direct deny response/exit observed for tool=run_terminal_command; exit_err=<nil> stdout_bytes=49220 stderr=",
+    "tool_name": "run_terminal_command",
+    "host_outcome": "enforced_deny",
+    "at": "2026-08-11T13:12:40Z",
+    "deny_direct_proof": true
+  },
+  "HOOK-FAIL-001": {
+    "id": "HOOK-FAIL-001",
+    "status": "PASS",
+    "detail": "broken hook invoked and marker written (timeout); exit_err=<nil> stdout_bytes=53109 stderr=",
+    "host_outcome": "host_fail_open",
+    "at": "2026-08-11T13:14:04Z",
+    "fail_open_invoked": true
+  },
+  "HOOK-FAIL-002": {
+    "id": "HOOK-FAIL-002",
+    "status": "PASS",
+    "detail": "broken hook invoked and marker written (crash_nonzero_non_deny); exit_err=<nil> stdout_bytes=53110 stderr=",
+    "host_outcome": "host_fail_open",
+    "at": "2026-08-11T13:14:58Z",
+    "fail_open_invoked": true
+  },
+  "HOOK-FAIL-003": {
+    "id": "HOOK-FAIL-003",
+    "status": "PASS",
+    "detail": "broken hook invoked and marker written (malformed); exit_err=<nil> stdout_bytes=53000 stderr=",
+    "host_outcome": "host_fail_open",
+    "at": "2026-08-11T13:15:38Z",
+    "fail_open_invoked": true
+  },
+  "HOOK-FAIL-004": {
+    "id": "HOOK-FAIL-004",
+    "status": "PASS",
+    "detail": "broken hook invoked and marker written (oversized); exit_err=<nil> stdout_bytes=52910 stderr=",
+    "host_outcome": "host_fail_open",
+    "at": "2026-08-11T13:16:27Z",
+    "fail_open_invoked": true
+  },
+  "HOOK-MAP-001": {
+    "id": "HOOK-MAP-001",
+    "status": "PASS",
+    "detail": "observed_tools=run_terminal_command",
+    "at": "2026-08-11T13:12:40Z"
+  },
+  "HOOK-UNINSTALL-001": {
+    "id": "HOOK-UNINSTALL-001",
+    "status": "PASS",
+    "detail": "reinframe-owned hooks removed",
+    "at": "2026-08-11T13:16:27Z"
+  },
+  "TRUST-001": {
+    "id": "TRUST-001",
+    "status": "PASS",
+    "detail": "launched with --trust; doctor_ok=true",
+    "at": "2026-08-11T13:10:30Z"
+  },
+  "TRUST-RESTORE-001": {
+    "id": "TRUST-RESTORE-001",
+    "status": "PASS",
+    "detail": "restored command doctor_ok=true",
+    "at": "2026-08-11T13:10:30Z"
+  },
+  "TRUST-STALE-001": {
+    "id": "TRUST-STALE-001",
+    "status": "INCONCLUSIVE",
+    "detail": "command reinstalled; TrustStale=false msgs=valid reinframe grok hooks foundation",
+    "at": "2026-08-11T13:10:30Z"
+  }
+}

@@ -3,7 +3,7 @@
     "detail": "initialize returned protocolVersion 1",
     "ok": true
   },
-  "at": "2026-08-11T07:40:21Z",
+  "at": "2026-08-11T08:41:52Z",
   "binary": "grok",
   "blocker": null,
   "probes": [
@@ -23,7 +23,7 @@
       "command": "ls -l /Users/[USER]/.local/bin/grok",
       "exit": 0,
       "stderr": "",
-      "stdout": "lrwxr-xr-x@ 1 [USER]  staff  27 Jun 18 00:14 /Users/[USER]/.local/bin/grok -> /Users/[USER]/.grok/bin/grok\n"
+      "stdout": "lrwxr-xr-x@ 1 [USER]  [GROUP]  27 Jun 18 00:14 /Users/[USER]/.local/bin/grok -> /Users/[USER]/.grok/bin/grok\n"
     },
     {
       "command": "/Users/[USER]/.local/bin/grok --version",
@@ -45,5 +45,7 @@
     }
   ],
   "usable": true,
-  "version": "grok 1.0.0 (3cd0d0cbcebe)"
+  "version": "grok 1.0.0 (3cd0d0cbcebe)",
+  "binary_path_sha256": "a965200e785b275112cf9f106054ee78e1f4ff43bf4315b173001aabde10aae8",
+  "privacy_note": "absolute paths/hostname/ownership redacted post-commit (Pro R10 P1)"
 }

@@ -41,6 +41,18 @@
         "goarch": {
           "type": "string"
         },
+        "live_goos": {
+          "type": "string"
+        },
+        "live_goarch": {
+          "type": "string"
+        },
+        "report_generator_goos": {
+          "type": "string"
+        },
+        "report_generator_goarch": {
+          "type": "string"
+        },
         "grok_version": {
           "type": "string"
         },
@@ -52,6 +64,27 @@
         },
         "starting_main_sha": {
           "type": "string"
+        },
+        "live_binary_commit": {
+          "type": "string"
+        },
+        "live_binary_dirty": {
+          "type": "boolean"
+        },
+        "live_binary_commit_src": {
+          "type": "string"
+        },
+        "report_generator_commit": {
+          "type": "string"
+        },
+        "report_generator_dirty": {
+          "type": "boolean"
+        },
+        "report_generator_commit_src": {
+          "type": "string"
+        },
+        "derived": {
+          "type": "boolean"
         },
         "main_tip_note": {
           "type": "string"

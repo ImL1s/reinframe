@@ -29,8 +29,15 @@ func runHooks(args []string) {
 	}
 	grok := mustAbs(*exe, "--grok-executable")
 	proj := mustAbs(*project, "--project")
+	setLiveProjectRoot(proj)
 	evDir := mustAbs(*out, "--evidence-out")
 	_ = os.MkdirAll(evDir, 0o700)
+	if err := ensureLiveIdentity(evDir); err != nil {
+		fail(fmt.Errorf("groklive hooks: live_identity: %w", err))
+	}
+	if err := ensureGrokExecutableIdentity(evDir, grok); err != nil {
+		fail(fmt.Errorf("groklive hooks: live_grok_executable: %w", err))
+	}
 	_ = os.MkdirAll(filepath.Join(proj, "harmless"), 0o700)
 	_ = os.MkdirAll(filepath.Join(proj, "denied"), 0o700)
 
@@ -42,6 +49,10 @@ func runHooks(args []string) {
 		}
 	}
 	gh = mustAbs(gh, "--grokhooks")
+	// Bind hooks helper content before first use (Pro R14 P1).
+	if err := ensureGrokhooksExecutable(evDir, gh); err != nil {
+		fail(fmt.Errorf("groklive hooks: live_grokhooks_executable: %w", err))
+	}
 
 	scenarios := loadScenarioMap(evDir)
 	set := func(id, status, detail string, extra map[string]string) {
@@ -122,7 +133,9 @@ exit "$EC"
 	if err != nil {
 		fail(err)
 	}
-	_ = writeJSON(filepath.Join(evDir, "hooks_doctor_pre_trust.json"), doc)
+	if err := writeJSON(filepath.Join(evDir, "hooks_doctor_pre_trust.json"), doc); err != nil {
+		fail(fmt.Errorf("groklive hooks: write hooks_doctor_pre_trust: %w", err))
+	}
 
 	trustCmd := exec.Command(grok, "--no-auto-update", "--trust", "--cwd", proj, "-p", "Say TRUST_OK and stop.", "--output-format", "json", "--max-turns", "1")
 	trustCmd.Dir = proj
@@ -143,9 +156,13 @@ exit "$EC"
 			"error":      err.Error(),
 		}
 	}
-	_ = writeJSON(filepath.Join(evDir, "trust_launch.json"), trustRec)
+	if err := writeJSON(filepath.Join(evDir, "trust_launch.json"), trustRec); err != nil {
+		fail(fmt.Errorf("groklive hooks: write trust_launch: %w", err))
+	}
 	doc2, errDoc2 := mgr.Doctor()
-	_ = writeJSON(filepath.Join(evDir, "hooks_doctor_post_trust.json"), doc2)
+	if err := writeJSON(filepath.Join(evDir, "hooks_doctor_post_trust.json"), doc2); err != nil {
+		fail(fmt.Errorf("groklive hooks: write hooks_doctor_post_trust: %w", err))
+	}
 	if errDoc2 != nil {
 		set("TRUST-001", "FAIL", "doctor after --trust: "+errDoc2.Error(), nil)
 	} else if !doc2.OK {
@@ -336,7 +353,17 @@ If the tool is denied, acknowledge and stop. Do not work around the denial.`,
 	mgr.BridgeCommand = wrapPath
 	_ = mgr.Install()
 
-	_ = saveScenarioMap(evDir, scenarios)
+	// Re-verify Grok CLI + grokhooks content bindings after all live tool probes.
+	if err := ensureGrokExecutableIdentity(evDir, grok); err != nil {
+		fail(fmt.Errorf("groklive hooks: live_grok_executable post-probe: %w", err))
+	}
+	if err := ensureGrokhooksExecutable(evDir, gh); err != nil {
+		fail(fmt.Errorf("groklive hooks: live_grokhooks_executable post-probe: %w", err))
+	}
+
+	if err := saveScenarioMap(evDir, scenarios); err != nil {
+		fail(fmt.Errorf("groklive hooks: save scenarios: %w", err))
+	}
 	fmt.Println(`{"ok":true,"action":"hooks"}`)
 }
 

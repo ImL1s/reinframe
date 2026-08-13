@@ -1,6 +1,6 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-11) — **#201/#199/#200/#215/#218/#219 closed** on main; privacy follow-ups **#223/#224/#225** on main; public Grok ranking disposition remains **MORE_DATA**; latest clean-quota live v2 `20260811T073954Z` is harness **NO_GO** (primary limitation `HOOK-DENY-001 FAIL`; ACP-SESSION **PASS** / `session_visible`; no 402); prior `20260810T170640Z` remains immutable quota-contaminated NO_GO + privacy errata; #168 MORE-DATA; no ranking  
+**Status:** current (2026-08-12) — GPT-5.6 Pro P1 waves on PR #230 branch; latest clean-quota live v2 `20260811T130935Z` re-eval **NO_GO** under executable-binding gate (strongest ACK still **transport**; scenarios retained; not a fresh live campaign); prior pins retained; public **#168 MORE_DATA**; no ranking  
 
 
 **Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open.
@@ -59,7 +59,7 @@ Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 
 
 | Issue | Blocker | Notes |
 |-------|---------|-------|
-| **#168** live match | #164/#120 matched data + Grok session reliability | Grok historical + v2 live pins present; #168 disposition **MORE-DATA**; no ranking; Grok v2 campaign **NO_GO** does not strengthen ranking |
+| **#168** live match | #164/#120 matched data + Grok session reliability | Grok historical + v2 live pins present; #168 disposition **MORE-DATA**; no ranking; latest clean-quota pin `20260811T130935Z` re-eval **NO_GO** under executable-binding gate (older pins remain **NO_GO**); none of these strengthen ranking |
 
 ### Epic
 
@@ -69,7 +69,7 @@ Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 
 
 ## Explicit non-claims
 
-- Historical Grok live run present (#167 v1); latest live v2 campaign is **NO_GO** (not a GO artifact); public ranking disposition remains **MORE_DATA** (#199 gates closed; no false GO)
+- Historical Grok live run present (#167 v1); latest clean-quota live v2 pin `20260811T130935Z` re-eval **NO_GO** under executable-binding gate (not a false LIMITED_GO); older pins `20260811T073954Z` / `20260810T170640Z` remain **NO_GO**; public ranking disposition remains **MORE_DATA** (#199 gates closed; no false GO)
 - No fail-closed Grok hook security (host fail-open)
 - CapToolGate ≠ CapPause / Level 2
 - JSON-RPC / file append / hook exit ≠ explicit agent ACK
@@ -77,7 +77,7 @@ Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 
 - No dual-host production supervision; no hard-gate; no default cache enablement
 - No cross-host tunneling ranking without matched multi-host live evidence
 - No Level 2 / CapPause from hooks alone; transport ≠ explicit ACK
-- No source-correlated session_visible product claim without a new live v2 report; no explicit ACK for current Grok profile
+- Latest pin `20260811T130935Z` keeps ACK at **transport** (session-matched updates without request/intervention/challenge identity do not upgrade); no product-wide explicit ACK / ranking upgrade
 - No exactly-once delivery claim; no completed live #108 E2E composition path
 
 ## Evaluation artifacts

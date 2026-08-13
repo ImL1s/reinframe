@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -59,6 +60,8 @@ func runAll(args []string) {
 	project := fs.String("project", "", "disposable project root")
 	out := fs.String("evidence-out", "", "evidence directory")
 	hooksBin := fs.String("grokhooks", "", "path to grokhooks binary")
+	ctxOut := fs.String("scan-context-out", "", "optional external live_scan_context JSON path (outside evidence-out)")
+	ctxIn := fs.String("scan-context-in", "", "optional external live_scan_context JSON for report (outside evidence-out)")
 	_ = fs.Parse(args)
 	if !*live {
 		fail(fmt.Errorf("groklive all: --live required"))
@@ -67,10 +70,47 @@ func runAll(args []string) {
 		fail(fmt.Errorf("groklive all: --evidence-out required"))
 	}
 	// Sequential phases; preflight must write into evidence-out for report provenance.
+	// live_identity.json captures the live executor binary (distinct from a later report re-run).
+	// Write failure is fatal — report must not fall back to the generator identity.
+	evDir := mustAbs(*out, "--evidence-out")
+	if s := strings.TrimSpace(*ctxOut); s != "" {
+		abs, err := filepath.Abs(s)
+		if err != nil {
+			fail(fmt.Errorf("groklive all: --scan-context-out: %w", err))
+		}
+		scanContextOutPath = abs
+	}
+	// --scan-context-in must be bound before ensureLiveIdentity so resume of a
+	// copied campaign (no private cache) can import the transferable sidecar
+	// during identity validation (Pro R31/R32 P2).
+	if s := strings.TrimSpace(*ctxIn); s != "" {
+		abs, err := filepath.Abs(s)
+		if err != nil {
+			fail(fmt.Errorf("groklive all: --scan-context-in: %w", err))
+		}
+		scanContextInPath = abs
+	} else if s := strings.TrimSpace(*ctxOut); s != "" {
+		// Same-host resume after private-cache loss can re-import the export path.
+		abs, err := filepath.Abs(s)
+		if err != nil {
+			fail(fmt.Errorf("groklive all: --scan-context-out as import: %w", err))
+		}
+		scanContextInPath = abs
+	}
+	if err := ensureLiveIdentity(evDir); err != nil {
+		fail(fmt.Errorf("groklive all: live_identity: %w", err))
+	}
 	runPreflight([]string{"--grok-executable", *exe, "--evidence-out", *out})
 	runHooks([]string{"--live", "--grok-executable", *exe, "--project", *project, "--evidence-out", *out, "--grokhooks", *hooksBin})
 	runACP([]string{"--live", "--grok-executable", *exe, "--project", *project, "--evidence-out", *out})
-	runReport([]string{"--evidence-out", *out})
+	reportArgs := []string{"--evidence-out", *out}
+	if s := strings.TrimSpace(*ctxIn); s != "" {
+		reportArgs = append(reportArgs, "--scan-context-in", s)
+	} else if s := strings.TrimSpace(*ctxOut); s != "" {
+		// Same campaign re-report on another host can use the export path.
+		reportArgs = append(reportArgs, "--scan-context-in", s)
+	}
+	runReport(reportArgs)
 }
 
 func mustAbs(p, name string) string {
@@ -89,20 +129,175 @@ func fail(err error) {
 	os.Exit(1)
 }
 
-func writeJSON(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+// serializeJSONEvidence returns the redacted on-disk form of v (same bytes writeJSON emits).
+func serializeJSONEvidence(v any) ([]byte, error) {
+	// Normalize typed maps/structs/slices into map[string]any / []any via JSON
+	// (Pro R29 P1): map[string]ScenarioResult and []string otherwise bypass the walker.
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
 	}
-	b, err := json.MarshalIndent(v, "", "  ")
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var normalized any
+	if err := dec.Decode(&normalized); err != nil {
+		return nil, err
+	}
+	// Field-aware identity redaction: structured enum/platform keys keep values;
+	// free-text strings always get path+hostname redact (incl. unsafe hostnames).
+	normalized = redactIdentityInValue(normalized)
+	b, err := json.MarshalIndent(normalized, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	// Path/account redaction only on serialized form (no whole-document hostname pass).
+	s := redactPathsAndAccounts(string(b))
+	if err := validatePostRedactPlatformFields(s); err != nil {
+		return nil, err
+	}
+	return []byte(s), nil
+}
+
+func writeJSON(path string, v any) error {
+	b, err := serializeJSONEvidence(v)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	return safeWriteFile(path, b, 0o600)
+}
+
+// safeWriteFile writes evidence artifacts without following symlinks (Pro R37 P2).
+// Rejects existing symlink/non-regular destinations; uses same-dir temp + rename.
+// When replacing an existing regular file, renames the old file aside first and
+// restores it if the new install fails — never delete-before-rename (Pro R46 P2 /
+// GraphQL: preserve destination until replacement succeeds; Windows-safe).
+func safeWriteFile(path string, data []byte, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("safeWriteFile: refusing symlink destination %s", path)
+		}
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("safeWriteFile: refusing non-regular destination %s", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-write-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// Re-check before install (shrink TOCTOU window).
+	var bakName string
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("safeWriteFile: destination became symlink %s", path)
+		}
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("safeWriteFile: destination became non-regular %s", path)
+		}
+		// Move old aside (unique name) so Windows rename of tmp→path can succeed
+		// while retaining restore-on-failure (Pro R46 P2).
+		bak, err := os.CreateTemp(dir, ".tmp-bak-*")
+		if err != nil {
+			return err
+		}
+		bakName = bak.Name()
+		_ = bak.Close()
+		_ = os.Remove(bakName) // free the name for Rename
+		if err := os.Rename(path, bakName); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		// Restore previous artifact if we moved it aside; surface restore failure too.
+		if bakName != "" {
+			if rerr := os.Rename(bakName, path); rerr != nil {
+				return fmt.Errorf("safeWriteFile: install failed (%v) and restore failed (%w); previous at %s", err, rerr, bakName)
+			}
+		}
+		return err
+	}
+	if bakName != "" {
+		if err := os.Remove(bakName); err != nil {
+			// New file is installed; leftover bak is a hygiene failure, not silent OK.
+			return fmt.Errorf("safeWriteFile: installed %s but failed to remove backup %s: %w", path, bakName, err)
+		}
+	}
+	ok = true
+	return nil
+}
+
+// closedStructuredJSONKey reports keys whose string values must not be hostname-redacted.
+func closedStructuredJSONKey(k string) bool {
+	switch k {
+	case "goos", "goarch", "live_goos", "live_goarch",
+		"report_generator_goos", "report_generator_goarch",
+		"final_disposition", "disposition", "strongest_proven", "status", "class",
+		"src", "live_binary_commit_src", "report_generator_commit_src", "schema",
+		"scan_context_id", "live_binary_commit", "report_generator_commit",
+		"grok_executable_sha256", "grokhooks_executable_sha256",
+		"grok_executable_path_sha256", "grokhooks_executable_path_sha256",
+		"grok_executable_basename", "grokhooks_executable_basename":
+		return true
+	default:
+		return false
+	}
+}
+
+// redactIdentityInValue walks maps/slices and redacts free-text strings only.
+func redactIdentityInValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, val := range x {
+			if closedStructuredJSONKey(k) {
+				out[k] = val
+				continue
+			}
+			out[k] = redactIdentityInValue(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, val := range x {
+			out[i] = redactIdentityInValue(val)
+		}
+		return out
+	case string:
+		return redactLocalIdentityAlways(x)
+	default:
+		return v
+	}
 }
 
 func loadScenarioMap(dir string) map[string]ScenarioResult {
 	path := filepath.Join(dir, "scenarios.json")
-	b, err := os.ReadFile(path)
+	// Bound regular-file read so a FIFO/device cannot hang the phase (Pro R47 P2).
+	b, err := readRegularFile(path)
 	if err != nil {
 		return map[string]ScenarioResult{}
 	}
@@ -135,7 +330,7 @@ type ScenarioResult struct {
 	// FailOpenInvoked: true only when the broken hook process was positively invoked.
 	FailOpenInvoked bool `json:"fail_open_invoked,omitempty"`
 	// SessionCorrelated: true only when session/update matched target session + this prompt turn.
-	SessionCorrelated bool `json:"session_correlated,omitempty"`
+	SessionCorrelated bool `json:"session_correlated"`
 	// InterventionID bound into the scenario when relevant.
 	InterventionID string `json:"intervention_id,omitempty"`
 	// TargetSessionID is the SHA-256 hex of the host session id (never plaintext UUID).

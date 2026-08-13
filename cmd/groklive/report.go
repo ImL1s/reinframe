@@ -2,14 +2,19 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
@@ -33,8 +38,16 @@ type liveReportOutcome struct {
 func runReport(args []string) {
 	fs := flag.NewFlagSet("report", flag.ExitOnError)
 	out := fs.String("evidence-out", "", "evidence directory")
+	ctxIn := fs.String("scan-context-in", "", "optional external live_scan_context JSON (outside evidence-out)")
 	_ = fs.Parse(args)
 	evDir := mustAbs(*out, "--evidence-out")
+	if s := strings.TrimSpace(*ctxIn); s != "" {
+		abs, err := filepath.Abs(s)
+		if err != nil {
+			fail(fmt.Errorf("groklive report: --scan-context-in: %w", err))
+		}
+		scanContextInPath = abs
+	}
 	outcome, err := generateLiveReport(evDir)
 	if err != nil {
 		fail(err)
@@ -72,6 +85,13 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	// Floor: disposition may only demote after this point.
 	floor := disp
 
+	// Bind imported live-executor hostnames into free-text redactors before any
+	// writeJSON/Markdown emission (Pro R32 P1: cross-host residual live host).
+	if ctxHost, ctxOK, _ := loadLiveScanContext(evDir); ctxOK {
+		setExtraRedactHostnames(ctxHost)
+		defer clearExtraRedactHostnames()
+	}
+
 	// Privacy scan: complete-or-fail (#215/#219).
 	privacy := scanPrivacy(evDir)
 
@@ -80,7 +100,7 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	preflightPresent := false
 	preflightValid := false
 	preflightUsable := false
-	if b, err := os.ReadFile(filepath.Join(evDir, "preflight.json")); err == nil {
+	if b, err := readRegularFile(filepath.Join(evDir, "preflight.json")); err == nil {
 		preflightPresent = true
 		var pf map[string]any
 		if json.Unmarshal(b, &pf) != nil {
@@ -126,9 +146,60 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		}
 	}
 
-	osName := runtime.GOOS
 	day := time.Now().UTC().Format("2006-01-02")
 	commit, dirty, commitSrc := reinframeBuildIdentity()
+	// live_identity.json is mandatory for qualifying reports — never fall back to the
+	// report-generator identity (GPT-5.6 Pro P1: false-qualify via silent fallback).
+	liveID := loadLiveIdentity(evDir)
+	liveBinaryCommit, liveBinaryDirty, liveBinarySrc := liveID.Commit, liveID.Dirty, liveID.Src
+	// Campaign platform from live_identity when bound; never silently rename with generator GOOS.
+	// Campaign platform: only use live-bound values. Do not silently rename with
+	// generator GOOS when identity is incomplete (Pro R22 P2).
+	osName := liveID.GOOS
+	liveArch := liveID.GOARCH
+	if !liveID.OK || osName == "" || !isValidGOOS(osName) {
+		osName = "unknown"
+	}
+	if !liveID.OK || liveArch == "" || !isValidGOARCH(liveArch) {
+		liveArch = "unknown"
+	}
+	// Basename path-component guard (never separators / traversal).
+	if !isValidGOOS(osName) {
+		osName = "unknown"
+	}
+	if !liveID.OK {
+		reasons = append(reasons, liveID.Err)
+		if floor == "GO" || floor == "LIMITED_GO" {
+			floor = demoteFloor(floor, "NO_GO")
+			reasons = append(reasons, "invalid/missing live_identity forbids GO/LIMITED_GO")
+		}
+		if liveBinarySrc == "" {
+			liveBinarySrc = "missing"
+		}
+	}
+	// External Grok CLI content binding (Pro R6 P1): standalone phases must share
+	// the same --grok-executable contents, not only Reinframe harness identity.
+	if grokOK, grokWhy := loadLiveGrokExecutableOK(evDir); !grokOK {
+		// Require binding when any phase evidence is present (preflight/scenarios).
+		if preflightPresent || len(scenarios) > 0 {
+			reasons = append(reasons, grokWhy)
+			if floor == "GO" || floor == "LIMITED_GO" {
+				floor = demoteFloor(floor, "NO_GO")
+				reasons = append(reasons, "invalid/missing live_grok_executable forbids GO/LIMITED_GO")
+			}
+		}
+	}
+	// Hooks helper content binding (Pro R14 P1): when hook scenarios exist, require
+	// live_grokhooks_executable.json so outcomes cannot come from a swapped helper.
+	if hasHookScenarios(scenarios) {
+		if hooksOK, hooksWhy := loadLiveGrokhooksExecutableOK(evDir); !hooksOK {
+			reasons = append(reasons, hooksWhy)
+			if floor == "GO" || floor == "LIMITED_GO" {
+				floor = demoteFloor(floor, "NO_GO")
+				reasons = append(reasons, "invalid/missing live_grokhooks_executable forbids GO/LIMITED_GO")
+			}
+		}
+	}
 
 	ack := "transport"
 	if sr, ok := scenarios["ACP-SESSION-001"]; ok && sr.ACKLayer != "" {
@@ -146,7 +217,8 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	disp = demoteFloor(floor, disp)
 
 	// Live qualification for GO and LIMITED_GO alike (#215).
-	if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, commit, commitSrc, dirty); demote != disp {
+	// Bind qualification to the LIVE executor binary (not a later report re-run generator).
+	if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, liveBinaryCommit, liveBinarySrc, liveBinaryDirty); demote != disp {
 		disp = demote
 		reasons = append(reasons, msgs...)
 	}
@@ -156,20 +228,40 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	report := map[string]any{
 		"schema_version": LiveControlSchemaV2,
 		"provenance": map[string]any{
-			"issue":                 167,
-			"generated_at":          stamp(),
-			"goos":                  osName,
-			"goarch":                runtime.GOARCH,
-			"grok_version":          ver,
-			"grok_version_full":     verFull,
-			"reinframe_commit":      commit,
-			"reinframe_dirty":       dirty,
-			"reinframe_commit_src":  commitSrc,
-			"starting_main_sha":     "62889cb59916fa2dd412a2c5d511c7ac7c4b23c6",
-			"main_tip_note":         "evidence produced against live host using shipped #165/#166 APIs; v2 gates (#199/#215)",
-			"harness":               "cmd/groklive",
-			"evidence_binding_note": "generated solely by cmd/groklive report; no post-hoc privacy rewrites",
-			"schema_note":           "v2 closed disposition matrix; historical v1 evidence is immutable under HISTORICAL_v1.md",
+			"issue":                167,
+			"generated_at":         stamp(),
+			// Campaign platform (prefer live_identity bind; Pro R10 P2).
+			"goos":                 osName,
+			"goarch":               liveArch,
+			"live_goos":            liveID.GOOS,
+			"live_goarch":          liveID.GOARCH,
+			"report_generator_goos":   runtime.GOOS,
+			"report_generator_goarch": runtime.GOARCH,
+			"grok_version":         ver,
+			"grok_version_full":    verFull,
+			"reinframe_commit":     commit,
+			"reinframe_dirty":      dirty,
+			"reinframe_commit_src": commitSrc,
+			// Live executor vs report generator identities (#post-230 GPT P1-B).
+			// starting_main_sha / live_binary_* describe the process that executed live phases.
+			// report_generator_* describe the binary that produced this formal report.
+			"starting_main_sha":           liveBinaryCommit,
+			"live_binary_commit":          liveBinaryCommit,
+			"live_binary_dirty":           liveBinaryDirty,
+			"live_binary_commit_src":      liveBinarySrc,
+			"report_generator_commit":     commit,
+			"report_generator_dirty":      dirty,
+			"report_generator_commit_src": commitSrc,
+			// derived=true unless a complete live identity proves live==generator
+			// (Pro R22 P2: incomplete identity must not claim derived=false).
+			"derived": !liveID.OK || liveBinaryCommit == "" || commit == "" ||
+				liveBinaryCommit != commit || liveBinaryDirty != dirty ||
+				(liveID.GOOS != "" && liveID.GOOS != runtime.GOOS) ||
+				(liveID.GOARCH != "" && liveID.GOARCH != runtime.GOARCH),
+			"main_tip_note":               "evidence produced against live host using shipped #165/#166 APIs; v2 gates (#199/#215); live_binary_commit vs report_generator_commit may differ when report is re-run",
+			"harness":                     "cmd/groklive",
+			"evidence_binding_note":       "generated by cmd/groklive report; live_binary_commit requires complete live_identity.json (no generator fallback)",
+			"schema_note":                 "v2 closed disposition matrix; historical v1 evidence is immutable under HISTORICAL_v1.md",
 		},
 		"entry_gates": map[string]any{
 			"live_flag_required": true,
@@ -221,7 +313,7 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		disp = demoteFloor(floor, disp2)
 		reasons = append(reasons, reasons2...)
 		reasons = append(reasons, verrs...)
-		if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, commit, commitSrc, dirty); demote != disp {
+		if demote, msgs := liveQualification(disp, privacy, caps, scenarios, preflightPresent, preflightValid, preflightUsable, ver, liveBinaryCommit, liveBinarySrc, liveBinaryDirty); demote != disp {
 			disp = demote
 			reasons = append(reasons, msgs...)
 		}
@@ -245,18 +337,82 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 	report["limitations"] = reasons
 	report["final_disposition"] = disp
 
-	base := fmt.Sprintf("issue-167-live-v2-%s-%s-%s", sanitizeVersion(ver), osName, day)
+	// nameOS is filename-only platform token; must not mutate factual report
+	// provenance goos/live_goos used in JSON + Markdown (Pro R46 P2).
+	nameOS := osName
+	verForName := sanitizeVersion(ver)
+	base := fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, nameOS, day)
+	// Prospective formal basenames must not publish host identity (Pro R45 P1).
+	// scanPrivacy ran before we knew the output names; refuse host-bearing names
+	// at write time (demote + rewrite to a non-leaking version token).
+	ctxHost, ctxOK, _ := loadLiveScanContext(evDir)
+	nameHosts := privacyScanHostnames(evDir, ctxHost, ctxOK)
+	if leak, _ := filenameIdentityLeak(base+".json", nameHosts...); leak {
+		reasons = append(reasons, "formal report basename would publish host identity")
+		if disp == "GO" || disp == "LIMITED_GO" {
+			disp = "NO_GO"
+		}
+		disp = demoteFloor(floor, disp)
+		report["final_disposition"] = disp
+		report["limitations"] = reasons
+		verForName = "redacted"
+		base = fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, nameOS, day)
+		if leak2, _ := filenameIdentityLeak(base+".json", nameHosts...); leak2 {
+			// Host still collides after redaction (e.g. crosses into GOOS); force
+			// filename platform token only — JSON/MD provenance stay on osName.
+			nameOS = "unknown"
+			base = fmt.Sprintf("issue-167-live-v2-%s-%s-%s", verForName, nameOS, day)
+			if leak3, _ := filenameIdentityLeak(base+".json", nameHosts...); leak3 {
+				return liveReportOutcome{}, fmt.Errorf("refusing to write host-bearing formal report basename")
+			}
+		}
+	}
 	jsonPath := filepath.Join(evDir, base+".json")
 	mdPath := filepath.Join(evDir, base+".md")
 	schemaPath := filepath.Join(evDir, "reinframe.grok_build_live_control.v2.schema.json")
 
-	// Write JSON first; only then MD/schema once disk JSON is schema-valid.
-	if err := writeJSON(jsonPath, report); err != nil {
-		return liveReportOutcome{}, err
-	}
-	onDisk, err := os.ReadFile(jsonPath)
+	// Exact-output privacy gate (Pro R51 P2): privacy-scan the precise bytes that
+	// will be written, not only earlier independent evidence reads.
+	jsonBody, err := serializeJSONEvidence(report)
 	if err != nil {
 		return liveReportOutcome{}, err
+	}
+	md := redactLocalIdentity(renderMD(report, disp, ack, ver, osName, reasons, scenarios))
+	if leak, why := emittedArtifactPrivacyLeak(filepath.Base(jsonPath), jsonBody, nameHosts...); leak {
+		reasons = append(reasons, "emitted JSON privacy leak: "+why)
+		if disp == "GO" || disp == "LIMITED_GO" {
+			disp = "NO_GO"
+		}
+		disp = demoteFloor(floor, disp)
+		report["final_disposition"] = disp
+		report["limitations"] = reasons
+		jsonBody, err = serializeJSONEvidence(report)
+		if err != nil {
+			return liveReportOutcome{}, err
+		}
+		md = redactLocalIdentity(renderMD(report, disp, ack, ver, osName, reasons, scenarios))
+		if leak2, why2 := emittedArtifactPrivacyLeak(filepath.Base(jsonPath), jsonBody, nameHosts...); leak2 {
+			return liveReportOutcome{}, fmt.Errorf("refusing to write privacy-leaking formal JSON: %s", why2)
+		}
+	}
+	if leak, why := emittedArtifactPrivacyLeak(filepath.Base(mdPath), []byte(md), nameHosts...); leak {
+		// MD may embed free-text; refuse rather than publish.
+		return liveReportOutcome{}, fmt.Errorf("refusing to write privacy-leaking formal Markdown: %s", why)
+	}
+
+	// Write JSON first; only then MD/schema once disk JSON is schema-valid.
+	if err := safeWriteFile(jsonPath, jsonBody, 0o600); err != nil {
+		return liveReportOutcome{}, err
+	}
+	onDisk, err := readRegularFile(jsonPath)
+	if err != nil {
+		_ = os.Remove(jsonPath)
+		return liveReportOutcome{}, err
+	}
+	// Ensure on-disk bytes match the gated emission (no TOCTOU rewrite).
+	if !bytes.Equal(onDisk, jsonBody) {
+		_ = os.Remove(jsonPath)
+		return liveReportOutcome{}, fmt.Errorf("written report bytes differ from privacy-gated emission")
 	}
 	var diskReport map[string]any
 	if err := json.Unmarshal(onDisk, &diskReport); err != nil {
@@ -268,15 +424,25 @@ func generateLiveReport(evDir string) (liveReportOutcome, error) {
 		return liveReportOutcome{}, fmt.Errorf("written report fails committed schema: %w", err)
 	}
 
-	md := renderMD(report, disp, ack, ver, osName, reasons, scenarios)
-	if err := os.WriteFile(mdPath, []byte(md), 0o600); err != nil {
+	// Formal Markdown + schema are evidence destinations: never follow symlinks
+	// (Pro R38 P2: complete the R37 safe-write contract).
+	if err := safeWriteFile(mdPath, []byte(md), 0o600); err != nil {
 		_ = os.Remove(jsonPath)
 		return liveReportOutcome{}, err
 	}
-	if err := os.WriteFile(schemaPath, EmbeddedV2SchemaJSON(), 0o600); err != nil {
+	if err := safeWriteFile(schemaPath, EmbeddedV2SchemaJSON(), 0o600); err != nil {
 		_ = os.Remove(jsonPath)
 		_ = os.Remove(mdPath)
 		return liveReportOutcome{}, fmt.Errorf("write schema: %w", err)
+	}
+
+	// Strip any legacy in-evidence bare-hostname control file. Private cache
+	// context is kept so standalone report re-runs remain possible (Pro R18).
+	if err := scrubLegacyInEvidenceScanContext(evDir); err != nil {
+		_ = os.Remove(jsonPath)
+		_ = os.Remove(mdPath)
+		_ = os.Remove(schemaPath)
+		return liveReportOutcome{}, fmt.Errorf("scrub legacy live_scan_context from evidence: %w", err)
 	}
 
 	exit := 0
@@ -714,6 +880,18 @@ func scanPrivacy(evDir string) map[string]any {
 		"secret_pattern_hits":                       0,
 		"failure_classes":                           []string{},
 	}
+	// Live scan context: fail-closed when live_identity is present (Pro R17 P1).
+	// Control file is not counted in files_seen/scanned (scrubbed after report; not
+	// published evidence). Hostname is used only for residual leak detection.
+	var fails []string
+	ctxHost, ctxOK, ctxWhy := loadLiveScanContext(evDir)
+	idPath := filepath.Join(evDir, "live_identity.json")
+	if st, err := os.Stat(idPath); err == nil && !st.IsDir() {
+		if !ctxOK {
+			fails = append(fails, "live_scan_context:"+ctxWhy)
+		}
+	}
+	scanHosts := privacyScanHostnames(evDir, ctxHost, ctxOK)
 	entries, err := os.ReadDir(evDir)
 	if err != nil {
 		out["error"] = err.Error()
@@ -728,13 +906,19 @@ func scanPrivacy(evDir string) map[string]any {
 	scanned := 0
 	skipped := 0
 	totalBytes := 0
-	var fails []string
 	for _, e := range entries {
 		// Evidence dir is flat: nested directories forbid complete qualification.
 		if e.IsDir() {
 			seen++
 			skipped++
 			fails = append(fails, "nested_directory:"+e.Name())
+			continue
+		}
+		// Any raw scan-context control file under evidence is a publication failure
+		// (Pro R28 P1) — do not silently skip; mark incomplete.
+		if e.Name() == liveScanContextFile || e.Name() == liveScanContextPortableFile {
+			seen++
+			fails = append(fails, "scan_context_in_evidence:"+e.Name())
 			continue
 		}
 		full := filepath.Join(evDir, e.Name())
@@ -768,11 +952,26 @@ func scanPrivacy(evDir string) map[string]any {
 			fails = append(fails, "file_count_cap:"+e.Name())
 			continue
 		}
-		// Bounded read: Stat size already checked; LimitReader is a hard cap.
-		f, err := os.Open(full)
+		// Bounded nonblocking open + FD recheck so a regular→FIFO TOCTOU cannot hang
+		// the privacy scan (Pro R47 P2). SameFile binds Lstat→open (Pro R51).
+		// LimitReader is a hard cap.
+		f, err := openFileReadNoBlock(full)
 		if err != nil {
 			skipped++
 			fails = append(fails, "unreadable:"+e.Name())
+			continue
+		}
+		st2, sErr := f.Stat()
+		if sErr != nil || !st2.Mode().IsRegular() {
+			_ = f.Close()
+			skipped++
+			fails = append(fails, "non_regular:"+e.Name())
+			continue
+		}
+		if !os.SameFile(fi, st2) {
+			_ = f.Close()
+			skipped++
+			fails = append(fails, "identity_changed:"+e.Name())
 			continue
 		}
 		lr := io.LimitReader(f, int64(maxPrivacyFileBytes)+1)
@@ -808,17 +1007,23 @@ func scanPrivacy(evDir string) map[string]any {
 			!strings.Contains(s, "no token") && !strings.Contains(s, "token field") {
 			out["token_fields_in_auth_envelope"] = true
 		}
-		for _, pat := range []string{"sk-", "xai-", "Bearer ", "eyJ"} {
-			if strings.Contains(s, pat) {
-				if strings.Contains(s, "[REDACTED]") && pat != "eyJ" {
-					continue
-				}
-				hits++
-			}
-		}
+		hits += countSecretPatternHits(s)
 		// Nested JSON + escaped keys (e.g. trust_launch stdout embedding "thought").
 		if contentHasPrivateReasoning(b) {
 			rawThoughts = true
+		}
+		// Local host identity / absolute paths (#168 / GPT P1-C).
+		if contentHasLocalIdentityLeak(s, scanHosts...) {
+			hits++
+			fails = append(fails, "local_identity:"+e.Name())
+		}
+			// Filenames also publish identity (Pro R35 P1). Fixed harness basenames are
+		// fully exempt (preflight.json vs host=preflight). Formal report names use
+		// span-aware host matching: fixed GOOS/date/prefix alone may collide, but
+		// any match overlapping the free version segment fails (Pro R44/R45).
+		if leak, why := filenameIdentityLeak(e.Name(), scanHosts...); leak {
+			hits++
+			fails = append(fails, "local_identity_filename:"+e.Name()+why)
 		}
 	}
 	out["files_seen"] = seen
@@ -832,9 +1037,1608 @@ func scanPrivacy(evDir string) map[string]any {
 	if len(fails) > 0 {
 		out["failure_classes"] = fails
 	}
-	// Complete only when every seen entry was scanned and at least one file scanned.
+	// Complete only when every seen entry was scanned and at least one file scanned
+	// and no privacy failure classes (including local identity leaks).
 	out["complete"] = skipped == 0 && scanned > 0 && len(fails) == 0
 	return out
+}
+
+// structuredJSONEnumPairRE matches candidate closed structured key/value pairs.
+// Only validated enum values are blanked — arbitrary values under the same keys
+// must remain visible to hostname scan (Pro R31 P1).
+var structuredJSONEnumPairRE = regexp.MustCompile(
+	`"(?P<key>goos|goarch|live_goos|live_goarch|report_generator_goos|report_generator_goarch|` +
+		`final_disposition|disposition|strongest_proven|status|class|src|` +
+		`live_binary_commit_src|report_generator_commit_src|schema)"\s*:\s*"(?P<val>[^"]*)"`)
+
+// isClosedStructuredEnumValue reports whether val is a field-specific closed enum
+// for a structured key. Invalid/arbitrary values must NOT be exempted from leak scan.
+func isClosedStructuredEnumValue(key, val string) bool {
+	switch key {
+	case "goos", "live_goos", "report_generator_goos":
+		return isValidGOOS(val)
+	case "goarch", "live_goarch", "report_generator_goarch":
+		return isValidGOARCH(val)
+	case "final_disposition", "disposition":
+		switch val {
+		case "GO", "LIMITED_GO", "MORE_DATA", "NO_GO":
+			return true
+		}
+	case "strongest_proven":
+		switch val {
+		case "transport", "session_visible", "explicit", "unknown":
+			return true
+		}
+	case "status":
+		switch val {
+		case "PASS", "FAIL", "NOT_RUN", "INCONCLUSIVE":
+			return true
+		}
+	case "class":
+		switch val {
+		case "binary_absent", "other_external_environment":
+			return true
+		}
+	case "src", "live_binary_commit_src", "report_generator_commit_src":
+		switch val {
+		case "ldflags", "vcs", "unknown":
+			return true
+		}
+	case "schema":
+		// Explicit schema registry only (Pro R32 P1: no broad reinframe.* fallback
+		// that can blank hostname-bearing values like reinframe.x/build-01.v1).
+		switch val {
+		case liveIdentitySchema, liveScanContextSchema,
+			"reinframe.grok_build_live_control.v2",
+			"reinframe.grok_build_acp.v1",
+			"reinframe.grok_build.v1",
+			"reinframe.grok_build_live_control.v1":
+			return true
+		}
+	}
+	return false
+}
+
+// blankClosedStructuredEnumValues removes only field-validated closed enum values
+// so hostnames colliding with GOOS/GOARCH tokens do not false-flag (Pro R26 P2),
+// while invalid values under the same keys stay scannable (Pro R31 P1).
+func blankClosedStructuredEnumValues(s string) string {
+	return structuredJSONEnumPairRE.ReplaceAllStringFunc(s, func(m string) string {
+		sub := structuredJSONEnumPairRE.FindStringSubmatch(m)
+		if len(sub) < 3 {
+			return m
+		}
+		key, val := sub[1], sub[2]
+		if isClosedStructuredEnumValue(key, val) {
+			return `"":""`
+		}
+		return m
+	})
+}
+
+// filenameHasLocalIdentityLeak reports host tokens in basenames. Unlike free-text
+// content matching (where '-' is a DNS-label character), filenames treat hyphen as a
+// component boundary so "…-build-01.json" matches host "build-01" (Pro R43 P1).
+func filenameHasLocalIdentityLeak(name string, extraHostnames ...string) bool {
+	if name == "" {
+		return false
+	}
+	// Path/home leaks in names are unexpected but fail closed via the free-text path.
+	if contentHasLocalIdentityLeak(name, extraHostnames...) {
+		return true
+	}
+	hosts := make([]string, 0, 2+len(extraHostnames))
+	if h, err := os.Hostname(); err == nil {
+		if t := strings.TrimSpace(h); t != "" {
+			hosts = append(hosts, t)
+		}
+	}
+	hosts = append(hosts, extraHostnames...)
+	seen := map[string]struct{}{}
+	for _, h := range hosts {
+		h = strings.TrimSpace(h)
+		if h == "" || h == "localhost" || len(h) <= 1 {
+			continue
+		}
+		key := strings.ToLower(h)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		for _, cand := range hostnameCandidates(h) {
+			if filenameHostTokenPresent(name, cand) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// filenameHostTokenPresent matches host as a path/filename component where '-', '_',
+// and '.' are all component separators (stricter than free-text DNS-token matching).
+func filenameHostTokenPresent(s, host string) bool {
+	host = strings.TrimSpace(host)
+	if s == "" || host == "" {
+		return false
+	}
+	// RE2: left = start or non-alnum; right = end or non-alnum (hyphen is a boundary).
+	re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])` + regexp.QuoteMeta(host) + `([^A-Za-z0-9]|$)`)
+	return re.MatchString(s)
+}
+
+// isHarnessOwnedEvidenceFilename reports fixed basenames written by groklive itself
+// (not formal report names). Hostname collisions with these stems must not false-flag
+// (Pro R41 P2: host=preflight vs preflight.json).
+func isHarnessOwnedEvidenceFilename(name string) bool {
+	base := filepath.Base(name)
+	switch base {
+	case "preflight.json", "scenarios.json", "live_identity.json",
+		"live_grok_executable.json", "live_grokhooks_executable.json",
+		"hook_invocations.jsonl", "trust_launch.json", "acp_manifest.json",
+		"hooks_doctor_pre_trust.json", "hooks_doctor_post_trust.json",
+		"reinframe.grok_build_live_control.v2.schema.json",
+		"RUN.md", "PRIVACY_ERRATA.md", "SUPERSEDED.md":
+		return true
+	}
+	return false
+}
+
+// formalLiveReportBasenameRE matches generator formal report basenames.
+// Groups: 1=prefix, 2=version, 3=goos, 4=date, 5=ext.
+// issue-167-live-v2-<ver>-<goos|unknown>-YYYY-MM-DD.{json,md}
+var formalLiveReportBasenameRE = regexp.MustCompile(
+	`^(issue-167-live-v2-)([A-Za-z0-9._-]{1,48})-` +
+		`(unknown|aix|android|darwin|dragonfly|freebsd|hurd|illumos|ios|js|linux|nacl|netbsd|openbsd|plan9|solaris|wasip1|windows|zos)-` +
+		`(\d{4}-\d{2}-\d{2})\.(json|md)$`,
+)
+
+// formalVersionByteSpan returns the [start,end) byte span of the free version
+// segment in a formal report basename, if the name matches the generator shape.
+func formalVersionByteSpan(base string) (start, end int, ok bool) {
+	loc := formalLiveReportBasenameRE.FindStringSubmatchIndex(base)
+	// Indices: 0,1 full; 2,3 g1; 4,5 g2 (version); ...
+	if len(loc) < 6 || loc[4] < 0 || loc[5] < 0 {
+		return 0, 0, false
+	}
+	return loc[4], loc[5], true
+}
+
+// filenameHostTokenRanges returns [start,end) ranges of host token matches in s
+// using the same filename-boundary rules as filenameHostTokenPresent.
+func filenameHostTokenRanges(s, host string) [][2]int {
+	host = strings.TrimSpace(host)
+	if s == "" || host == "" {
+		return nil
+	}
+	re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(` + regexp.QuoteMeta(host) + `)([^A-Za-z0-9]|$)`)
+	ms := re.FindAllStringSubmatchIndex(s, -1)
+	if len(ms) == 0 {
+		return nil
+	}
+	out := make([][2]int, 0, len(ms))
+	for _, m := range ms {
+		// Group 2 is the host body.
+		if len(m) >= 6 && m[4] >= 0 && m[5] >= m[4] {
+			out = append(out, [2]int{m[4], m[5]})
+		}
+	}
+	return out
+}
+
+func rangesOverlap(a0, a1, b0, b1 int) bool {
+	return a0 < b1 && b0 < a1
+}
+
+// filenameIdentityHosts collects generator + extra hostnames for filename token scan.
+func filenameIdentityHosts(extraHostnames ...string) []string {
+	hosts := make([]string, 0, 2+len(extraHostnames))
+	if h, err := os.Hostname(); err == nil {
+		if t := strings.TrimSpace(h); t != "" {
+			hosts = append(hosts, t)
+		}
+	}
+	hosts = append(hosts, extraHostnames...)
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		h = strings.TrimSpace(h)
+		if h == "" || h == "localhost" || len(h) <= 1 {
+			continue
+		}
+		key := strings.ToLower(h)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, h)
+	}
+	return out
+}
+
+// redactedSecretPlaceholderRE matches canonical redacted secret forms so residual
+// raw prefixes remain scannable (Pro R52 P1: mixed redacted+raw in one document).
+var redactedSecretPlaceholderRE = regexp.MustCompile(
+	`(?i)(?:xai-|sk-)\[REDACTED\]|Bearer\s*\[REDACTED\]`,
+)
+
+// stripCanonicalRedactedSecrets removes known placeholder forms only; raw secrets
+// that share a document with a placeholder must still be detected.
+func stripCanonicalRedactedSecrets(s string) string {
+	return redactedSecretPlaceholderRE.ReplaceAllString(s, "")
+}
+
+// countSecretPatternHits counts residual secret prefixes after removing redacted
+// placeholders (shared by scanPrivacy and exact-output gate).
+func countSecretPatternHits(s string) int {
+	residual := stripCanonicalRedactedSecrets(s)
+	n := 0
+	for _, pat := range []string{"sk-", "xai-", "Bearer ", "eyJ"} {
+		if strings.Contains(residual, pat) {
+			n++
+		}
+	}
+	return n
+}
+
+// secretPatternLeak reports whether residual secret material remains.
+func secretPatternLeak(s string) (bool, string) {
+	residual := stripCanonicalRedactedSecrets(s)
+	for _, pat := range []string{"sk-", "xai-", "Bearer ", "eyJ"} {
+		if strings.Contains(residual, pat) {
+			return true, "secret_pattern:" + pat
+		}
+	}
+	return false, ""
+}
+
+// emittedArtifactPrivacyLeak reports whether a prospective formal-report basename
+// or body would publish private material (Pro R51 exact-output privacy gate).
+func emittedArtifactPrivacyLeak(name string, body []byte, extraHostnames ...string) (bool, string) {
+	if leak, _ := filenameIdentityLeak(name, extraHostnames...); leak {
+		return true, "filename_identity"
+	}
+	if contentHasPrivateReasoning(body) {
+		return true, "private_reasoning"
+	}
+	s := string(body)
+	if contentHasLocalIdentityLeak(s, extraHostnames...) {
+		return true, "local_identity"
+	}
+	if leak, why := secretPatternLeak(s); leak {
+		return true, why
+	}
+	return false, ""
+}
+
+// filenameIdentityLeak reports whether a basename publishes a host token.
+// Fixed harness names: never.
+// Formal reports (Pro R45): fixed-only collisions (GOOS/date/prefix alone) are
+// exempt, but any host match that overlaps or crosses the free version span fails.
+// All other names: full filename host scan.
+func filenameIdentityLeak(name string, extraHostnames ...string) (bool, string) {
+	base := filepath.Base(name)
+	if isHarnessOwnedEvidenceFilename(base) {
+		return false, ""
+	}
+	if verStart, verEnd, ok := formalVersionByteSpan(base); ok {
+		// Host wholly inside the free version segment (plus path-style name leaks).
+		ver := base[verStart:verEnd]
+		if filenameHasLocalIdentityLeak(ver, extraHostnames...) {
+			return true, ""
+		}
+		// Span-aware (Pro R45): host token on the FULL basename fails iff its match
+		// range intersects the version span — catches cross-boundary hosts such as
+		// build-01-darwin with version=build-01+goos=darwin, or v2-build-01 with
+		// version=build-01 (fixed-only GOOS/date/prefix collisions stay exempt).
+		for _, h := range filenameIdentityHosts(extraHostnames...) {
+			for _, cand := range hostnameCandidates(h) {
+				for _, r := range filenameHostTokenRanges(base, cand) {
+					if rangesOverlap(r[0], r[1], verStart, verEnd) {
+						return true, ""
+					}
+				}
+			}
+		}
+		return false, ""
+	}
+	if filenameHasLocalIdentityLeak(base, extraHostnames...) {
+		return true, ""
+	}
+	return false, ""
+}
+
+// contentHasLocalIdentityLeak reports home/tmp absolute paths or .local hostnames in evidence.
+// Covers Unix and Windows (including JSON-escaped backslashes after Marshal).
+// extraHostnames are additional hosts to token-scan (live executor hostname on derived reports).
+func contentHasLocalIdentityLeak(s string, extraHostnames ...string) bool {
+	if s == "" {
+		return false
+	}
+	// Already redacted placeholders are fine as tokens; residual raw paths still fail.
+	if strings.Contains(s, "/Users/") || strings.Contains(s, "/home/") {
+		return true
+	}
+	if strings.Contains(s, "/var/folders/") {
+		return true
+	}
+	// Residual --project root (outside HOME/TMP) is a leak (Pro R31/R32 P1).
+	if p := strings.TrimSpace(liveProjectRoot); p != "" && len(p) >= 3 {
+		if strings.Contains(s, p) {
+			return true
+		}
+		// JSON-escaped Windows separators.
+		if strings.Contains(p, `\`) {
+			esc := strings.ReplaceAll(p, `\`, `\\`)
+			if strings.Contains(s, esc) {
+				return true
+			}
+		}
+	}
+	// Windows user roots: C:\Users\…, C:\\Users\\… (JSON), C:/Users/…
+	if winUsersPath.MatchString(s) || winUsersPathEscaped.MatchString(s) || winUsersPathSlash.MatchString(s) {
+		return true
+	}
+	if strings.Contains(s, `\Users\`) || strings.Contains(s, `\\Users\\`) {
+		return true
+	}
+	if localHostname.MatchString(s) {
+		return true
+	}
+	// Hostnames without .local suffix (Linux CI / containers / live executor).
+	// Always strip [HOSTNAME] placeholders first so mixed placeholder+raw fails (Codex P1).
+	// Match token boundaries only — unrestricted Contains false-flags schema ids when
+	// hostname is a common word like "build" (Codex P2 on tip 608cdcc).
+	// Blank only validated closed structured enum/platform values before hostname
+	// token scan (Pro R26 P2 + Pro R31 P1: invalid status values remain scannable).
+	hosts := make([]string, 0, 2+len(extraHostnames))
+	if h, err := os.Hostname(); err == nil {
+		hosts = append(hosts, h)
+	}
+	hosts = append(hosts, extraHostnames...)
+	strippedHost := strings.ReplaceAll(s, "[HOSTNAME]", "")
+	strippedHost = blankClosedStructuredEnumValues(strippedHost)
+	seenH := map[string]struct{}{}
+	for _, h := range hosts {
+		h = strings.TrimSpace(h)
+		if h == "" || h == "localhost" || len(h) <= 1 {
+			continue
+		}
+		key := strings.ToLower(h)
+		if _, dup := seenH[key]; dup {
+			continue
+		}
+		seenH[key] = struct{}{}
+		if hostnameTokenPresent(strippedHost, h) {
+			return true
+		}
+	}
+	// Unhashed temp paths (Unix /tmp and Windows Temp). Strip [TMP:…] placeholders first
+	// so a mixed file with one good placeholder and one raw path still fails (#Codex P2).
+	withoutPlaceholders := localTmpPlaceholder.ReplaceAllString(s, "")
+	// Also strip bare [TMP] env-root replacements and identity placeholders.
+	withoutPlaceholders = strings.ReplaceAll(withoutPlaceholders, "[TMP]", "")
+	withoutPlaceholders = strings.ReplaceAll(withoutPlaceholders, "[HOSTNAME]", "")
+	withoutPlaceholders = strings.ReplaceAll(withoutPlaceholders, "[HOME]", "")
+	if localTmpPath.MatchString(withoutPlaceholders) {
+		return true
+	}
+	if winTempPath.MatchString(withoutPlaceholders) || winTempPathEscaped.MatchString(withoutPlaceholders) {
+		return true
+	}
+	if strings.Contains(withoutPlaceholders, `\AppData\Local\Temp`) ||
+		strings.Contains(withoutPlaceholders, `\\AppData\\Local\\Temp`) ||
+		strings.Contains(withoutPlaceholders, `\Windows\Temp`) ||
+		strings.Contains(withoutPlaceholders, `\\Windows\\Temp`) {
+		return true
+	}
+	// Residual ls -l owner before redaction (including mid-line JSON stdout).
+	// Skip rows already rewritten to [USER]/[GROUP] so redacted evidence is clean.
+	for _, m := range lsOwnerGroup.FindAllStringSubmatch(s, -1) {
+		if len(m) < 6 {
+			continue
+		}
+		owner, group := m[3], m[5]
+		if owner == "[USER]" || group == "[GROUP]" {
+			continue
+		}
+		// Real residual ownership columns.
+		return true
+	}
+	// Residual env account names (len>=3) only in path/ownership-token contexts —
+	// not unrestricted substrings (Pro R7 P2: USER=agent must not match "agent stdio").
+	withoutUserPlaceholders := strings.ReplaceAll(withoutPlaceholders, "[USER]", "")
+	withoutUserPlaceholders = strings.ReplaceAll(withoutUserPlaceholders, "[GROUP]", "")
+	for _, key := range []string{"USER", "LOGNAME", "USERNAME"} {
+		u := strings.TrimSpace(os.Getenv(key))
+		if u == "" || u == "root" || len(u) < 3 {
+			continue
+		}
+		if contentHasAccountTokenLeak(withoutUserPlaceholders, u) {
+			return true
+		}
+	}
+	return false
+}
+
+// contentHasAccountTokenLeak reports residual account names only as path segments
+// or parsed ls -l owner/group columns — never arbitrary quote/whitespace tokens
+// (Pro R13 P2: USER=grok must not flag {"version":"grok 1.0.0"}).
+func contentHasAccountTokenLeak(s, user string) bool {
+	if user == "" {
+		return false
+	}
+	// Path segments.
+	for _, pref := range []string{"/Users/", "/home/", `\Users\`, `\\Users\\`} {
+		if strings.Contains(s, pref+user) {
+			return true
+		}
+	}
+	// ls -l ownership columns only (mode links owner group …).
+	// Example: "lrwxr-xr-x@ 1 alice  staff  27 …"
+	re := regexp.MustCompile(`(?m)(?:^|[\s"\\])[l-][rwxSsTt-]{9}[@+]?\s+\d+\s+` + regexp.QuoteMeta(user) + `\s+\S+`)
+	if re.MatchString(s) {
+		return true
+	}
+	// Group column as second identity field after a numeric links count.
+	reG := regexp.MustCompile(`(?m)(?:^|[\s"\\])[l-][rwxSsTt-]{9}[@+]?\s+\d+\s+\S+\s+` + regexp.QuoteMeta(user) + `(?:[\s"\\]|$)`)
+	return reG.MatchString(s)
+}
+
+// liveIdentitySchema is the sealed schema id for live executor provenance.
+const liveIdentitySchema = "reinframe.live_identity.v1"
+
+// liveGrokExeSchema seals the external Grok CLI binary content binding for a run.
+const liveGrokExeSchema = "reinframe.live_grok_executable.v1"
+
+// liveScanContextSchema / file hold the live-executor hostname for privacy scan only
+// (not redacted, excluded from content scan so it cannot self-leak).
+const (
+	liveScanContextSchema = "reinframe.live_scan_context.v1"
+	liveScanContextFile   = "live_scan_context.json"
+	// Legacy accidental under-evidence portable name (Pro R28 P1): never write;
+	// presence in evidence is a privacy failure.
+	liveScanContextPortableFile = ".live_scan_context.private.json"
+)
+
+// External scan-context transfer paths (Pro R28 P1). Must stay outside --evidence-out.
+// Set via report/all flags or tests; empty means private-cache only.
+var (
+	scanContextOutPath string
+	scanContextInPath  string
+)
+
+// liveIdentity holds a verified live-executor identity (never the report generator).
+type liveIdentity struct {
+	Commit        string
+	Dirty         bool
+	Src           string
+	GOOS          string
+	GOARCH        string
+	ScanContextID string // binds private hostname context to this campaign (Pro R19)
+	OK            bool
+	Err           string // non-empty when OK is false
+}
+
+// privateCacheRootFn is overridable in tests (Pro R19: inject XDG-style roots).
+var privateCacheRootFn = defaultPrivateCacheRoot
+
+func defaultPrivateCacheRoot() (string, error) {
+	if d, err := os.UserCacheDir(); err == nil && strings.TrimSpace(d) != "" {
+		return d, nil
+	}
+	if d, err := os.UserConfigDir(); err == nil && strings.TrimSpace(d) != "" {
+		return d, nil
+	}
+	return "", fmt.Errorf("no user cache/config dir")
+}
+
+func newScanContextID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// realPathBestEffort returns a cleaned absolute path with as many existing
+// components symlink-resolved as possible (Pro R20/R21 containment).
+func realPathBestEffort(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	abs = filepath.Clean(abs)
+	if r, err := filepath.EvalSymlinks(abs); err == nil {
+		return r
+	}
+	// Resolve longest existing ancestor, re-join missing suffix.
+	suffix := ""
+	cur := abs
+	for {
+		if r, err := filepath.EvalSymlinks(cur); err == nil {
+			if suffix == "" {
+				return r
+			}
+			return filepath.Join(r, suffix)
+		}
+		dir := filepath.Dir(cur)
+		if dir == cur {
+			break
+		}
+		base := filepath.Base(cur)
+		if suffix == "" {
+			suffix = base
+		} else {
+			suffix = filepath.Join(base, suffix)
+		}
+		cur = dir
+	}
+	return abs
+}
+
+// pathContainedIn reports whether child is equal to parent or nested under it.
+// Uses resolved paths + os.SameFile on every ancestor of both the lexical child
+// and its symlink-resolved form, so:
+//   - case-insensitive APFS aliases (Evidence vs eVIDENCE) are caught (Pro R20)
+//   - cache-root symlink into evidence/subdir is caught (Pro R21 P1)
+func pathContainedIn(child, parent string) (bool, error) {
+	pAbs, err := filepath.Abs(parent)
+	if err != nil {
+		return false, err
+	}
+	pAbs = filepath.Clean(pAbs)
+	pReal := realPathBestEffort(pAbs)
+	pInfo, err := os.Stat(pReal)
+	if err != nil {
+		// Parent must exist for a meaningful containment decision.
+		return false, err
+	}
+
+	cAbs, err := filepath.Abs(child)
+	if err != nil {
+		return false, err
+	}
+	cAbs = filepath.Clean(cAbs)
+	cReal := realPathBestEffort(cAbs)
+
+	// Walk both lexical and resolved child ancestors; SameFile vs evidence root.
+	for _, start := range []string{cAbs, cReal} {
+		cur := start
+		for {
+			if info, err := os.Stat(cur); err == nil {
+				if os.SameFile(info, pInfo) {
+					return true, nil
+				}
+			}
+			if eval, err := filepath.EvalSymlinks(cur); err == nil && eval != cur {
+				if info, err := os.Stat(eval); err == nil && os.SameFile(info, pInfo) {
+					return true, nil
+				}
+				// Walk resolved target ancestors too (symlink → evidence/subdir).
+				rcur := eval
+				for {
+					if info, err := os.Stat(rcur); err == nil && os.SameFile(info, pInfo) {
+						return true, nil
+					}
+					// Also: is rcur under pReal via Rel after both real?
+					if underLexical(rcur, pReal) {
+						return true, nil
+					}
+					next := filepath.Dir(rcur)
+					if next == rcur {
+						break
+					}
+					rcur = next
+				}
+			}
+			if underLexical(cur, pReal) || underLexical(cur, pAbs) {
+				return true, nil
+			}
+			next := filepath.Dir(cur)
+			if next == cur {
+				break
+			}
+			cur = next
+		}
+	}
+	return underLexical(cReal, pReal) || underLexical(cAbs, pAbs) || underLexical(cReal, pAbs), nil
+}
+
+// pathVolumeCaseInsensitive reports whether lexical path comparison for the
+// given paths should fold case. Windows always folds; Linux never; Darwin probes
+// the target volume (not the process temp dir) so mixed APFS mounts are correct
+// (Pro R33 P2 + Pro R34 P2). os.SameFile still catches real case-aliases when
+// both paths exist.
+func pathVolumeCaseInsensitive(paths ...string) bool {
+	switch runtime.GOOS {
+	case "windows":
+		return true
+	case "darwin":
+		return darwinVolumeCaseInsensitive(paths...)
+	default:
+		return false
+	}
+}
+
+var (
+	darwinVolMu    sync.Mutex
+	darwinVolCache = map[string]bool{} // key: device id string of probe root
+)
+
+// nearestExistingDir walks up to the first existing directory for probing.
+func nearestExistingDir(p string) string {
+	p = filepath.Clean(p)
+	if p == "" {
+		return ""
+	}
+	cur := p
+	for {
+		if st, err := os.Stat(cur); err == nil {
+			if st.IsDir() {
+				return cur
+			}
+			return filepath.Dir(cur)
+		}
+		next := filepath.Dir(cur)
+		if next == cur {
+			return ""
+		}
+		cur = next
+	}
+}
+
+func darwinVolumeCaseInsensitive(paths ...string) bool {
+	// Prefer an existing ancestor of the caller paths so the probe runs on the
+	// same volume as evidence/cache (Pro R34 P2). Fall back to system temp only
+	// when no path is usable.
+	var roots []string
+	for _, p := range paths {
+		if d := nearestExistingDir(p); d != "" {
+			roots = append(roots, d)
+		}
+	}
+	if len(roots) == 0 {
+		if t := os.TempDir(); t != "" {
+			roots = append(roots, t)
+		}
+	}
+	if len(roots) == 0 {
+		return false
+	}
+	// If any compared path's volume is case-sensitive, do not fold (safe for
+	// mixed mounts: SameFile still catches true aliases on folding volumes).
+	allFold := true
+	any := false
+	for _, root := range roots {
+		fold, ok := probeDarwinVolumeCase(root)
+		if !ok {
+			continue
+		}
+		any = true
+		if !fold {
+			allFold = false
+			break
+		}
+	}
+	if !any {
+		return false
+	}
+	return allFold
+}
+
+// volumeCacheKey identifies the filesystem volume for case-sensitivity cache.
+// Portable: prefer device id via FileInfo.Sys when the type is known at runtime
+// without importing platform-specific syscall.Stat_t (Windows build).
+func volumeCacheKey(root string, st os.FileInfo) string {
+	// Reflect-free portable approach: use root path. Same volume paths share
+	// nearestExistingDir ancestors, so sibling probes reuse the same root key
+	// after the first nearestExistingDir walk lands on the volume mount.
+	return filepath.Clean(root)
+}
+
+func probeDarwinVolumeCase(root string) (fold bool, ok bool) {
+	root = filepath.Clean(root)
+	if root == "" {
+		return false, false
+	}
+	st, err := os.Stat(root)
+	if err != nil || !st.IsDir() {
+		return false, false
+	}
+	key := volumeCacheKey(root, st)
+	darwinVolMu.Lock()
+	if v, hit := darwinVolCache[key]; hit {
+		darwinVolMu.Unlock()
+		return v, true
+	}
+	darwinVolMu.Unlock()
+
+	// Probe inside root: create unique subdir to avoid collisions.
+	probeDir, err := os.MkdirTemp(root, ".rf-case-probe-*")
+	if err != nil {
+		// Unwritable volume: fail open toward case-sensitive.
+		return false, false
+	}
+	defer func() { _ = os.RemoveAll(probeDir) }()
+	p := filepath.Join(probeDir, "a")
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		return false, false
+	}
+	alt := filepath.Join(probeDir, "A")
+	stA, errA := os.Stat(p)
+	stB, errB := os.Stat(alt)
+	if errA != nil || errB != nil {
+		// Case-sensitive: "A" does not exist as alias of "a".
+		fold = false
+	} else {
+		fold = os.SameFile(stA, stB)
+	}
+	darwinVolMu.Lock()
+	darwinVolCache[key] = fold
+	darwinVolMu.Unlock()
+	return fold, true
+}
+
+func underLexical(child, parent string) bool {
+	if child == "" || parent == "" {
+		return false
+	}
+	if child == parent {
+		return true
+	}
+	sep := string(os.PathSeparator)
+	// Case-sensitive volumes (Linux, case-sensitive APFS): exact match only.
+	// Unconditional ToLower falsely merges /workspace/cache with /workspace/Cache
+	// (Pro R33 P2). Volume-scoped on Darwin (Pro R34 P2).
+	if !pathVolumeCaseInsensitive(child, parent) {
+		if strings.HasPrefix(child, parent+sep) {
+			return true
+		}
+		if rel, err := filepath.Rel(parent, child); err == nil {
+			if rel == "." {
+				return true
+			}
+			if rel != ".." && !strings.HasPrefix(rel, ".."+sep) {
+				return true
+			}
+		}
+		return false
+	}
+	// Case-insensitive volumes: fold case for equality and prefix (Windows/APFS).
+	if equalFoldPath(child, parent) {
+		return true
+	}
+	cl, pl := strings.ToLower(child), strings.ToLower(parent)
+	if strings.HasPrefix(cl, pl+sep) {
+		return true
+	}
+	if rel, err := filepath.Rel(parent, child); err == nil {
+		if rel == "." {
+			return true
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+sep) {
+			return true
+		}
+	}
+	if rel, err := filepath.Rel(pl, cl); err == nil {
+		if rel == "." {
+			return true
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+sep) {
+			return true
+		}
+	}
+	return false
+}
+
+func equalFoldPath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if !pathVolumeCaseInsensitive(a, b) {
+		return false
+	}
+	return strings.EqualFold(a, b)
+}
+
+// isValidGOOS / isValidGOARCH reject path traversal and non-platform tokens before
+// live_goos/live_goarch are used in report basenames (Codex GraphQL P2 on #230).
+func isValidGOOS(s string) bool {
+	switch strings.TrimSpace(s) {
+	case "aix", "android", "darwin", "dragonfly", "freebsd", "hurd", "illumos",
+		"ios", "js", "linux", "nacl", "netbsd", "openbsd", "plan9", "solaris",
+		"wasip1", "windows", "zos":
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidGOARCH(s string) bool {
+	switch strings.TrimSpace(s) {
+	case "386", "amd64", "amd64p32", "arm", "arm64", "arm64be", "armbe",
+		"loong64", "mips", "mips64", "mips64le", "mips64p32", "mips64p32le",
+		"mipsle", "ppc", "ppc64", "ppc64le", "riscv", "riscv64", "s390",
+		"s390x", "sparc", "sparc64", "wasm":
+		return true
+	default:
+		return false
+	}
+}
+
+// liveScanContextPath returns the private path for the bare live hostname control
+// file, keyed by high-entropy scan_context_id only (Pro R26 P1).
+// Evidence absolute path is intentionally NOT part of the key so rename/move of
+// the evidence directory on the same host still resolves the same context.
+// Rejects paths that resolve under the evidence directory (XDG_CACHE_HOME traps).
+func liveScanContextPath(evDir, scanContextID string) (string, error) {
+	if strings.TrimSpace(scanContextID) == "" || len(scanContextID) < 16 {
+		return "", fmt.Errorf("liveScanContextPath: scan_context_id required")
+	}
+	abs, err := filepath.Abs(evDir)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	// Portable key: scan_context_id alone (v2). Prior v1 mixed abs(evDir) and could
+	// not survive evidence rename/copy on the same machine (Pro R26 P1).
+	sum := sha256.Sum256([]byte("live_scan_context.v2\n" + scanContextID))
+	base, err := privateCacheRootFn()
+	if err != nil || strings.TrimSpace(base) == "" {
+		return "", fmt.Errorf("liveScanContextPath: cache root: %w", err)
+	}
+	dir := filepath.Join(base, "reinframe-groklive", "live_scan_context")
+	path := filepath.Join(dir, hex.EncodeToString(sum[:16])+".json")
+	// Containment: never write private control inside evidence (Pro R19/R20).
+	if under, err := pathContainedIn(path, abs); err != nil {
+		return "", fmt.Errorf("liveScanContextPath: containment: %w", err)
+	} else if under {
+		return "", fmt.Errorf("liveScanContextPath: private path %s is inside evidence %s", path, abs)
+	}
+	if under, err := pathContainedIn(dir, abs); err != nil {
+		return "", fmt.Errorf("liveScanContextPath: dir containment: %w", err)
+	} else if under {
+		return "", fmt.Errorf("liveScanContextPath: private dir %s is inside evidence %s", dir, abs)
+	}
+	if under, err := pathContainedIn(base, abs); err != nil {
+		// base may not exist yet — ignore missing; equalFold still runs inside pathContainedIn for abs paths
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("liveScanContextPath: base containment: %w", err)
+		}
+	} else if under {
+		return "", fmt.Errorf("liveScanContextPath: private cache root %s is inside evidence %s", base, abs)
+	}
+	return path, nil
+}
+
+// writeLiveScanContext records the live host's hostname outside the evidence
+// directory, bound to scanContextID (Pro R17–R19).
+func writeLiveScanContext(evDir, scanContextID string) error {
+	h, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("writeLiveScanContext: hostname: %w", err)
+	}
+	h = strings.TrimSpace(h)
+	if h == "" || h == "localhost" || len(h) <= 1 {
+		return fmt.Errorf("writeLiveScanContext: empty/localhost/short hostname cannot bind live scan context")
+	}
+	path, err := liveScanContextPath(evDir, scanContextID)
+	if err != nil {
+		return fmt.Errorf("writeLiveScanContext: path: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	// Re-check containment after directory creation (SameFile now applies).
+	evAbs := evDir
+	if a, e := filepath.Abs(evDir); e == nil {
+		evAbs = a
+	}
+	if under, err := pathContainedIn(path, evAbs); err != nil {
+		return fmt.Errorf("writeLiveScanContext: post-mkdir containment: %w", err)
+	} else if under {
+		return fmt.Errorf("writeLiveScanContext: private path inside evidence after mkdir")
+	}
+	b, err := json.MarshalIndent(map[string]any{
+		"schema":          liveScanContextSchema,
+		"scan_context_id": scanContextID,
+		"live_hostname":   h,
+		"evidence_dir":    filepath.Clean(evAbs),
+		"at":              stamp(),
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	_ = os.Remove(filepath.Join(evDir, liveScanContextFile))
+	_ = os.Remove(filepath.Join(evDir, liveScanContextPortableFile))
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return err
+	}
+	// Optional external transfer path — must NOT be under evidence (Pro R28 P1).
+	if err := writeScanContextOutFile(evAbs, b); err != nil {
+		return err
+	}
+	return nil
+}
+
+// writeScanContextOutFile writes validated scan-context JSON to --scan-context-out
+// when set. No-op when the flag is empty. Fail-closed on containment or write errors.
+func writeScanContextOutFile(evAbs string, b []byte) error {
+	out := strings.TrimSpace(scanContextOutPath)
+	if out == "" {
+		return nil
+	}
+	outAbs, err := filepath.Abs(out)
+	if err != nil {
+		return fmt.Errorf("scan-context-out abs: %w", err)
+	}
+	if under, err := pathContainedIn(outAbs, evAbs); err != nil {
+		return fmt.Errorf("scan-context-out containment: %w", err)
+	} else if under {
+		return fmt.Errorf("--scan-context-out must be outside evidence directory")
+	}
+	// Use safeWriteFile: unique CreateTemp (no predictable OUT.tmp) + Lstat reject
+	// so a pre-planted OUT.tmp symlink cannot redirect writes (Pro R39 skeptic / Codex P2).
+	if err := safeWriteFile(outAbs, b, 0o600); err != nil {
+		return fmt.Errorf("write scan-context-out: %w", err)
+	}
+	return nil
+}
+
+// exportLiveScanContextOut copies the validated private scan context for this
+// campaign to --scan-context-out when set (Pro R30 P2: resume existing identity).
+// Fail if the user requested export but the private file cannot be read or written.
+// Single-read bind (Pro R49 P2): parse, ID-check, and export the same byte slice.
+func exportLiveScanContextOut(evDir, scanContextID string) error {
+	out := strings.TrimSpace(scanContextOutPath)
+	if out == "" {
+		return nil
+	}
+	scanContextID = strings.TrimSpace(scanContextID)
+	if scanContextID == "" {
+		return fmt.Errorf("export scan-context-out: empty scan_context_id")
+	}
+	// Ensure private context exists (may import --scan-context-in once).
+	if h, ok, why := loadLiveScanContext(evDir); !ok || strings.TrimSpace(h) == "" {
+		return fmt.Errorf("export scan-context-out: private context: %s", why)
+	}
+	path, err := liveScanContextPath(evDir, scanContextID)
+	if err != nil {
+		return fmt.Errorf("export scan-context-out path: %w", err)
+	}
+	// One open → one byte slice for parse, ID check, and portable export.
+	b, err := readRegularFile(path)
+	if err != nil {
+		return fmt.Errorf("export scan-context-out read: %w", err)
+	}
+	doc, ok, why := parseLiveScanContextBytes(b)
+	if !ok {
+		return fmt.Errorf("export scan-context-out parse: %s", why)
+	}
+	if doc.ID != scanContextID {
+		return fmt.Errorf("export scan-context-out: scan_context_id mismatch")
+	}
+	evAbs := evDir
+	if a, e := filepath.Abs(evDir); e == nil {
+		evAbs = a
+	}
+	if err := writeScanContextOutFile(evAbs, b); err != nil {
+		return fmt.Errorf("export scan-context-out: %w", err)
+	}
+	return nil
+}
+
+type liveScanContextDoc struct {
+	Hostname string
+	ID       string
+}
+
+// parseLiveScanContextBytes validates a live_scan_context document body.
+func parseLiveScanContextBytes(b []byte) (liveScanContextDoc, bool, string) {
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return liveScanContextDoc{}, false, "malformed"
+	}
+	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveScanContextSchema {
+		return liveScanContextDoc{}, false, "schema invalid"
+	}
+	h, okH := m["live_hostname"].(string)
+	h = strings.TrimSpace(h)
+	if !okH || h == "" || h == "localhost" || len(h) <= 1 {
+		return liveScanContextDoc{}, false, "live_hostname empty"
+	}
+	id, _ := m["scan_context_id"].(string)
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) < 16 {
+		return liveScanContextDoc{}, false, "scan_context_id missing"
+	}
+	return liveScanContextDoc{Hostname: h, ID: id}, true, ""
+}
+
+// loadLiveScanContext validates private scan context (fail-closed) and binds it
+// to live_identity.scan_context_id when identity is present (Pro R19 P1).
+func loadLiveScanContext(evDir string) (hostname string, ok bool, reason string) {
+	expectedID := ""
+	if id := loadLiveIdentity(evDir); id.OK {
+		expectedID = id.ScanContextID
+		if expectedID == "" {
+			return "", false, "live_identity missing scan_context_id"
+		}
+	}
+
+	tryLoad := func(path string) (liveScanContextDoc, bool, string) {
+		return loadLiveScanContextFile(path)
+	}
+
+	if expectedID != "" {
+		path, pathErr := liveScanContextPath(evDir, expectedID)
+		if pathErr != nil {
+			return "", false, "private path: " + pathErr.Error()
+		}
+		doc, ok2, why := tryLoad(path)
+		if !ok2 {
+			// External import path (outside evidence) for cross-host re-eval (Pro R28 P1).
+			if in := strings.TrimSpace(scanContextInPath); in != "" {
+				inAbs, aErr := filepath.Abs(in)
+				if aErr != nil {
+					return "", false, "scan-context-in abs: " + aErr.Error()
+				}
+				evAbs, _ := filepath.Abs(evDir)
+				if under, cErr := pathContainedIn(inAbs, filepath.Clean(evAbs)); cErr == nil && under {
+					return "", false, "scan-context-in must be outside evidence directory"
+				}
+				// Single-read binding (Pro R41 P2): parse and persist the same bytes.
+				// Regular-file / nonblocking (Pro R48 P2: import FIFO must not hang).
+				b, rErr := readRegularFile(inAbs)
+				if rErr != nil {
+					return "", false, why + "; import read: " + rErr.Error()
+				}
+				docIn, okIn, whyIn := parseLiveScanContextBytes(b)
+				if !okIn {
+					return "", false, why + "; import:" + whyIn
+				}
+				if docIn.ID != expectedID {
+					return "", false, "scan_context_id mismatch (import)"
+				}
+				if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr != nil {
+					return "", false, "scan-context-in cache mkdir: " + mkErr.Error()
+				}
+				// Fail-closed no-follow write (Pro R40 P2).
+				if wErr := safeWriteFile(path, b, 0o600); wErr != nil {
+					return "", false, "scan-context-in cache write: " + wErr.Error()
+				}
+				return docIn.Hostname, true, ""
+			}
+			// In-evidence control files are publication violations, not load sources.
+			return "", false, why
+		}
+		if doc.ID != expectedID {
+			return "", false, "scan_context_id mismatch"
+		}
+		return doc.Hostname, true, ""
+	}
+
+	// No live_identity yet: optional context (privacy does not require it).
+	// Cannot resolve private path without ID — only legacy in-evidence file.
+	legacy := filepath.Join(evDir, liveScanContextFile)
+	doc, ok2, why := tryLoad(legacy)
+	if !ok2 {
+		return "", false, why
+	}
+	return doc.Hostname, true, ""
+}
+
+func loadLiveScanContextFile(path string) (liveScanContextDoc, bool, string) {
+	// Single regular-file open (nonblocking on unix) — no Lstat→ReadFile TOCTOU (Pro R48).
+	b, err := readRegularFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return liveScanContextDoc{}, false, "missing"
+		}
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "symlink"):
+			return liveScanContextDoc{}, false, "symlink"
+		case strings.Contains(msg, "not a regular file"):
+			return liveScanContextDoc{}, false, "not regular file"
+		default:
+			return liveScanContextDoc{}, false, "unreadable: " + msg
+		}
+	}
+	return parseLiveScanContextBytes(b)
+}
+
+// privacyScanHostnames returns generator + validated live-executor hostnames.
+func privacyScanHostnames(evDir string, ctxHost string, ctxOK bool) []string {
+	var out []string
+	if h, err := os.Hostname(); err == nil {
+		if t := strings.TrimSpace(h); t != "" {
+			out = append(out, t)
+		}
+	}
+	if ctxOK && strings.TrimSpace(ctxHost) != "" {
+		out = append(out, strings.TrimSpace(ctxHost))
+		return out
+	}
+	// Fail-closed path: do not silently invent live host from a bad file.
+	_ = evDir
+	return out
+}
+
+// scrubLegacyInEvidenceScanContext removes any leftover bare-hostname control files
+// from the evidence directory. Private cache path is retained so report re-runs work.
+// Both legacy public and accidental portable under-evidence names are removed (Pro R28).
+func scrubLegacyInEvidenceScanContext(evDir string) error {
+	for _, name := range []string{liveScanContextFile, liveScanContextPortableFile} {
+		path := filepath.Join(evDir, name)
+		err := os.Remove(path)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("scrubLegacyInEvidenceScanContext: %s: %w", name, err)
+		}
+		if _, stErr := os.Lstat(path); stErr == nil {
+			return fmt.Errorf("scrubLegacyInEvidenceScanContext: %s still present after remove", name)
+		} else if !os.IsNotExist(stErr) {
+			return fmt.Errorf("scrubLegacyInEvidenceScanContext: verify %s: %w", name, stErr)
+		}
+	}
+	return nil
+}
+
+// writeLiveIdentity records the live executor binary identity for later report provenance.
+func writeLiveIdentity(evDir string) error {
+	rev, dirty, src := reinframeBuildIdentity()
+	if rev == "" || src == "unknown" || !isFullVCSRevision(rev) {
+		return fmt.Errorf("writeLiveIdentity: current binary lacks qualifying identity (rev=%q src=%s)", rev, src)
+	}
+	if !isValidGOOS(runtime.GOOS) || !isValidGOARCH(runtime.GOARCH) {
+		return fmt.Errorf("writeLiveIdentity: unexpected runtime platform %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	scanID, err := newScanContextID()
+	if err != nil {
+		return fmt.Errorf("writeLiveIdentity: scan_context_id: %w", err)
+	}
+	if err := writeLiveScanContext(evDir, scanID); err != nil {
+		return fmt.Errorf("writeLiveIdentity: scan context: %w", err)
+	}
+	if err := writeJSON(filepath.Join(evDir, "live_identity.json"), map[string]any{
+		"schema":                 liveIdentitySchema,
+		"live_binary_commit":     rev,
+		"live_binary_dirty":      dirty,
+		"live_binary_commit_src": src,
+		// Platform of the live campaign host (Pro R10 P2: do not attribute generator GOOS).
+		"live_goos":         runtime.GOOS,
+		"live_goarch":       runtime.GOARCH,
+		"scan_context_id":   scanID,
+		"at":                stamp(),
+	}); err != nil {
+		// Roll back private context so a partial identity cannot leave a stale host token.
+		if path, pErr := liveScanContextPath(evDir, scanID); pErr == nil {
+			_ = os.Remove(path)
+		}
+		return err
+	}
+	return nil
+}
+
+// ensureLiveIdentity creates live_identity.json if missing, or verifies an existing file
+// matches the current binary. Used by standalone hooks/acp and runAll so report never
+// has to invent identity from the generator.
+//
+// Refuse to retrofit identity onto a directory that already holds live phase outputs
+// without identity (Codex P1: mixed pre-change scenarios + new binary stamp).
+func ensureLiveIdentity(evDir string) error {
+	if err := os.MkdirAll(evDir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(evDir, "live_identity.json")
+	// Lstat: do not treat dangling/following symlinks as "missing" then write through
+	// them outside evidence (Pro R37 P2).
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("ensureLiveIdentity: live_identity.json is a symlink")
+		}
+		if st.IsDir() {
+			return fmt.Errorf("ensureLiveIdentity: live_identity.json is a directory")
+		}
+		id := loadLiveIdentity(evDir)
+		if !id.OK {
+			return fmt.Errorf("ensureLiveIdentity: existing file invalid: %s", id.Err)
+		}
+		rev, dirty, src := reinframeBuildIdentity()
+		if id.Commit != rev || id.Dirty != dirty || id.Src != src {
+			return fmt.Errorf("ensureLiveIdentity: live_identity mismatch current binary (live=%s dirty=%v src=%s; current=%s dirty=%v src=%s)",
+				id.Commit, id.Dirty, id.Src, rev, dirty, src)
+		}
+		// When platform is bound, refuse cross-platform retrofit of the same commit.
+		if id.GOOS != "" && id.GOARCH != "" && (id.GOOS != runtime.GOOS || id.GOARCH != runtime.GOARCH) {
+			return fmt.Errorf("ensureLiveIdentity: live platform mismatch (live=%s/%s; current=%s/%s)",
+				id.GOOS, id.GOARCH, runtime.GOOS, runtime.GOARCH)
+		}
+		// Sidecar is mandatory with live_identity (Pro R17 P1: no identity-without-context).
+		if _, ok, why := loadLiveScanContext(evDir); !ok {
+			return fmt.Errorf("ensureLiveIdentity: live_scan_context: %s", why)
+		}
+		// Resume with existing identity must still honor --scan-context-out
+		// (Pro R30 P2: writeLiveScanContext only runs on first create).
+		if err := exportLiveScanContextOut(evDir, id.ScanContextID); err != nil {
+			return fmt.Errorf("ensureLiveIdentity: %w", err)
+		}
+		return nil
+	}
+	if hasExistingLiveEvidenceWithoutIdentity(evDir) {
+		return fmt.Errorf("ensureLiveIdentity: refuse to retrofit live_identity onto existing live evidence (scenarios/hooks/acp artifacts present without identity)")
+	}
+	if err := writeLiveIdentity(evDir); err != nil {
+		return err
+	}
+	// Atomic create: refuse to proceed if the written file is not loadable.
+	id := loadLiveIdentity(evDir)
+	if !id.OK {
+		return fmt.Errorf("ensureLiveIdentity: post-write verification failed: %s", id.Err)
+	}
+	return nil
+}
+
+// hasExistingLiveEvidenceWithoutIdentity reports phase artifacts that bind a run
+// to a prior binary (scenarios, hooks, trust, acp) when live_identity.json is absent.
+func hasExistingLiveEvidenceWithoutIdentity(evDir string) bool {
+	for _, name := range []string{
+		"scenarios.json",
+		"preflight.json",
+		"hook_invocations.jsonl",
+		"trust_launch.json",
+		"acp_manifest.json",
+		"hooks_doctor_pre_trust.json",
+		"hooks_doctor_post_trust.json",
+	} {
+		st, err := os.Stat(filepath.Join(evDir, name))
+		if err == nil && !st.IsDir() && st.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// parseLiveIdentityJSON validates a complete live_identity document (no silent partials).
+func parseLiveIdentityJSON(b []byte) (liveIdentity, error) {
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return liveIdentity{}, fmt.Errorf("live_identity.json malformed: %w", err)
+	}
+	if m == nil {
+		return liveIdentity{}, fmt.Errorf("live_identity.json empty object")
+	}
+	schema, _ := m["schema"].(string)
+	if strings.TrimSpace(schema) != liveIdentitySchema {
+		return liveIdentity{}, fmt.Errorf("live_identity.json schema must be %s", liveIdentitySchema)
+	}
+	commit, ok := m["live_binary_commit"].(string)
+	commit = strings.TrimSpace(commit)
+	if !ok || commit == "" {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_binary_commit")
+	}
+	if !isFullVCSRevision(commit) {
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_binary_commit not full VCS revision")
+	}
+	dirty, ok := m["live_binary_dirty"].(bool)
+	if !ok {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_binary_dirty bool")
+	}
+	src, ok := m["live_binary_commit_src"].(string)
+	src = strings.TrimSpace(src)
+	if !ok || src == "" {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_binary_commit_src")
+	}
+	switch src {
+	case "ldflags", "vcs":
+		// ok
+	case "unknown":
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_binary_commit_src=unknown cannot qualify")
+	default:
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_binary_commit_src %q not allowed", src)
+	}
+	// Platform fields are mandatory for a valid live identity (Codex GraphQL P2 on #230).
+	// Absent fields previously allowed generator GOOS/GOARCH fallback into provenance naming.
+	goos, okGOOS := m["live_goos"].(string)
+	goarch, okGOARCH := m["live_goarch"].(string)
+	goos = strings.TrimSpace(goos)
+	goarch = strings.TrimSpace(goarch)
+	if !okGOOS || goos == "" {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_goos")
+	}
+	if !okGOARCH || goarch == "" {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing live_goarch")
+	}
+	// Reject path traversal / non-GOOS tokens before basename use (Codex #230 P2).
+	if !isValidGOOS(goos) {
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_goos %q not a known GOOS", goos)
+	}
+	if !isValidGOARCH(goarch) {
+		return liveIdentity{}, fmt.Errorf("live_identity.json live_goarch %q not a known GOARCH", goarch)
+	}
+	// Campaign nonce binding private hostname context (Pro R19 P1).
+	scanID, _ := m["scan_context_id"].(string)
+	scanID = strings.TrimSpace(scanID)
+	if scanID == "" || len(scanID) < 16 {
+		return liveIdentity{}, fmt.Errorf("live_identity.json missing scan_context_id")
+	}
+	return liveIdentity{Commit: commit, Dirty: dirty, Src: src, GOOS: goos, GOARCH: goarch, ScanContextID: scanID, OK: true}, nil
+}
+
+// loadLiveIdentity loads and validates live_identity.json. On any failure OK=false and
+// Err is set — never substitutes the report-generator identity.
+func loadLiveIdentity(evDir string) liveIdentity {
+	b, err := readRegularFile(filepath.Join(evDir, "live_identity.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return liveIdentity{Err: "live_identity.json missing"}
+		}
+		return liveIdentity{Err: "live_identity.json unreadable: " + err.Error()}
+	}
+	id, err := parseLiveIdentityJSON(b)
+	if err != nil {
+		return liveIdentity{Err: err.Error()}
+	}
+	return id
+}
+
+// readRegularFile opens with no-follow/nonblocking semantics (unix), validates
+// the opened FD is a regular file within the size cap, and returns contents.
+// Pre-open Lstat is optional hardening; SameFile binds it to the opened object
+// so a path swap cannot accept different regular-file bytes (Pro R49 P2).
+func readRegularFile(path string) ([]byte, error) {
+	const maxBindingBytes = 1 << 20
+	var pre os.FileInfo
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("symlink")
+		}
+		if !st.Mode().IsRegular() {
+			return nil, fmt.Errorf("not a regular file")
+		}
+		pre = st
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	} else {
+		return nil, err
+	}
+	f, err := openFileReadNoBlock(path)
+	if err != nil {
+		// O_NOFOLLOW on a symlink surfaces ELOOP / "too many levels" etc.
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	st2, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st2.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	if pre != nil && !os.SameFile(pre, st2) {
+		return nil, fmt.Errorf("file identity changed between lstat and open")
+	}
+	if st2.Size() < 0 || st2.Size() > maxBindingBytes {
+		return nil, fmt.Errorf("binding file too large")
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxBindingBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > maxBindingBytes {
+		return nil, fmt.Errorf("binding file too large")
+	}
+	return b, nil
+}
+
+// fileContentSHA256 returns the hex SHA-256 of a regular file's contents (not the
+// path string). Intentional Stat (follows symlink) for real executables, then
+// O_NONBLOCK open WITHOUT O_NOFOLLOW; SameFile binds pre/post open so a target
+// swap is rejected while legitimate --grok-executable symlinks work (Pro R50).
+func fileContentSHA256(path string) (string, error) {
+	// Pre-open Stat (follows one symlink hop for real executables).
+	st, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !st.Mode().IsRegular() {
+		return "", fmt.Errorf("not a regular file")
+	}
+	f, err := openFileReadNoBlockFollow(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	st2, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !st2.Mode().IsRegular() {
+		return "", fmt.Errorf("not a regular file")
+	}
+	if !os.SameFile(st, st2) {
+		return "", fmt.Errorf("file identity changed between stat and open")
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ensureGrokExecutableIdentity records or verifies the live Grok CLI binary content
+// hash so standalone preflight/hooks/acp cannot swap --grok-executable mid-run
+// (Pro R6 P1). Path string hashing alone is insufficient.
+func ensureGrokExecutableIdentity(evDir, grokExe string) error {
+	if strings.TrimSpace(grokExe) == "" {
+		return fmt.Errorf("ensureGrokExecutableIdentity: grok executable path required")
+	}
+	abs, err := filepath.Abs(grokExe)
+	if err != nil {
+		return fmt.Errorf("ensureGrokExecutableIdentity: abs: %w", err)
+	}
+	// Hash via single open+Stat on the same FD (rejects FIFO/device; Pro R45 P2).
+	sum, err := fileContentSHA256(abs)
+	if err != nil {
+		return fmt.Errorf("ensureGrokExecutableIdentity: hash %s: %w", abs, err)
+	}
+	if err := os.MkdirAll(evDir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(evDir, "live_grok_executable.json")
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("ensureGrokExecutableIdentity: live_grok_executable.json is a symlink")
+		}
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("ensureGrokExecutableIdentity: live_grok_executable.json is not a regular file")
+		}
+		b, err := readRegularFile(path)
+		if err != nil {
+			return fmt.Errorf("ensureGrokExecutableIdentity: read existing: %w", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			return fmt.Errorf("ensureGrokExecutableIdentity: existing malformed: %w", err)
+		}
+		schema, _ := m["schema"].(string)
+		if strings.TrimSpace(schema) != liveGrokExeSchema {
+			return fmt.Errorf("ensureGrokExecutableIdentity: schema must be %s", liveGrokExeSchema)
+		}
+		prevSum, _ := m["grok_executable_sha256"].(string)
+		if strings.TrimSpace(prevSum) == "" || prevSum != sum {
+			return fmt.Errorf("ensureGrokExecutableIdentity: grok executable content mismatch (live=%s current=%s)", prevSum, sum)
+		}
+		return nil
+	}
+	// Never publish raw absolute paths in public evidence (Pro R26 P1): basename +
+	// path digest are diagnostic only; content SHA-256 is the bind.
+	return writeJSON(path, map[string]any{
+		"schema":                       liveGrokExeSchema,
+		"grok_executable_basename":     filepath.Base(abs),
+		"grok_executable_path_sha256":  sha256Hex(abs),
+		"grok_executable_sha256":       sum,
+		"at":                           stamp(),
+	})
+}
+
+// loadLiveGrokExecutableOK reports whether live_grok_executable.json is complete.
+func loadLiveGrokExecutableOK(evDir string) (ok bool, reason string) {
+	b, err := readRegularFile(filepath.Join(evDir, "live_grok_executable.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, "live_grok_executable.json missing"
+		}
+		return false, "live_grok_executable.json unreadable: " + err.Error()
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return false, "live_grok_executable.json malformed"
+	}
+	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveGrokExeSchema {
+		return false, "live_grok_executable.json schema invalid"
+	}
+	sum, _ := m["grok_executable_sha256"].(string)
+	// Pro R25 P2: require SHA-256 hex syntax, not merely len==64 (zzzz… must fail).
+	if !isSHA256Hex(sum) {
+		return false, "live_grok_executable.json missing content sha256"
+	}
+	return true, ""
+}
+
+// liveGrokhooksSchema seals the grokhooks helper content binding for hooks campaigns.
+const liveGrokhooksSchema = "reinframe.live_grokhooks_executable.v1"
+
+// ensureGrokhooksExecutable records or verifies the hooks helper binary content
+// so --grokhooks cannot swap mid-run independently of live_binary_commit (Pro R14 P1).
+func ensureGrokhooksExecutable(evDir, hooksExe string) error {
+	if strings.TrimSpace(hooksExe) == "" {
+		return fmt.Errorf("ensureGrokhooksExecutable: grokhooks path required")
+	}
+	abs, err := filepath.Abs(hooksExe)
+	if err != nil {
+		return fmt.Errorf("ensureGrokhooksExecutable: abs: %w", err)
+	}
+	// Hash via single open+Stat on the same FD (rejects FIFO/device; Pro R45 P2).
+	sum, err := fileContentSHA256(abs)
+	if err != nil {
+		return fmt.Errorf("ensureGrokhooksExecutable: hash %s: %w", abs, err)
+	}
+	if err := os.MkdirAll(evDir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(evDir, "live_grokhooks_executable.json")
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("ensureGrokhooksExecutable: live_grokhooks_executable.json is a symlink")
+		}
+		if !st.Mode().IsRegular() {
+			return fmt.Errorf("ensureGrokhooksExecutable: live_grokhooks_executable.json is not a regular file")
+		}
+		b, err := readRegularFile(path)
+		if err != nil {
+			return fmt.Errorf("ensureGrokhooksExecutable: read existing: %w", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			return fmt.Errorf("ensureGrokhooksExecutable: existing malformed: %w", err)
+		}
+		schema, _ := m["schema"].(string)
+		if strings.TrimSpace(schema) != liveGrokhooksSchema {
+			return fmt.Errorf("ensureGrokhooksExecutable: schema must be %s", liveGrokhooksSchema)
+		}
+		prevSum, _ := m["grokhooks_executable_sha256"].(string)
+		if strings.TrimSpace(prevSum) == "" || prevSum != sum {
+			return fmt.Errorf("ensureGrokhooksExecutable: content mismatch (live=%s current=%s)", prevSum, sum)
+		}
+		// Do not compare grokhooks_executable_path: writeJSON redacts home/tmp paths to
+		// [HOME]/[TMP:…] so a second bind always false-mismatched absolute paths
+		// (Codex GraphQL P1 on #230). Content SHA-256 is the authoritative bind —
+		// same contract as ensureGrokExecutableIdentity.
+		return nil
+	}
+	// Never publish raw absolute paths (Pro R26 P1).
+	return writeJSON(path, map[string]any{
+		"schema":                          liveGrokhooksSchema,
+		"grokhooks_executable_basename":   filepath.Base(abs),
+		"grokhooks_executable_path_sha256": sha256Hex(abs),
+		"grokhooks_executable_sha256":     sum,
+		"at":                              stamp(),
+	})
+}
+
+// hasHookScenarios reports whether any HOOK-* scenario is present in evidence.
+func hasHookScenarios(scenarios map[string]ScenarioResult) bool {
+	for id := range scenarios {
+		if strings.HasPrefix(id, "HOOK-") {
+			return true
+		}
+	}
+	return false
+}
+
+// loadLiveGrokhooksExecutableOK reports whether live_grokhooks_executable.json is complete.
+func loadLiveGrokhooksExecutableOK(evDir string) (ok bool, reason string) {
+	b, err := readRegularFile(filepath.Join(evDir, "live_grokhooks_executable.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, "live_grokhooks_executable.json missing"
+		}
+		return false, "live_grokhooks_executable.json unreadable: " + err.Error()
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return false, "live_grokhooks_executable.json malformed"
+	}
+	if schema, _ := m["schema"].(string); strings.TrimSpace(schema) != liveGrokhooksSchema {
+		return false, "live_grokhooks_executable.json schema invalid"
+	}
+	sum, _ := m["grokhooks_executable_sha256"].(string)
+	// Pro R25 P2: require SHA-256 hex syntax, not merely len==64 (zzzz… must fail).
+	if !isSHA256Hex(sum) {
+		return false, "live_grokhooks_executable.json missing content sha256"
+	}
+	return true, ""
 }
 
 func containsStr(ss []string, want string) bool {
@@ -857,7 +2661,8 @@ func pick(m map[string]ScenarioResult, ids ...string) map[string]ScenarioResult 
 }
 
 func loadOptionalJSON(path string) any {
-	b, err := os.ReadFile(path)
+	// Nonblocking regular-file read (Pro R48 P2: acp_manifest FIFO must not hang report).
+	b, err := readRegularFile(path)
 	if err != nil {
 		return nil
 	}

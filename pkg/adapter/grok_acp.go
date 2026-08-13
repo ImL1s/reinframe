@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -112,6 +113,10 @@ type GrokACPClient struct {
 	negotiated GrokACPNegotiatedCaps
 	// initOK is true only after fail-closed initialize succeeded.
 	initOK bool
+	// deliverGate serializes DrainUpdates + session/prompt + update wait across all
+	// actuators sharing this client (Pro R13 P2). Capacity-1 channel so waiters can
+	// select on ctx.Done() instead of blocking forever on sync.Mutex (Pro R36 P2).
+	deliverGate chan struct{}
 }
 
 type jsonRPCMessage struct {
@@ -214,15 +219,16 @@ func StartGrokACPClient(ctx context.Context, cfg GrokACPConfig) (*GrokACPClient,
 		return nil, fmt.Errorf("grok acp: attach process tree: %w", err)
 	}
 	c := &GrokACPClient{
-		cfg:        cfg,
-		cmd:        cmd,
-		plat:       plat,
-		stdin:      stdin,
-		stdout:     stdout,
-		pending:    make(map[int64]chan jsonRPCMessage),
-		updates:    make(chan map[string]any, cfg.QueueDepth),
-		lastACK:    ACKLayerNone,
-		readerDone: make(chan struct{}),
+		cfg:         cfg,
+		cmd:         cmd,
+		plat:        plat,
+		stdin:       stdin,
+		stdout:      stdout,
+		pending:     make(map[int64]chan jsonRPCMessage),
+		updates:     make(chan map[string]any, cfg.QueueDepth),
+		lastACK:     ACKLayerNone,
+		readerDone:  make(chan struct{}),
+		deliverGate: make(chan struct{}, 1),
 	}
 	go c.readLoop()
 	return c, nil
@@ -240,16 +246,57 @@ func NewGrokACPClientForTest(serverIn io.WriteCloser, serverOut io.ReadCloser, c
 		cfg.StartupTimeout = DefaultGrokACPStartup
 	}
 	c := &GrokACPClient{
-		cfg:        cfg,
-		stdin:      serverIn,  // client writes requests here (server reads)
-		stdout:     serverOut, // client reads responses here (server writes)
-		pending:    make(map[int64]chan jsonRPCMessage),
-		updates:    make(chan map[string]any, cfg.QueueDepth),
-		lastACK:    ACKLayerNone,
-		readerDone: make(chan struct{}),
+		cfg:         cfg,
+		stdin:       serverIn,  // client writes requests here (server reads)
+		stdout:      serverOut, // client reads responses here (server writes)
+		pending:     make(map[int64]chan jsonRPCMessage),
+		updates:     make(chan map[string]any, cfg.QueueDepth),
+		lastACK:     ACKLayerNone,
+		readerDone:  make(chan struct{}),
+		deliverGate: make(chan struct{}, 1),
 	}
 	go c.readLoop()
 	return c
+}
+
+// acquireDeliver obtains the shared-client delivery gate or returns when ctx is done
+// (Pro R36 P2: must not block forever behind another delivery's WaitUpdate).
+func (c *GrokACPClient) acquireDeliver(ctx context.Context) error {
+	if c == nil {
+		return fmt.Errorf("grok acp: nil client")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.mu.Lock()
+	if c.deliverGate == nil {
+		c.deliverGate = make(chan struct{}, 1)
+	}
+	gate := c.deliverGate
+	c.mu.Unlock()
+	select {
+	case gate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// releaseDeliver frees the shared-client delivery gate.
+func (c *GrokACPClient) releaseDeliver() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	gate := c.deliverGate
+	c.mu.Unlock()
+	if gate == nil {
+		return
+	}
+	select {
+	case <-gate:
+	default:
+	}
 }
 
 // Initialize sends initialize and returns the raw result only after fail-closed validation.
@@ -426,14 +473,29 @@ func (c *GrokACPClient) Cancel(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// PromptDeliveryMeta is transport metadata for a session/prompt delivery (#199).
+// RequestID is the JSON-RPC request id; Result is the bounded response object when present.
+type PromptDeliveryMeta struct {
+	RequestID int64
+	Result    map[string]any
+}
+
 // SessionPrompt delivers a prompt (safe-boundary advice path).
-// Records transport ACK on JSON-RPC success; session_visible when a matching update arrives.
+// Records transport ACK on JSON-RPC success; session_visible only via NoteSessionVisible
+// after source-correlated matching (never from bare queue presence alone).
 func (c *GrokACPClient) SessionPrompt(ctx context.Context, sessionID, prompt string, interventionID, challengeID string) error {
+	_, err := c.SessionPromptMeta(ctx, sessionID, prompt, interventionID, challengeID)
+	return err
+}
+
+// SessionPromptMeta is SessionPrompt plus JSON-RPC request id / result for correlation.
+func (c *GrokACPClient) SessionPromptMeta(ctx context.Context, sessionID, prompt string, interventionID, challengeID string) (PromptDeliveryMeta, error) {
+	var meta PromptDeliveryMeta
 	if !c.initialized() {
-		return fmt.Errorf("grok acp: initialize required")
+		return meta, fmt.Errorf("grok acp: initialize required")
 	}
 	if sessionID == "" || prompt == "" {
-		return fmt.Errorf("grok acp: sessionId and prompt required")
+		return meta, fmt.Errorf("grok acp: sessionId and prompt required")
 	}
 	// Bound prompt (no secrets from auth files).
 	// Official ACP: prompt is ContentBlock[] e.g. [{type:"text", text:"..."}].
@@ -450,13 +512,37 @@ func (c *GrokACPClient) SessionPrompt(ctx context.Context, sessionID, prompt str
 	if challengeID != "" {
 		params["challengeId"] = challengeID
 	}
-	_, err := c.call(ctx, "session/prompt", params)
+	raw, id, err := c.callWithID(ctx, "session/prompt", params)
+	meta.RequestID = id
 	if err != nil {
-		return err
+		return meta, err
+	}
+	if len(raw) > 0 {
+		var res map[string]any
+		if json.Unmarshal(raw, &res) == nil {
+			meta.Result = res
+		}
 	}
 	// Transport ACK only if not already upgraded (session/update may race during call).
 	c.upgradeACK(ACKLayerTransport)
-	return nil
+	return meta, nil
+}
+
+// DrainUpdates discards all currently queued session/update notifications (pre-prompt watermark).
+// Returns the number of drained messages. Does not block.
+func (c *GrokACPClient) DrainUpdates() int {
+	n := 0
+	for {
+		select {
+		case _, ok := <-c.updates:
+			if !ok {
+				return n
+			}
+			n++
+		default:
+			return n
+		}
+	}
 }
 
 func (c *GrokACPClient) initialized() bool {
@@ -552,8 +638,13 @@ func (c *GrokACPClient) Close() error {
 }
 
 func (c *GrokACPClient) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	raw, _, err := c.callWithID(ctx, method, params)
+	return raw, err
+}
+
+func (c *GrokACPClient) callWithID(ctx context.Context, method string, params any) (json.RawMessage, int64, error) {
 	if c.closed.Load() {
-		return nil, ErrGrokACPClosed
+		return nil, 0, ErrGrokACPClosed
 	}
 	id := c.nextID.Add(1)
 	ch := make(chan jsonRPCMessage, 1)
@@ -561,7 +652,7 @@ func (c *GrokACPClient) call(ctx context.Context, method string, params any) (js
 	if c.terminalErr != nil {
 		err := c.terminalErr
 		c.mu.Unlock()
-		return nil, err
+		return nil, id, err
 	}
 	c.pending[id] = ch
 	c.mu.Unlock()
@@ -579,21 +670,21 @@ func (c *GrokACPClient) call(ctx context.Context, method string, params any) (js
 	}
 	raw, err := json.Marshal(msg)
 	if err != nil {
-		return nil, err
+		return nil, id, err
 	}
 	if len(raw) > c.cfg.MaxMessageBytes {
-		return nil, fmt.Errorf("grok acp: request exceeds max size")
+		return nil, id, fmt.Errorf("grok acp: request exceeds max size")
 	}
 	c.mu.Lock()
 	_, err = c.stdin.Write(append(raw, '\n'))
 	c.mu.Unlock()
 	if err != nil {
-		return nil, err
+		return nil, id, err
 	}
 
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, id, ctx.Err()
 	case <-c.readerDone:
 		c.mu.Lock()
 		term := c.terminalErr
@@ -601,7 +692,7 @@ func (c *GrokACPClient) call(ctx context.Context, method string, params any) (js
 		if term == nil {
 			term = ErrGrokACPReaderClosed
 		}
-		return nil, term
+		return nil, id, term
 	case resp := <-ch:
 		if resp.Error != nil {
 			// Bound remote error text; never pass through credential-looking payloads.
@@ -609,10 +700,513 @@ func (c *GrokACPClient) call(ctx context.Context, method string, params any) (js
 			if looksLikeCredentialMarker(em) {
 				em = "agent error redacted"
 			}
-			return nil, fmt.Errorf("grok acp: %s: %s", method, em)
+			return nil, id, fmt.Errorf("grok acp: %s: %s", method, em)
 		}
-		return resp.Result, nil
+		return resp.Result, id, nil
 	}
+}
+
+// UpdateStrongCorrelation reports whether a session/update carries identity that
+// can prove source-correlation for a specific prompt delivery (#199).
+// Session id alone is never enough: require matching interventionId, challengeId,
+// or requestId when those fields are present on the update.
+// If the update exposes none of those identity fields, correlation is impossible.
+//
+// Identity is read only from protocol envelope maps (top-level, params, update,
+// and envelope meta) — never by recursively flattening agent-controlled content
+// (tool-call args / structured content) that could echo the prompt's InterventionID
+// (GPT-5.6 Pro P1 on recursive flatten spoofing).
+func UpdateStrongCorrelation(update map[string]any, interventionID, challengeID string, requestID int64) (ok bool, reason string) {
+	if update == nil {
+		return false, "nil update"
+	}
+	// Non-session/update notifications must never upgrade to source-correlated ACK
+	// even if they carry matching identity fields (Codex P1).
+	if !isSessionUpdateNotification(update) {
+		return false, "not a session/update notification"
+	}
+	flat, layerConflict := envelopeIdentityMap(update)
+	if layerConflict {
+		return false, "conflicting envelope identity fields across layers"
+	}
+	// Canonicalize alias keys (requestId vs request_id, etc.) before match checks
+	// so unequal aliases cannot hide behind firstRequestID preference (Codex P1).
+	if aliasConflict, why := identityAliasConflicts(flat); aliasConflict {
+		return false, why
+	}
+	// Collect every identity present on the envelope, then require zero conflicts
+	// before accepting any match (GPT-5.6 Pro / Codex P1: matching interventionId
+	// must not ignore a mismatched requestId from a delayed retry).
+	type hit struct {
+		kind  string
+		match bool
+	}
+	var hits []hit
+	if v := firstStringAny(flat, "interventionId", "intervention_id", "InterventionID"); v != "" {
+		hits = append(hits, hit{kind: "interventionId", match: interventionID != "" && v == interventionID})
+	}
+	if v := firstStringAny(flat, "challengeId", "challenge_id", "ChallengeID"); v != "" {
+		hits = append(hits, hit{kind: "challengeId", match: challengeID != "" && v == challengeID})
+	}
+	if rid, ok := firstRequestID(flat); ok {
+		hits = append(hits, hit{kind: "requestId", match: requestID > 0 && rid == requestID})
+	}
+	if len(hits) == 0 {
+		return false, "update lacks request/intervention/challenge identity"
+	}
+	var matched []string
+	var mismatched []string
+	for _, h := range hits {
+		if h.match {
+			matched = append(matched, h.kind)
+		} else {
+			// Only treat as conflict when the delivery supplied that identity kind.
+			// Unsupplied kinds (empty interventionID / challengeID / requestID<=0)
+			// cannot mismatch.
+			switch h.kind {
+			case "interventionId":
+				if interventionID != "" {
+					mismatched = append(mismatched, h.kind)
+				}
+			case "challengeId":
+				if challengeID != "" {
+					mismatched = append(mismatched, h.kind)
+				}
+			case "requestId":
+				if requestID > 0 {
+					mismatched = append(mismatched, h.kind)
+				}
+			}
+		}
+	}
+	if len(mismatched) > 0 {
+		return false, "conflicting envelope identity fields: " + strings.Join(mismatched, ",")
+	}
+	if len(matched) == 0 {
+		return false, "identity present but does not match this prompt"
+	}
+	// When the delivery assigned a JSON-RPC request id, require that id (or a
+	// matching challenge) on the update. Intervention-only is insufficient:
+	// reused interventionIds can ride a delayed update across DrainUpdates
+	// (Codex P1 atomic watermark / false session_visible).
+	if requestID > 0 {
+		hasReq := false
+		hasChal := false
+		for _, m := range matched {
+			if m == "requestId" {
+				hasReq = true
+			}
+			if m == "challengeId" {
+				hasChal = true
+			}
+		}
+		if !hasReq && !hasChal {
+			return false, "requestId required when delivery has request id (intervention-only insufficient)"
+		}
+	}
+	// Prefer a single stable reason (intervention > challenge > request).
+	for _, pref := range []string{"interventionId", "challengeId", "requestId"} {
+		for _, m := range matched {
+			if m == pref {
+				return true, pref
+			}
+		}
+	}
+	return true, matched[0]
+}
+
+// envelopeIdentityKeys are the only fields used for strong correlation.
+// Includes RPC aliases so they participate in layer/alias conflict detection
+// (Pro R6 P1: rpcId was listed in firstRequestID but never copied from envelopes).
+var envelopeIdentityKeys = []string{
+	"interventionId", "intervention_id", "InterventionID",
+	"challengeId", "challenge_id", "ChallengeID",
+	"requestId", "request_id", "id",
+	"rpcId", "rpc_id",
+}
+
+// envelopeIdentityMap copies identity fields from protocol envelopes only.
+// It does not recurse into arbitrary nested maps (agent content / tool args).
+// layerConflict is true when the same key appears with unequal values across
+// envelope layers (top-level vs params vs update vs meta).
+func envelopeIdentityMap(u map[string]any) (out map[string]any, layerConflict bool) {
+	out = map[string]any{}
+	if u == nil {
+		return out, false
+	}
+	var conflict bool
+	copyIdentityKeys(out, &conflict, u)
+	// JSON-RPC notification envelope: params holds session/update body.
+	if p, ok := u["params"].(map[string]any); ok {
+		copyIdentityKeys(out, &conflict, p)
+		if up, ok := p["update"].(map[string]any); ok {
+			copyIdentityKeys(out, &conflict, up)
+			if m, ok := up["meta"].(map[string]any); ok {
+				copyIdentityKeys(out, &conflict, m)
+			}
+		}
+		// Some hosts put meta beside update under params.
+		if m, ok := p["meta"].(map[string]any); ok {
+			copyIdentityKeys(out, &conflict, m)
+		}
+	}
+	// Direct update envelope (tests / already-unwrapped notifications).
+	if up, ok := u["update"].(map[string]any); ok {
+		copyIdentityKeys(out, &conflict, up)
+		if m, ok := up["meta"].(map[string]any); ok {
+			copyIdentityKeys(out, &conflict, m)
+		}
+	}
+	if m, ok := u["meta"].(map[string]any); ok {
+		copyIdentityKeys(out, &conflict, m)
+	}
+	return out, conflict
+}
+
+func copyIdentityKeys(dst map[string]any, conflict *bool, src map[string]any) {
+	if src == nil {
+		return
+	}
+	for _, k := range envelopeIdentityKeys {
+		v, ok := src[k]
+		if !ok {
+			continue
+		}
+		// Explicit JSON null is a present malformed identity (Pro R7).
+		if v == nil {
+			if conflict != nil {
+				*conflict = true
+			}
+			// Keep a sentinel so later layers see a conflicted field.
+			if _, exists := dst[k]; !exists {
+				dst[k] = nil
+			}
+			continue
+		}
+		if existing, exists := dst[k]; exists {
+			equal := false
+			if isRequestIdentityKey(k) {
+				equal = identityValuesEqual(existing, v)
+			} else {
+				// intervention/challenge: exact string equality only; any type mismatch
+				// or value mismatch is a layer conflict (Pro R7 type smuggling).
+				es, eOK := existing.(string)
+				vs, vOK := v.(string)
+				equal = eOK && vOK && es == vs
+			}
+			if !equal && conflict != nil {
+				*conflict = true
+			}
+			continue
+		}
+		dst[k] = v
+	}
+}
+
+// identityValuesEqual is used only for request-ID family keys (numeric forms).
+// Intervention/challenge identities must use exact string equality separately
+// (Pro R7 P1: string "42" must not equal numeric 42 for interventionId).
+func identityValuesEqual(a, b any) bool {
+	// Normalize JSON number-like forms so float64(42) == int(42) == "42".
+	if ia, ok := coerceRequestIDValue(a); ok {
+		if ib, ok := coerceRequestIDValue(b); ok {
+			return ia == ib
+		}
+	}
+	sa, aOK := a.(string)
+	sb, bOK := b.(string)
+	if aOK && bOK {
+		return sa == sb
+	}
+	return fmt.Sprint(a) == fmt.Sprint(b)
+}
+
+// isRequestIdentityKey reports keys that use numeric request-id equality.
+func isRequestIdentityKey(k string) bool {
+	switch k {
+	case "requestId", "request_id", "rpcId", "rpc_id", "id":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstStringAny(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// identityAliasConflicts reports unequal values among supported identity aliases
+// on a single flattened envelope (e.g. requestId=42 and request_id=99).
+func identityAliasConflicts(flat map[string]any) (bool, string) {
+	if flat == nil {
+		return false, ""
+	}
+	// String identity families. Present non-string values are malformed and must
+	// fail closed (Pro R6 P1: numeric interventionId was silently ignored).
+	for _, fam := range []struct {
+		kind string
+		keys []string
+	}{
+		{"interventionId", []string{"interventionId", "intervention_id", "InterventionID"}},
+		{"challengeId", []string{"challengeId", "challenge_id", "ChallengeID"}},
+	} {
+		var seen []string
+		for _, k := range fam.keys {
+			v, ok := flat[k]
+			if !ok {
+				continue
+			}
+			// Present null is malformed (must not be treated as absent).
+			if v == nil {
+				return true, "malformed identity field type: " + fam.kind
+			}
+			s, isStr := v.(string)
+			if !isStr {
+				return true, "malformed identity field type: " + fam.kind
+			}
+			if strings.TrimSpace(s) == "" {
+				continue
+			}
+			seen = append(seen, s)
+		}
+		if len(seen) >= 2 {
+			for i := 1; i < len(seen); i++ {
+				if seen[i] != seen[0] {
+					return true, "conflicting envelope identity aliases: " + fam.kind
+				}
+			}
+		}
+	}
+	// Request ID family (numeric + full-string integer forms).
+	// Keys match firstRequestID — generic "id" is not treated as request identity
+	// here (too overloaded on JSON-RPC envelopes).
+	//
+	// Codex/Pro P1: a present but unparseable request field (e.g. "42junk") must
+	// always conflict, even when no other request alias exists and another identity
+	// family (interventionId) would otherwise match. Silent discard enables false
+	// source-correlated session_visible upgrades.
+	var rids []int64
+	for _, k := range []string{"requestId", "request_id", "rpcId", "rpc_id"} {
+		v, ok := flat[k]
+		if !ok || v == nil {
+			continue
+		}
+		if s, isStr := v.(string); isStr && strings.TrimSpace(s) == "" {
+			continue
+		}
+		i, ok := coerceRequestIDValue(v)
+		if !ok {
+			return true, "unparseable request identity field: " + k
+		}
+		rids = append(rids, i)
+	}
+	if len(rids) >= 2 {
+		for i := 1; i < len(rids); i++ {
+			if rids[i] != rids[0] {
+				return true, "conflicting envelope identity aliases: requestId"
+			}
+		}
+	}
+	return false, ""
+}
+
+// coerceRequestIDValue parses a canonical integer request id from JSON forms.
+// String values must be entirely an integer (no prefix scan: "42junk" rejected).
+func coerceRequestIDValue(v any) (int64, bool) {
+	switch x := v.(type) {
+	case float64:
+		if x != float64(int64(x)) {
+			return 0, false
+		}
+		return int64(x), true
+	case int64:
+		return x, true
+	case int:
+		return int64(x), true
+	case json.Number:
+		i, err := x.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	case string:
+		s := strings.TrimSpace(x)
+		if s == "" {
+			return 0, false
+		}
+		i, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	default:
+		return 0, false
+	}
+}
+
+func firstRequestID(m map[string]any) (int64, bool) {
+	for _, k := range []string{"requestId", "request_id", "rpcId", "rpc_id"} {
+		if v, ok := m[k]; ok {
+			if i, ok := coerceRequestIDValue(v); ok {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// isSessionUpdateNotification reports whether the update is a session/update
+// notification (not an unrelated ACP method carrying identity fields).
+//
+// Method rules (Pro R24/R25):
+//   - Any recognized method key that is present (top-level "method", top-level
+//     "_method", or params["_method"]) must be a string exactly equal to
+//     "session/update" — no TrimSpace acceptance of padded names, no collapse of
+//     non-string / null / empty into "absent" (Pro R25 P2).
+//   - Multiple present method fields must all be valid and mutually equal.
+//   - Shape-only fallback (sessionUpdate key) runs only when none of those keys exist.
+func isSessionUpdateNotification(u map[string]any) bool {
+	if u == nil {
+		return false
+	}
+	type methodHit struct {
+		present bool
+		ok      bool
+		value   string
+	}
+	parse := func(m map[string]any, key string) methodHit {
+		if m == nil {
+			return methodHit{}
+		}
+		raw, exists := m[key]
+		if !exists {
+			return methodHit{}
+		}
+		// Key present: must be exact string "session/update" (no trim).
+		s, isStr := raw.(string)
+		if !isStr {
+			return methodHit{present: true, ok: false}
+		}
+		if s != "session/update" {
+			return methodHit{present: true, ok: false, value: s}
+		}
+		return methodHit{present: true, ok: true, value: s}
+	}
+
+	topMethod := parse(u, "method")
+	topInternal := parse(u, "_method")
+	var paramsInternal methodHit
+	if p, _ := u["params"].(map[string]any); p != nil {
+		paramsInternal = parse(p, "_method")
+	}
+
+	hits := []methodHit{topMethod, topInternal, paramsInternal}
+	anyPresent := false
+	var accepted string
+	for _, h := range hits {
+		if !h.present {
+			continue
+		}
+		anyPresent = true
+		if !h.ok {
+			return false
+		}
+		if accepted == "" {
+			accepted = h.value
+		} else if accepted != h.value {
+			return false
+		}
+	}
+	if anyPresent {
+		if accepted != "session/update" {
+			return false
+		}
+		// JSON-RPC notifications must not carry request/response markers.
+		// A method-bearing envelope with top-level id/result/error is a request or
+		// response, not a session/update notification (Pro R31 P2).
+		if _, ok := u["id"]; ok {
+			return false
+		}
+		if _, ok := u["result"]; ok {
+			return false
+		}
+		if _, ok := u["error"]; ok {
+			return false
+		}
+		return true
+	}
+
+	// Methodless JSON-RPC-shaped envelopes must fail closed (Pro R26 P2):
+	// shape fallback is only for unwrapped update bodies, not incomplete envelopes.
+	if jsonRPCEnvelopeWithoutMethod(u) {
+		return false
+	}
+
+	// Unwrapped fixtures/tests without a method field: accept only when the body
+	// looks like a session/update (sessionUpdate key present).
+	if _, ok := u["sessionUpdate"]; ok {
+		return true
+	}
+	if p, _ := u["params"].(map[string]any); p != nil {
+		if _, ok := p["sessionUpdate"]; ok {
+			return true
+		}
+		if up, _ := p["update"].(map[string]any); up != nil {
+			if _, ok := up["sessionUpdate"]; ok {
+				return true
+			}
+		}
+	}
+	if up, _ := u["update"].(map[string]any); up != nil {
+		if _, ok := up["sessionUpdate"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// jsonRPCEnvelopeWithoutMethod reports incomplete JSON-RPC envelopes that have
+// envelope markers but no method/_method (Pro R26 P2).
+func jsonRPCEnvelopeWithoutMethod(u map[string]any) bool {
+	if u == nil {
+		return false
+	}
+	if _, ok := u["jsonrpc"]; ok {
+		return true
+	}
+	if _, ok := u["result"]; ok {
+		return true
+	}
+	if _, ok := u["error"]; ok {
+		return true
+	}
+	// id + params without sessionUpdate at top level is envelope-shaped.
+	if _, hasID := u["id"]; hasID {
+		if _, hasParams := u["params"]; hasParams {
+			if _, topSU := u["sessionUpdate"]; !topSU {
+				return true
+			}
+		}
+	}
+	// Bare params object carrying nested sessionUpdate (no top-level sessionUpdate).
+	if p, ok := u["params"].(map[string]any); ok {
+		if _, topSU := u["sessionUpdate"]; !topSU {
+			if _, nested := p["sessionUpdate"]; nested {
+				return true
+			}
+			if up, ok := p["update"].(map[string]any); ok {
+				if _, nested := up["sessionUpdate"]; nested {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (c *GrokACPClient) failAllPending(err error) {
@@ -665,9 +1259,9 @@ func (c *GrokACPClient) readLoop() {
 			} else {
 				params["_method"] = msg.Method
 			}
-			if msg.Method == "session/update" {
-				c.NoteSessionVisible()
-			}
+			// Do NOT auto-upgrade LastACKLayer here (Pro R32 P2). session_visible is
+			// only recorded via NoteSessionVisible after source-correlated matching
+			// (actuator / acp_live). Bare session/update delivery is not proof.
 			select {
 			case c.updates <- params:
 			default:
@@ -788,7 +1382,8 @@ func NewGrokACPFoundationManifest() GrokACPFoundationManifest {
 		LoadSession:        false,
 		NegotiatedLevel:    -1,
 		HonestyNote: "pre-handshake: no achieved level or unproven caps; call ManifestFromNegotiated after initialize; " +
-			"JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; live #167 evidence GO via cmd/groklive",
+			"JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; " +
+			"live #167 harness path via cmd/groklive does not imply disposition GO",
 	}
 }
 
@@ -979,7 +1574,8 @@ func ManifestFromNegotiated(caps GrokACPNegotiatedCaps) GrokACPFoundationManifes
 	m.HonestyNote = "derived from initialize via protocol.EvaluateAchievableLevel; " +
 		"Level 2 requires full Level1 mask plus CapDiffInspection+CapPause+CapCancel+CapResume; " +
 		"JSON-RPC success is transport ACK not explicit agent ACK; never read/write ~/.grok/auth.json; " +
-		"live #167 evidence GO on harness cmd/groklive (darwin/Grok 1.0.0); no CapPause/L2 claimed from hooks alone"
+		"live #167 harness path exercised on cmd/groklive (does not claim disposition GO); " +
+		"no CapPause/L2 claimed from hooks alone"
 	return m
 }
 

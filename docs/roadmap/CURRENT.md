@@ -47,13 +47,13 @@ Epic #182 (Codex OAuth / App Server / Spark Qualification)
 
 | Issue | Status | Blocker | Notes |
 |---|---|---|---|
-| **#183** | Open / Ready | None | Delegated ChatGPT auth boundary; host owns OAuth tokens; Reinframe never extracts/stores tokens |
-| **#184** | Open | #183 | Codex App Server runtime; JSON-RPC stdio protocol for session lifecycle and turn synchronization |
-| **#185** | Open | #184 | Dynamic current-account model catalog; account/scope-aware model discovery; no static OAuth inventory |
-| **#186** | Open | #185 | Dual-lane subscription/API routing; explicit routing without silent credential/transport confusion |
-| **#187** | Open | #186 + environment | GPT-5.3-Codex-Spark Pro qualification; ChatGPT Pro research preview; un-qualified until live evidence on main |
-| **#188** | Open | Design-partner API entitlement | Spark API profile; separate opt-in API lane for actually entitled projects; not implied by ChatGPT Pro |
-| **#189** | Open | #186 | Auth/catalog/model-churn test suite; synthetic/mocked catalog discovery, token expiration, and revocation churn |
+| **#183** | **CLOSED** | None | Delegated ChatGPT auth boundary; host owns OAuth tokens; Reinframe never extracts/stores tokens |
+| **#184** | **CLOSED** | None | Codex App Server runtime; JSON-RPC stdio protocol for session lifecycle and turn synchronization |
+| **#185** | **CLOSED** | None | Dynamic current-account model catalog; account/scope-aware model discovery; no static OAuth inventory |
+| **#186** | **CLOSED** | None | Dual-lane subscription/API routing; explicit routing without silent credential/transport confusion |
+| **#187** | **CLOSED** | None | GPT-5.3-Codex-Spark Pro qualification; pinned live evidence on main (`docs/evidence/codex_spark/`, disposition `GO`) |
+| **#188** | **CLOSED** | None | Spark API profile; separate capability-gated API lane for entitled projects; not implied by ChatGPT Pro |
+| **#189** | **CLOSED** | None | Auth/catalog/model-churn test suite; 6-dimension integration churn suite passing 100% |
 | **#190** | **CLOSED** | None | Governance sync: 3-axis mapping, exact-model substitution, fail-closed fallback, ADR 006 on main |
 
 ### Evidence / delivery residuals (active)
@@ -68,14 +68,14 @@ Epic #182 (Codex OAuth / App Server / Spark Qualification)
 
 Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 + residual follow-ups**.
 
-### Environment / live evidence (still open)
+### Environment / live evidence (completed on main)
 
-| Issue | Blocker | Notes |
+| Issue | Status | Notes |
 |-------|---------|-------|
-| **#164** | Interactive Codex + project trust | Live hooks smoke |
-| **#120** | Interactive Claude | Live Claude smoke |
-| **#139** | #120 | Claude challenge delivery |
-| **#140 Claude host lane** | #139 | Manual evidence |
+| **#164** | **CLOSED** | Pinned live Codex control evidence on main (`docs/evidence/codex/`) |
+| **#120** | **CLOSED** | Pinned live Claude control evidence on main (`docs/evidence/claude/`) |
+| **#139** | **CLOSED** | Claude challenge delivery & 1-shot retry bridge on main |
+| **#140** | **CLOSED** | Challenge benchmark runner & 20/20 bypass vectors resistance on main |
 
 ### Recently merged (Grok campaign) — claims bounded by residual issues
 

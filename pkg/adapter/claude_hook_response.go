@@ -46,17 +46,17 @@ func (c ClaudeChallengeContext) FormatAdditionalContext() string {
 	}
 	var sb strings.Builder
 	sb.WriteString("[Reinframe Appealable Challenge]\n")
-	sb.WriteString(fmt.Sprintf("challenge_id: %s\n", c.ChallengeID))
+	fmt.Fprintf(&sb, "challenge_id: %s\n", c.ChallengeID)
 	if c.ChallengeNonce != "" {
-		sb.WriteString(fmt.Sprintf("challenge_nonce: %s\n", c.ChallengeNonce))
+		fmt.Fprintf(&sb, "challenge_nonce: %s\n", c.ChallengeNonce)
 	}
 	if c.Reason != "" {
-		sb.WriteString(fmt.Sprintf("reason: %s\n", c.Reason))
+		fmt.Fprintf(&sb, "reason: %s\n", c.Reason)
 	}
 	if c.SuggestedFix != "" {
-		sb.WriteString(fmt.Sprintf("suggested_fix: %s\n", c.SuggestedFix))
+		fmt.Fprintf(&sb, "suggested_fix: %s\n", c.SuggestedFix)
 	}
-	sb.WriteString(fmt.Sprintf("one_shot_retry_allowed: %t\n", c.OneShotRetryAllowed))
+	fmt.Fprintf(&sb, "one_shot_retry_allowed: %t\n", c.OneShotRetryAllowed)
 	if c.OneShotRetryAllowed {
 		sb.WriteString("To appeal and retry this action once, provide your justification with challenge_id and challenge_nonce in your next tool call.\n")
 	}

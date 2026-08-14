@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
@@ -120,9 +121,8 @@ func TestRedactCodexEvidence(t *testing.T) {
 	s := string(b)
 
 	if user := os.Getenv("USERNAME"); user != "" && len(user) > 3 {
-		if !os.IsPathSeparator('\\') {
-			// On Windows or Unix, check that user does not appear as plaintext
+		if strings.Contains(s, `"`+user+`"`) {
+			t.Errorf("expected username %q to be redacted from JSON output", user)
 		}
 	}
-	_ = s
 }

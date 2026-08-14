@@ -391,6 +391,8 @@ type AppServerClient interface {
 	Events() <-chan RuntimeEvent
 	ApprovalRequests() <-chan ApprovalRequest
 	RespondApproval(ctx context.Context, response ApprovalResponse) error
+	ListModels(ctx context.Context) (json.RawMessage, error)
+	Call(ctx context.Context, method string, params any) (json.RawMessage, error)
 	Close(ctx context.Context) error
 }
 
@@ -912,6 +914,22 @@ func (c *CodexAppServerClient) RespondApproval(ctx context.Context, response App
 	}
 	_, err := c.call(ctx, "approval/respond", params)
 	return err
+}
+
+// ListModels queries the model/list JSON-RPC method from Codex App Server (#185).
+func (c *CodexAppServerClient) ListModels(ctx context.Context) (json.RawMessage, error) {
+	if !c.initOK.Load() {
+		return nil, NewAppServerError(ErrCodeRuntimeCrashed, "client not initialized")
+	}
+	return c.call(ctx, "model/list", map[string]any{})
+}
+
+// Call executes a JSON-RPC 2.0 method call against Codex App Server.
+func (c *CodexAppServerClient) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	if !c.initOK.Load() {
+		return nil, NewAppServerError(ErrCodeRuntimeCrashed, "client not initialized")
+	}
+	return c.call(ctx, method, params)
 }
 
 // Close gracefully terminates the App Server process tree and frees all resources (#184).

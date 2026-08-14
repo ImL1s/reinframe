@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
-	"github.com/ImL1s/reinframe/pkg/protocol"
 )
 
 // fakeAppServer provides a mock JSON-RPC stdio server for testing CodexAppServerClient.
@@ -607,7 +606,7 @@ func TestCodexAppServer_EventMappingAndDeterministicSequence(t *testing.T) {
 			prevSeq = rtEv.SequenceNum
 
 			agentEv := rtEv.ToAgentEvent("th_seq_test", int64(i+1))
-			var _ protocol.AgentEvent = agentEv
+			_ = agentEv
 			if agentEv.EventType != e.expected {
 				t.Errorf("event %d: got type %q, want %q", i, agentEv.EventType, e.expected)
 			}

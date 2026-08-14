@@ -59,6 +59,10 @@ type Config struct {
 
 	// Workspace configures managed worktree isolation (ADR 004).
 	Workspace WorkspaceConfig `json:"workspace" yaml:"workspace"`
+
+	// CodexRuntime configures the delegated Codex runtime boundary (#183).
+	// Disabled by default; delegates credential ownership to the child codex process.
+	CodexRuntime CodexRuntimeConfig `json:"codex_runtime,omitempty" yaml:"codex_runtime,omitempty"`
 }
 
 // ClassifierCacheConfig is the process-local exact assessment cache (#138).
@@ -248,7 +252,103 @@ type WorkspaceConfig struct {
 	EnforceIsolation bool `json:"enforce_isolation" yaml:"enforce_isolation"`
 }
 
-// Default returns a Config with safe foundation defaults (ADR 003 / ADR 004).
+// CodexRuntimeConfig configures the delegated Codex runtime boundary (#183).
+// Reinframe strictly delegates credential ownership to the child codex process.
+// Reinframe never opens ~/.codex/auth.json, never accepts raw API keys/tokens for this runtime,
+// and enforces ChatGPT subscription as the default authentication contract.
+type CodexRuntimeConfig struct {
+	// Enabled controls whether the delegated Codex runtime is active (default false).
+	Enabled bool `json:"enabled" yaml:"enabled"`
+
+	// Executable is the binary name or path for the codex CLI (default "codex").
+	// Untrusted project configurations MUST NOT override this field.
+	Executable string `json:"executable,omitempty" yaml:"executable,omitempty"`
+
+	// CredentialOwner specifies who owns credentials: "codex_process" (default) or "reinframe_env".
+	// Untrusted project configurations MUST NOT override this field.
+	CredentialOwner string `json:"credential_owner,omitempty" yaml:"credential_owner,omitempty"`
+
+	// RequiredAuth specifies the mandatory auth mode: "chatgpt_subscription" (default), "api_key", or "unknown".
+	RequiredAuth string `json:"required_auth,omitempty" yaml:"required_auth,omitempty"`
+
+	// AllowInteractiveLogin allows interactive operator login prompt when unauthenticated (default false).
+	AllowInteractiveLogin bool `json:"allow_interactive_login" yaml:"allow_interactive_login"`
+
+	// RuntimeProfile is an optional partition/profile identifier (default "default").
+	RuntimeProfile string `json:"runtime_profile,omitempty" yaml:"runtime_profile,omitempty"`
+
+	// BinarySHA256 is an optional SHA-256 hex digest for binary integrity verification.
+	BinarySHA256 string `json:"binary_sha256,omitempty" yaml:"binary_sha256,omitempty"`
+
+	// StatusCheckTimeoutMS bounds status probe execution (default 3000ms).
+	StatusCheckTimeoutMS int `json:"status_check_timeout_ms,omitempty" yaml:"status_check_timeout_ms,omitempty"`
+}
+
+// NormalizeCredentialOwner returns the trimmed credential owner, defaulting to "codex_process".
+func (cr CodexRuntimeConfig) NormalizeCredentialOwner() string {
+	co := strings.TrimSpace(strings.ToLower(cr.CredentialOwner))
+	if co == "" {
+		return "codex_process"
+	}
+	return co
+}
+
+// NormalizeRequiredAuth returns the trimmed required auth mode, defaulting to "chatgpt_subscription".
+func (cr CodexRuntimeConfig) NormalizeRequiredAuth() string {
+	ra := strings.TrimSpace(strings.ToLower(cr.RequiredAuth))
+	if ra == "" {
+		return "chatgpt_subscription"
+	}
+	return ra
+}
+
+// NormalizeExecutable returns the trimmed executable name/path, defaulting to "codex".
+func (cr CodexRuntimeConfig) NormalizeExecutable() string {
+	ex := strings.TrimSpace(cr.Executable)
+	if ex == "" {
+		return "codex"
+	}
+	return ex
+}
+
+// NormalizeProfile returns the trimmed runtime profile, defaulting to "default".
+func (cr CodexRuntimeConfig) NormalizeProfile() string {
+	p := strings.TrimSpace(cr.RuntimeProfile)
+	if p == "" {
+		return "default"
+	}
+	return p
+}
+
+// String provides secret-safe diagnostics formatting.
+func (cr CodexRuntimeConfig) String() string {
+	return fmt.Sprintf(
+		"CodexRuntimeConfig{enabled:%t executable:%q credential_owner:%q required_auth:%q allow_interactive:%t profile:%q sha256:%q timeout_ms:%d}",
+		cr.Enabled, cr.NormalizeExecutable(), cr.NormalizeCredentialOwner(), cr.NormalizeRequiredAuth(),
+		cr.AllowInteractiveLogin, cr.NormalizeProfile(), cr.BinarySHA256, cr.StatusCheckTimeoutMS,
+	)
+}
+
+// GoString implements fmt.GoStringer.
+func (cr CodexRuntimeConfig) GoString() string {
+	return cr.String()
+}
+
+// Format implements fmt.Formatter to prevent accidental secret leakage.
+func (cr CodexRuntimeConfig) Format(f fmt.State, verb rune) {
+	switch verb {
+	case 'v', 's':
+		if f.Flag('#') {
+			_, _ = fmt.Fprint(f, cr.GoString())
+			return
+		}
+		_, _ = fmt.Fprint(f, cr.String())
+	default:
+		_, _ = fmt.Fprint(f, cr.String())
+	}
+}
+
+// Default returns a Config with safe foundation defaults (ADR 003 / ADR 004 / #183).
 func Default() Config {
 	return Config{
 		SchemaVersion: CurrentSchemaVersion,
@@ -273,6 +373,15 @@ func Default() Config {
 		},
 		Workspace: WorkspaceConfig{
 			EnforceIsolation: true,
+		},
+		CodexRuntime: CodexRuntimeConfig{
+			Enabled:               false,
+			Executable:            "codex",
+			CredentialOwner:       "codex_process",
+			RequiredAuth:          "chatgpt_subscription",
+			AllowInteractiveLogin: false,
+			RuntimeProfile:        "default",
+			StatusCheckTimeoutMS:  3000,
 		},
 	}
 }
@@ -312,6 +421,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validateClassifierCache(c.ClassifierCache); err != nil {
+		return err
+	}
+	if err := validateCodexRuntime(c.CodexRuntime); err != nil {
 		return err
 	}
 	for name, ref := range c.Secrets.Refs {
@@ -545,13 +657,121 @@ func MarshalJSONDocument(c Config) ([]byte, error) {
 	return json.MarshalIndent(c, "", "  ")
 }
 
-// UnmarshalJSONDocument decodes Config from JSON bytes.
+// UnmarshalJSONDocument decodes Config from JSON bytes after verifying no raw secrets are injected.
 func UnmarshalJSONDocument(data []byte) (Config, error) {
+	if err := validateNoProhibitedSecretKeys(data); err != nil {
+		return Config{}, err
+	}
 	var c Config
 	if err := json.Unmarshal(data, &c); err != nil {
 		return Config{}, err
 	}
 	return c, nil
+}
+
+func validateCodexRuntime(cr CodexRuntimeConfig) error {
+	exec := cr.NormalizeExecutable()
+	if strings.ContainsAny(exec, "&|;$`\n\r><()\"'") {
+		return fmt.Errorf("codex_runtime.executable contains illegal shell characters")
+	}
+
+	owner := cr.NormalizeCredentialOwner()
+	switch owner {
+	case "codex_process", "reinframe_env":
+		// valid
+	default:
+		return fmt.Errorf("codex_runtime.credential_owner %q is not supported", cr.CredentialOwner)
+	}
+
+	reqAuth := cr.NormalizeRequiredAuth()
+	switch reqAuth {
+	case "chatgpt_subscription", "api_key", "unknown":
+		// valid
+	default:
+		return fmt.Errorf("codex_runtime.required_auth %q is not supported", cr.RequiredAuth)
+	}
+
+	if cr.StatusCheckTimeoutMS < 0 || cr.StatusCheckTimeoutMS > 60000 {
+		return fmt.Errorf("codex_runtime.status_check_timeout_ms out of range (0-60000)")
+	}
+
+	if cr.BinarySHA256 != "" {
+		h := strings.TrimSpace(cr.BinarySHA256)
+		if len(h) != 64 {
+			return fmt.Errorf("codex_runtime.binary_sha256 must be 64 hex characters")
+		}
+		for _, r := range h {
+			if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+				return fmt.Errorf("codex_runtime.binary_sha256 contains non-hex characters")
+			}
+		}
+	}
+	return nil
+}
+
+// ValidateUntrustedProjectOverride verifies that an untrusted project config does not attempt
+// to override protected security surfaces such as Codex executable, credential owner, worktree isolation, or raw secrets.
+func ValidateUntrustedProjectOverride(base, untrusted Config) error {
+	// Codex runtime boundary protection: project config cannot redirect executable or hijack credential ownership
+	if untrusted.CodexRuntime.Executable != "" && untrusted.CodexRuntime.NormalizeExecutable() != base.CodexRuntime.NormalizeExecutable() {
+		return fmt.Errorf("security policy violation: untrusted project config cannot override codex_runtime.executable")
+	}
+	if untrusted.CodexRuntime.CredentialOwner != "" && untrusted.CodexRuntime.NormalizeCredentialOwner() != base.CodexRuntime.NormalizeCredentialOwner() {
+		return fmt.Errorf("security policy violation: untrusted project config cannot override codex_runtime.credential_owner")
+	}
+	if untrusted.CodexRuntime.BinarySHA256 != "" && base.CodexRuntime.BinarySHA256 != "" && untrusted.CodexRuntime.BinarySHA256 != base.CodexRuntime.BinarySHA256 {
+		return fmt.Errorf("security policy violation: untrusted project config cannot override codex_runtime.binary_sha256")
+	}
+
+	// Worktree isolation protection
+	if untrusted.Workspace.ManagedWorktreeRoot != "" && untrusted.Workspace.ManagedWorktreeRoot != base.Workspace.ManagedWorktreeRoot {
+		return fmt.Errorf("security policy violation: untrusted project config cannot override workspace.managed_worktree_root")
+	}
+	if base.Workspace.EnforceIsolation && !untrusted.Workspace.EnforceIsolation {
+		return fmt.Errorf("security policy violation: untrusted project config cannot disable workspace.enforce_isolation")
+	}
+
+	// Secret injection check
+	for k, v := range untrusted.Secrets.Refs {
+		if !IsEnvPlaceholder(v) {
+			return fmt.Errorf("security policy violation: untrusted project config secrets.refs[%s] contains raw secret", k)
+		}
+	}
+	return nil
+}
+
+func validateNoProhibitedSecretKeys(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+
+	prohibited := []string{
+		"oauth_token", "refresh_token", "access_token", "session_token",
+		"auth_token", "cookie", "auth.json", "client_secret",
+	}
+
+	for _, p := range prohibited {
+		if _, ok := raw[p]; ok {
+			return fmt.Errorf("security violation: raw secret field %q is prohibited in config", p)
+		}
+	}
+
+	if crRaw, ok := raw["codex_runtime"]; ok && len(crRaw) > 0 {
+		var crMap map[string]json.RawMessage
+		if err := json.Unmarshal(crRaw, &crMap); err == nil {
+			for _, p := range prohibited {
+				if _, ok := crMap[p]; ok {
+					return fmt.Errorf("security violation: raw secret field %q is prohibited in codex_runtime config", p)
+				}
+			}
+			// In codex_runtime, direct api_key field is also prohibited
+			if _, ok := crMap["api_key"]; ok {
+				return fmt.Errorf("security violation: raw secret field %q is prohibited in codex_runtime config", "api_key")
+			}
+		}
+	}
+	return nil
 }
 
 func validateOptionalDuration(field, value string) error {

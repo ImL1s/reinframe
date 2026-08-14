@@ -1,29 +1,53 @@
 # Reinframe current executable roadmap
 
-**Status:** current (2026-08-12) — GPT-5.6 Pro P1 waves on PR #230 branch; latest clean-quota live v2 `20260811T130935Z` re-eval **NO_GO** under executable-binding gate (strongest ACK still **transport**; scenarios retained; not a fresh live campaign); prior pins retained; public **#168 MORE_DATA**; no ranking  
+**Status:** current (2026-08-15) — Epic #80 open; Epic #182 Codex OAuth / App Server / Spark support boundaries synced (#190 CLOSED on main); GPT-5.6 Pro P1 waves on PR #230 branch; latest clean-quota live v2 `20260811T130935Z` re-eval **NO_GO** under executable-binding gate (strongest ACK still **transport**; scenarios retained; not a fresh live campaign); prior pins retained; public **#168 MORE_DATA**; no ranking  
 
-
-**Executable status source:** this file plus live GitHub issue labels. Epic #80 remains open.
+**Executable status source:** this file plus live GitHub issue labels. Epic #80 and Epic #182 remain active.
 
 ## Implemented — narrow DoD, do not reopen for the same scope
 
 | Track | Issues/PRs | Honesty boundary |
-|-------|------------|------------------|
+|---|---|---|
 | Appealable `BLOCK` core | **#131 / PR #148** | Host-neutral; no live Claude delivery |
 | Classifier provider foundation | **#132 / PR #150** | Generic OpenAI-compatible cache-neutral |
-| Native OpenAI/Anthropic/Gemini/xAI | **#134–#137** | Classifier adapters only; xAI ≠ Grok host |
+| Native OpenAI/Anthropic/Gemini/xAI | **#134–#137** | Classifier adapters only; direct API keys (/v1/responses); not ChatGPT OAuth; xAI ≠ Grok host |
 | Exact assessment cache | **#138** + fixes | Process-local; default off; panic-safe singleflight |
 | Challenge/cache offline eval | **#140** A/B, **#141** | MORE-DATA |
 | Codex EventSource | **#95/#107/#118** | JSONL observe-only L0 |
 | Claude PreTool bridge | **#96/#106/#117** | Experimental; not live smoke |
 | Host roadmap sync | **#170** | Public status for Codex/Grok lanes |
-| Codex project-local hooks | **#163** | Foundation; live **#164** |
+| Codex project-local hooks | **#163** | Shipped foundation; live **#164** |
 | Grok Build native hooks | **#165** | Foundation; host fail-open; live **#167** |
 | Grok Build ACP stdio | **#166** + residual **#180**; hardening **#191** | Foundation on main; #191 fixes delegated-auth, canonical levels, official headless argv, Windows Job Object tree; live **#167** |
 | Cross-host eval framework | **#168** | Fake + historical Grok pin; disposition **MORE-DATA**; no ranking; open until matched Codex/Claude live |
+| Codex OAuth/Spark governance sync | **#190** | **CLOSED** on main — normative boundaries across README, CURRENT, Epic #80/#182, 3-axis mapping; ADR 006 accepted |
 
 ## Residual open work
 
+### Epic #182: Dynamic Codex OAuth, App Server runtime, and Spark qualification
+
+```text
+Epic #182 (Codex OAuth / App Server / Spark Qualification)
+├── #183 Delegated ChatGPT auth boundary (open / ready)
+│    └──► #184 Codex App Server runtime (open / blocked by #183)
+│          └──► #185 Dynamic current-account model catalog (open / blocked by #184)
+│                └──► #186 Dual-lane subscription/API routing (open / blocked by #185)
+│                      ├──► #187 GPT-5.3-Codex-Spark Pro qualification (open / blocked by #186 + env)
+│                      └──► #189 Auth/catalog/model-churn suite (open / blocked by #186)
+├── #188 Spark API profile (open / blocked by design-partner API entitlement)
+└── #190 Sync OAuth/Spark support boundaries (CLOSED on main)
+```
+
+| Issue | Status | Blocker | Notes |
+|---|---|---|---|
+| **#183** | Open / Ready | None | Delegated ChatGPT auth boundary; host owns OAuth tokens; Reinframe never extracts/stores tokens |
+| **#184** | Open | #183 | Codex App Server runtime; JSON-RPC stdio protocol for session lifecycle and turn synchronization |
+| **#185** | Open | #184 | Dynamic current-account model catalog; account/scope-aware model discovery; no static OAuth inventory |
+| **#186** | Open | #185 | Dual-lane subscription/API routing; explicit routing without silent credential/transport confusion |
+| **#187** | Open | #186 + environment | GPT-5.3-Codex-Spark Pro qualification; ChatGPT Pro research preview; un-qualified until live evidence on main |
+| **#188** | Open | Design-partner API entitlement | Spark API profile; separate opt-in API lane for actually entitled projects; not implied by ChatGPT Pro |
+| **#189** | Open | #186 | Auth/catalog/model-churn test suite; synthetic/mocked catalog discovery, token expiration, and revocation churn |
+| **#190** | **CLOSED** | None | Governance sync: 3-axis mapping, exact-model substitution, fail-closed fallback, ADR 006 on main |
 
 ### Evidence / delivery residuals (active)
 
@@ -61,14 +85,20 @@ Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 
 |-------|---------|-------|
 | **#168** live match | #164/#120 matched data + Grok session reliability | Grok historical + v2 live pins present; #168 disposition **MORE-DATA**; no ranking; latest clean-quota pin `20260811T130935Z` re-eval **NO_GO** under executable-binding gate (older pins remain **NO_GO**); none of these strengthen ranking |
 
-### Epic
+### Epics
 
 | Issue | Notes |
 |-------|-------|
-| **#80** | Open until residual environment/product close criteria are met |
+| **#80** | Core external supervision epic; open until residual environment/product close criteria are met |
+| **#182** | Dynamic Codex OAuth, App Server runtime, and Spark qualification epic; #190 closed on main |
 
 ## Explicit non-claims
 
+- No ChatGPT OAuth token extraction, interception, storage, or proxying (Codex CLI / App Server owns auth lifecycle)
+- No silent model fallback or substitution (missing models fail closed with `MODEL_UNAVAILABLE`)
+- ChatGPT Pro subscription access to GPT-5.3-Codex-Spark does not grant OpenAI API access
+- GPT-5.3-Codex-Spark is not live-qualified until #187 closes with fresh, un-contaminated evidence on main
+- No static, authoritative inventory of all past/future OAuth models (dynamic runtime discovery only)
 - Historical Grok live run present (#167 v1); latest clean-quota live v2 pin `20260811T130935Z` re-eval **NO_GO** under executable-binding gate (not a false LIMITED_GO); older pins `20260811T073954Z` / `20260810T170640Z` remain **NO_GO**; public ranking disposition remains **MORE_DATA** (#199 gates closed; no false GO)
 - No fail-closed Grok hook security (host fail-open)
 - CapToolGate ≠ CapPause / Level 2
@@ -87,3 +117,4 @@ Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 
 - `docs/evaluation/provider_cache_141.md`
 - `docs/evaluation/cross_host_168.md`
 - Adapter pins: `docs/classifier/*`, `docs/adapter/*`
+- Codex OAuth/Spark specification: `docs/specs/codex_oauth_spark_boundary.md`

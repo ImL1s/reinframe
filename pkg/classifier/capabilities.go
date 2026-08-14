@@ -16,6 +16,7 @@ const (
 	CapabilitiesProfileOpenAIOffV1            = "openai-off-v1"
 	CapabilitiesProfileOpenAIImplicitV1       = "openai-implicit-v1"
 	CapabilitiesProfileOpenAIExplicitPrefixV1 = "openai-explicit-prefix-v1"
+	CapabilitiesProfileOpenAISparkV1          = "openai-spark-v1"
 	// Anthropic profiles live in anthropic_messages.go constants (#135).
 )
 
@@ -64,6 +65,15 @@ func LookupCapabilitiesProfile(name string) (ProviderCapabilities, error) {
 		return ProviderCapabilities{
 			NativeStructuredOutput: true,
 			CacheMode:              CacheModeExplicitBreakpoint,
+			CacheKey:               true,
+			CacheUsageTelemetry:    true,
+			StatefulContinuation:   false,
+			MaxInputBytes:          DefaultMaxInputBytes,
+		}, nil
+	case CapabilitiesProfileOpenAISparkV1:
+		return ProviderCapabilities{
+			NativeStructuredOutput: true,
+			CacheMode:              CacheModeImplicitPrefix,
 			CacheKey:               true,
 			CacheUsageTelemetry:    true,
 			StatefulContinuation:   false,

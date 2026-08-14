@@ -7,7 +7,7 @@ Deterministic offline evaluation of the host-neutral challenge core (#131) via:
 2. `pkg/evaluation.ChallengeBenchmarkRunner.Run` (comprehensive appeal, bypass resistance, and recovery quality benchmark)
 
 Detailed benchmark findings, metrics tables, and security threat matrices are published in:
-- [`docs/evaluation/challenge_benchmark_report.md`](file:///docs/evaluation/challenge_benchmark_report.md)
+- [`docs/evaluation/challenge_benchmark_report.md`](./challenge_benchmark_report.md)
 
 | Layer | Measured |
 |-------|----------|

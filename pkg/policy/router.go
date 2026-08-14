@@ -801,7 +801,7 @@ func (r *DualLaneRouter) ResolveFallback(
 
 	// 1. If original policy is FailClosed or empty, reject immediately
 	if orig.FallbackPolicy == FallbackFailClosed || orig.FallbackPolicy == "" || orig.FallbackPolicy == FallbackCrossLaneProhibited {
-		return RouteDecision{}, fmt.Errorf("%w: fallback disabled by policy %q (failure: %v)", ErrCrossLaneFallbackProhibited, orig.FallbackPolicy, failure)
+		return RouteDecision{}, fmt.Errorf("%w: fallback disabled by policy %q: %w", ErrCrossLaneFallbackProhibited, orig.FallbackPolicy, failure)
 	}
 
 	// 2. Strict Billing Boundary and Cross-Lane Fallback Check:
@@ -844,7 +844,7 @@ func (r *DualLaneRouter) ResolveFallback(
 
 	newDec, err := r.resolveRouteLocked(ctx, req)
 	if err != nil {
-		return RouteDecision{}, fmt.Errorf("%w: same-lane fallback to model %q failed: %v", ErrNoRouteAvailable, fbModel, err)
+		return RouteDecision{}, fmt.Errorf("%w: same-lane fallback to model %q failed: %w", ErrNoRouteAvailable, fbModel, err)
 	}
 
 	// Ensure the lane didn't change

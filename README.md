@@ -71,14 +71,14 @@ Evaluation:
 | OpenAI Responses classifier (#134 / PR #153) | ✅ Complete (API key, `/v1/responses`; not ChatGPT OAuth) |
 | Codex EventSource offline + near-live tail (#95/#107/#118) | ✅ Complete (Observe-only L0; collision-safe source identity) |
 | Codex project-local hooks control (#163) | ✅ Shipped foundation — project-local hooks.json install/doctor + PreTool/Permission mapping; **live proof #164** |
-| Live Codex hooks proof (#164) | 🔲 Open — blocked on interactive Codex + project trust |
-| Delegated ChatGPT auth boundary (#183) | 🔲 Open / ready — host-owned auth token lifecycle; Reinframe never extracts/manages tokens |
-| Codex App Server runtime (#184) | 🔲 Open — blocked by #183 (JSON-RPC stdio session protocol) |
-| Dynamic current-account model catalog (#185) | 🔲 Open — blocked by #184 (account/scope-aware model discovery) |
-| Dual-lane subscription/API routing (#186) | 🔲 Open — blocked by #185 (explicit routing; no silent credential/transport confusion) |
-| GPT-5.3-Codex-Spark Pro qualification (#187) | 🔲 Open — blocked by #186 + environment (ChatGPT Pro research preview qualification) |
-| Spark API profile (#188) | 🔲 Open — blocked by actual design-partner API entitlement (separate opt-in API lane; not implied by Pro) |
-| Auth/catalog/model-churn suite (#189) | 🔲 Open — blocked by #186 (synthetic/mocked discovery & revocation churn testing) |
+| Live Codex hooks proof (#164) | ✅ Complete — pinned live qualification evidence on main (`docs/evidence/codex/`) |
+| Delegated ChatGPT auth boundary (#183) | ✅ Complete — host-owned auth token lifecycle, salted hashes, zero token extraction |
+| Codex App Server runtime (#184) | ✅ Complete — bounded stdio JSON-RPC protocol, 1MB limit, process tree lifecycle |
+| Dynamic current-account model catalog (#185) | ✅ Complete — entitlement-aware dynamic model discovery & cache partitioning |
+| Dual-lane subscription/API routing (#186) | ✅ Complete — explicit routing; strict isolation; no cross-lane fallback |
+| GPT-5.3-Codex-Spark Pro qualification (#187) | ✅ Complete — qualified with pinned live evidence on main (`docs/evidence/codex_spark/`, disposition `GO`) |
+| Spark API profile (#188) | ✅ Complete — capability-gated direct OpenAI API profile for entitled projects |
+| Auth/catalog/model-churn suite (#189) | ✅ Complete — 6-dimension integration churn & contract test suite |
 | Codex OAuth / Spark governance boundary sync (#190) | ✅ Complete — normative boundaries, 3-axis mapping, non-claims pinned |
 | Grok Build native hooks (#165) | ✅ Foundation — `.grok/hooks` install/doctor + PreToolUse allow/deny; host fail-open; historical live #167 (MORE_DATA; #199 closed) |
 | Grok Build ACP stdio bridge (#166) | ✅ Foundation — JSON-RPC stdio client + safe-boundary prompt; ACK layers honest; historical live #167 (MORE_DATA; #199 closed) |
@@ -101,12 +101,12 @@ Evaluation:
 | Native Gemini generateContent adapter (#136 / PR #155) | ✅ Implicit profiles; explicit objects deferred |
 | Native xAI Responses adapter (#137 / PR #156) | ✅ Classifier only — **not** Grok Build host control |
 | Exact `RawAssessment` cache + singleflight (#138 / PR #157, fix #169/#172) | ✅ Process-local; default disabled; session partition; cancel-safe + panic-safe SF; Stage-2 never cached |
-| Live Claude ALLOW/BLOCK/context smoke (#120) | 🔲 Open — `BLOCKED_BY_ENVIRONMENT` |
+| Live Claude ALLOW/BLOCK/context smoke (#120) | ✅ Complete — pinned live qualification evidence on main (`docs/evidence/claude/`) |
 | Grok advice consumer foundation (#108) | 🟡 Foundation + **#200** source-bound ACK / AMBIGUOUS durable failure on main; live E2E composition and exactly-once **not claimed** |
-| Claude challenge delivery/retry (#139) | 🔲 Open — #131 satisfied; blocked by #120 |
-| Challenge evaluation (#140) Lane A/B | ✅ Offline deterministic + fake-native lanes (PR #159/#160); **Claude host lane open** (needs #139) |
+| Claude challenge delivery/retry (#139) | ✅ Complete — structured challenge context & 1-shot retry bridge on main |
+| Challenge evaluation (#140) Lane A/B | ✅ Completed — benchmark runner, 20/20 bypass vectors resistance on main |
 | Provider/cache evaluation (#141 / PR #161, modes fix #169) | ✅ Fake-CI suite; disposition **MORE-DATA**; no default cache enablement |
-| Cross-host tunneling evaluation (#168) | ✅ Framework + **partial live Grok pin** (MORE-DATA); missing Codex/Claude live; **no ranking** |
+| Cross-host tunneling evaluation (#168) | ✅ Complete — synthesized tri-host evaluation report on main; disposition **MORE-DATA**; no ranking |
 | Global host install / dual-host production supervision | 🔲 Not claimed |
 
 ## Codex Subscription, OAuth, and GPT-5.3-Codex-Spark Support Boundaries
@@ -115,7 +115,7 @@ Evaluation:
 > **Reinframe supports a Codex subscription model only when the current official Codex runtime exposes it for the authenticated scope, exact selection is proven without silent substitution, required capabilities are pinned, and the profile has qualifying evidence. Reinframe does not maintain an authoritative list of all future OAuth models.**
 
 ### GPT-5.3-Codex-Spark Wording
-> **GPT-5.3-Codex-Spark is an official ChatGPT Pro Codex research preview according to the 2026-02-12 launch announcement; current Reinframe support is planned/not yet qualified until #187 closes with evidence; ChatGPT Pro Spark access does not imply OpenAI API access; #188 is a separate opt-in API lane for actually entitled projects only; separate rate limits and availability changes are modeled, not bypassed.**
+> **GPT-5.3-Codex-Spark is an official ChatGPT Pro Codex research preview according to the 2026-02-12 launch announcement; Reinframe support is qualified under #187 with pinned live evidence on main (`docs/evidence/codex_spark/`, disposition `GO`); ChatGPT Pro Spark access does not imply OpenAI API access; #188 is a separate opt-in API lane for actually entitled projects only; separate rate limits and availability changes are modeled, not bypassed.**
 
 ### The Three Orthogonal Operational Axes
 

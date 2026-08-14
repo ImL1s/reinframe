@@ -53,6 +53,10 @@ type HookRequest struct {
 	FilePath string
 	// Proposed is the optional versioned action projection (#115).
 	Proposed *ProposedAction
+	// Challenge binding (#139).
+	ChallengeID    string
+	ChallengeNonce string
+	Justification  *ClaudeJustificationInput
 }
 
 // HookPolicy is the deterministic policy table consulted by EvaluateHook.

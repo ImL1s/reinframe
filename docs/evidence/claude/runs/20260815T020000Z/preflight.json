@@ -1,0 +1,28 @@
+{
+  "at": "2026-08-15T02:00:00Z",
+  "go_version": "go1.25.0 windows/amd64",
+  "goarch": "amd64",
+  "goos": "windows",
+  "harness": "reinframe.claude_live_harness.v1",
+  "probes": [
+    {
+      "command": "go version",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "go version go1.25.0 windows/amd64\n"
+    },
+    {
+      "command": "claude pretool capability",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "Profile: reinframe.claude_hook_response.v1 (CapToolGate, CapClosedSchemaResponse)\n"
+    },
+    {
+      "command": "environment isolation",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "disposable sandbox enabled; secrets redacted\n"
+    }
+  ],
+  "usable": true
+}

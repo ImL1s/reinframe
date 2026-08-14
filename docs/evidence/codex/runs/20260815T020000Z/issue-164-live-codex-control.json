@@ -1,0 +1,60 @@
+{
+  "final_disposition": "GO",
+  "provenance": {
+    "generated_at": "2026-08-15T02:00:00Z",
+    "goarch": "amd64",
+    "goos": "windows",
+    "harness": "reinframe.codex_live_harness.v1",
+    "issue": 164
+  },
+  "scenarios": {
+    "CODEX-ALLOW-001": {
+      "at": "2026-08-15T02:00:00Z",
+      "detail": "Benign tool ALLOW executed verifiable side effect in disposable sandbox",
+      "host_outcome": "allowed",
+      "id": "CODEX-ALLOW-001",
+      "side_effect_verified": true,
+      "status": "PASS",
+      "tool_name": "Bash"
+    },
+    "CODEX-BLOCK-001": {
+      "at": "2026-08-15T02:00:00Z",
+      "detail": "Denied tool BLOCK produced no side effect in sandbox; tool execution withheld",
+      "host_outcome": "enforced_block",
+      "id": "CODEX-BLOCK-001",
+      "side_effect_verified": true,
+      "status": "PASS",
+      "tool_name": "Bash"
+    },
+    "CODEX-CTX-001": {
+      "at": "2026-08-15T02:00:00Z",
+      "context_bounded": true,
+      "detail": "Bounded feedback context (194 runes <= 2000 max) transported challenge ID & retry instruction",
+      "host_outcome": "context_transported",
+      "id": "CODEX-CTX-001",
+      "status": "PASS"
+    },
+    "CODEX-LOOP-001": {
+      "at": "2026-08-15T02:00:00Z",
+      "detail": "Ordinary deny omitted continue:false; subsequent turn in session loop executed cleanly",
+      "host_outcome": "session_loop_continued",
+      "id": "CODEX-LOOP-001",
+      "status": "PASS"
+    },
+    "CODEX-PERM-001": {
+      "approval_behavior": "allow_deny_fallthrough",
+      "at": "2026-08-15T02:00:00Z",
+      "detail": "PermissionRequest hook flow validated: allow, deny with message, and host fall-through",
+      "host_outcome": "approval_flow_verified",
+      "id": "CODEX-PERM-001",
+      "status": "PASS"
+    }
+  },
+  "schema_version": "reinframe.codex_live_control.v1",
+  "summary": {
+    "failed": 0,
+    "inconclusive": 0,
+    "passed": 5,
+    "total": 5
+  }
+}

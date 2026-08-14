@@ -38,7 +38,7 @@ type OpenAIResponsesConfig struct {
 	Timeout             time.Duration
 	MaxInputBytes       int
 	MaxOutputBytes      int
-	CapabilitiesProfile string // openai-off-v1 | openai-implicit-v1 | openai-explicit-prefix-v1
+	CapabilitiesProfile string // openai-off-v1 | openai-implicit-v1 | openai-explicit-prefix-v1 | openai-spark-v1
 	// EgressProfile is a bounded secret-free partition for cache keying (optional).
 	EgressProfile string
 	HTTPClient    *http.Client
@@ -48,6 +48,13 @@ type OpenAIResponsesConfig struct {
 	LookupEnv     func(string) (string, bool)
 	// AllowRemote when true permits non-loopback URLs (tests / production OpenAI).
 	AllowRemote bool
+
+	// SparkEntitled gates GPT-5.3-Codex-Spark direct API profile (#188).
+	SparkEntitled bool
+	// ReasoningEffort controls reasoning effort: "low", "medium", "high" (#188).
+	ReasoningEffort string
+	// EntitlementVerifier is an optional custom verification callback for Spark (#188).
+	EntitlementVerifier func(model, profile string) bool
 }
 
 // OpenAIResponsesProvider is the production-shaped native Responses adapter.
@@ -122,6 +129,20 @@ func NewOpenAIResponses(cfg OpenAIResponsesConfig) (*OpenAIResponsesProvider, er
 		return nil, newProviderError("capability", "openai_responses requires native structured output profile", false, 0)
 	}
 
+	// Spark capability gating and reasoning effort validation (#188).
+	isSpark := IsSparkModel(model) || IsSparkProfile(prof)
+	if isSpark {
+		if err := ValidateSparkEntitlement(model, prof, cfg.SparkEntitled, cfg.EntitlementVerifier); err != nil {
+			return nil, newProviderError("capability", err.Error(), false, 0)
+		}
+		if cfg.APIKeyRef != "" && isProhibitedOAuthRef(cfg.APIKeyRef) {
+			return nil, newProviderError("config", "gpt-5.3-codex-spark api profile requires direct API key, not ChatGPT Pro OAuth subscription runtime", false, 0)
+		}
+	}
+	if err := ValidateReasoningEffort(cfg.ReasoningEffort); err != nil {
+		return nil, newProviderError("config", err.Error(), false, 0)
+	}
+
 	lookup := cfg.LookupEnv
 	if lookup == nil {
 		lookup = os.LookupEnv
@@ -132,6 +153,9 @@ func NewOpenAIResponses(cfg OpenAIResponsesConfig) (*OpenAIResponsesProvider, er
 		v, ok := lookup(name)
 		if !ok || v == "" {
 			return nil, newProviderError("config", "api key env not set", false, 0)
+		}
+		if isSpark && isProhibitedOAuthToken(v) {
+			return nil, newProviderError("config", "gpt-5.3-codex-spark api profile requires direct API key, not ChatGPT Pro OAuth subscription runtime", false, 0)
 		}
 		apiKey = v
 	}
@@ -376,13 +400,21 @@ func (p *OpenAIResponsesProvider) buildRequestJSON(req ProviderRequest, maxIn in
 			},
 		},
 	}
+	if p.cfg.ReasoningEffort != "" {
+		effort := strings.ToLower(strings.TrimSpace(p.cfg.ReasoningEffort))
+		body.Reasoning = &oaiResponsesReasoning{Effort: effort}
+		body.ReasoningEffort = effort
+	}
 	var cacheKeyHash string
-	if explicit {
+	isSpark := IsSparkModel(p.cfg.Model) || IsSparkProfile(p.cfg.CapabilitiesProfile)
+	if explicit || (p.caps.CacheKey && isSpark) {
 		// Secret-free bounded key: provider+profile+stable+egress (not full prompt).
 		cacheKeyHash = p.promptCacheKeyHash(req)
 		body.PromptCacheKey = cacheKeyHash
-		// Explicit-only: do not create an implicit changing-suffix breakpoint.
-		body.PromptCacheOptions = &oaiPromptCacheOptions{Mode: "explicit"}
+		if explicit {
+			// Explicit-only: do not create an implicit changing-suffix breakpoint.
+			body.PromptCacheOptions = &oaiPromptCacheOptions{Mode: "explicit"}
+		}
 	}
 	_ = maxIn
 	payload, err := json.Marshal(body)
@@ -394,12 +426,13 @@ func (p *OpenAIResponsesProvider) buildRequestJSON(req ProviderRequest, maxIn in
 
 func (p *OpenAIResponsesProvider) promptCacheKeyHash(req ProviderRequest) string {
 	// Audit-safe hash of identities — never raw prompt text or secrets.
-	mat := fmt.Sprintf("openai_responses|%s|%s|%s|%s|%s",
+	mat := fmt.Sprintf("openai_responses|%s|%s|%s|%s|%s|%s",
 		p.cfg.Model,
 		p.cfg.CapabilitiesProfile,
 		req.Prompt.StablePrefixHash,
 		req.Prompt.RulesetHash,
 		p.cfg.EgressProfile,
+		p.cfg.ReasoningEffort,
 	)
 	sum := sha256.Sum256([]byte(mat))
 	return hex.EncodeToString(sum[:16])
@@ -487,9 +520,15 @@ type oaiResponsesRequest struct {
 	Model              string                 `json:"model"`
 	Input              []oaiRespInputItem     `json:"input"`
 	Temperature        float64                `json:"temperature"`
+	Reasoning          *oaiResponsesReasoning `json:"reasoning,omitempty"`
+	ReasoningEffort    string                 `json:"reasoning_effort,omitempty"`
 	Text               *oaiResponsesText      `json:"text,omitempty"`
 	PromptCacheKey     string                 `json:"prompt_cache_key,omitempty"`
 	PromptCacheOptions *oaiPromptCacheOptions `json:"prompt_cache_options,omitempty"`
+}
+
+type oaiResponsesReasoning struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 // oaiRespInputItem Content is string (off/implicit) or []oaiRespContentPart (explicit).
@@ -637,7 +676,7 @@ func (p *OpenAIResponsesProvider) BuildRequestJSONForTest(req ProviderRequest) (
 
 // RedactedConfig returns a logging-safe copy (no secrets).
 func (p *OpenAIResponsesProvider) RedactedConfig() map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"kind":                 KindOpenAIResponses,
 		"model":                p.cfg.Model,
 		"base_url":             p.cfg.BaseURL,
@@ -650,6 +689,13 @@ func (p *OpenAIResponsesProvider) RedactedConfig() map[string]any {
 		"source_retrieved":     OpenAIResponsesSourceRetrieved,
 		"endpoint":             p.endpoint,
 	}
+	if IsSparkModel(p.cfg.Model) || IsSparkProfile(p.cfg.CapabilitiesProfile) {
+		out["spark_entitled"] = p.cfg.SparkEntitled
+		out["reasoning_effort"] = p.cfg.ReasoningEffort
+		out["spark_source_url"] = OpenAISparkSourceURL
+		out["spark_source_retrieved"] = OpenAISparkSourceRetrieved
+	}
+	return out
 }
 
 func isOpenAIOfficialHost(base string) bool {

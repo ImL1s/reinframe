@@ -105,6 +105,10 @@ type ClassifierProviderConfig struct {
 	CapabilitiesProfile string `json:"capabilities_profile,omitempty" yaml:"capabilities_profile,omitempty"`
 	// EgressProfile is an optional secret-free partition for native cache keys (#134/#135).
 	EgressProfile string `json:"egress_profile,omitempty" yaml:"egress_profile,omitempty"`
+	// SparkEntitled gates GPT-5.3-Codex-Spark direct API profile for entitled projects (#188).
+	SparkEntitled bool `json:"spark_entitled,omitempty" yaml:"spark_entitled,omitempty"`
+	// ReasoningEffort sets reasoning effort for models like Spark: "low" | "medium" | "high" (#188).
+	ReasoningEffort string `json:"reasoning_effort,omitempty" yaml:"reasoning_effort,omitempty"`
 }
 
 // NormalizeKind returns the closed, trimmed kind used by validation and factory.
@@ -151,9 +155,10 @@ func (cp ClassifierProviderConfig) MarshalJSON() ([]byte, error) {
 // String is secret-safe for fmt / logs (never prints raw api_key_ref secrets).
 func (cp ClassifierProviderConfig) String() string {
 	return fmt.Sprintf(
-		"ClassifierProviderConfig{kind:%q model:%q base_url:%q path:%q api_key_ref:%q timeout_ms:%d max_input_bytes:%d max_output_bytes:%d capabilities_profile:%q}",
+		"ClassifierProviderConfig{kind:%q model:%q base_url:%q path:%q api_key_ref:%q timeout_ms:%d max_input_bytes:%d max_output_bytes:%d capabilities_profile:%q spark_entitled:%t reasoning_effort:%q}",
 		cp.Kind, cp.Model, cp.BaseURL, cp.Path, cp.redactedAPIKeyRef(),
 		cp.TimeoutMS, cp.MaxInputBytes, cp.MaxOutputBytes, cp.CapabilitiesProfile,
+		cp.SparkEntitled, cp.ReasoningEffort,
 	)
 }
 
@@ -583,12 +588,23 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 	switch kind {
 	case "openai_responses":
 		switch prof {
-		case "", "openai-off-v1", "openai-implicit-v1", "openai-explicit-prefix-v1":
+		case "", "openai-off-v1", "openai-implicit-v1", "openai-explicit-prefix-v1", "openai-spark-v1":
 		default:
 			return fmt.Errorf("classifier_provider.capabilities_profile is not supported")
 		}
 		if strings.TrimSpace(cp.Platform) != "" {
 			return fmt.Errorf("classifier_provider.platform is only valid for anthropic_messages")
+		}
+		if cp.ReasoningEffort != "" {
+			switch strings.ToLower(strings.TrimSpace(cp.ReasoningEffort)) {
+			case "low", "medium", "high":
+			default:
+				return fmt.Errorf("classifier_provider.reasoning_effort must be low, medium, or high")
+			}
+		}
+		isSpark := strings.EqualFold(strings.TrimSpace(cp.Model), "gpt-5.3-codex-spark") || prof == "openai-spark-v1"
+		if isSpark && !cp.SparkEntitled {
+			return fmt.Errorf("classifier_provider: gpt-5.3-codex-spark requires spark_entitled flag")
 		}
 	case "anthropic_messages":
 		switch prof {
@@ -625,7 +641,7 @@ func validateClassifierProvider(cp ClassifierProviderConfig) error {
 	default:
 		switch prof {
 		case "", "generic-none-v1":
-		case "openai-implicit-v1", "openai-explicit-prefix-v1", "openai-off-v1":
+		case "openai-implicit-v1", "openai-explicit-prefix-v1", "openai-off-v1", "openai-spark-v1":
 			return fmt.Errorf("classifier_provider: openai cache profiles require kind openai_responses")
 		case "anthropic-off-v1", "anthropic-automatic-5m-v1", "anthropic-automatic-1h-v1",
 			"anthropic-explicit-prefix-5m-v1", "anthropic-explicit-prefix-1h-v1":

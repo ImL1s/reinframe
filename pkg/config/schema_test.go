@@ -301,6 +301,46 @@ func TestClassifierProviderConfig_Validate(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
+
+	// Spark API profile validation (#188)
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_responses", Model: "gpt-5.3-codex-spark", BaseURL: "https://api.openai.com",
+		APIKeyRef: "${OPENAI_API_KEY}", CapabilitiesProfile: "openai-spark-v1",
+		SparkEntitled: true, ReasoningEffort: "low",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid spark config must pass validation: %v", err)
+	}
+
+	// Unentitled Spark project fails validation
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_responses", Model: "gpt-5.3-codex-spark", BaseURL: "https://api.openai.com",
+		APIKeyRef: "${OPENAI_API_KEY}", CapabilitiesProfile: "openai-spark-v1",
+		SparkEntitled: false,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("unentitled spark project must fail validation")
+	}
+
+	// Invalid reasoning effort fails validation
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_responses", Model: "gpt-5.3-codex-spark", BaseURL: "https://api.openai.com",
+		APIKeyRef: "${OPENAI_API_KEY}", CapabilitiesProfile: "openai-spark-v1",
+		SparkEntitled: true, ReasoningEffort: "extreme",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid reasoning effort must fail validation")
+	}
+
+	// Spark profile on incompatible kind fails validation
+	cfg.ClassifierProvider = config.ClassifierProviderConfig{
+		Kind: "openai_compatible", Model: "gpt-5.3-codex-spark", BaseURL: "http://127.0.0.1:1",
+		APIKeyRef: "${OPENAI_API_KEY}", CapabilitiesProfile: "openai-spark-v1",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("spark profile on openai_compatible must fail validation")
+	}
+
 	// secret not in JSON
 	b, _ := config.MarshalJSONDocument(cfg)
 	if strings.Contains(string(b), "sk-") {

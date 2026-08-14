@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reinframe.codex_spark_live_control.v1",
+  "title": "Reinframe Codex Spark Live Control Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "provenance",
+    "scenarios",
+    "final_disposition",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "reinframe.codex_spark_live_control.v1"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issue",
+        "generated_at",
+        "goos",
+        "goarch",
+        "harness",
+        "model",
+        "account_tier"
+      ],
+      "properties": {
+        "issue": { "type": "integer" },
+        "generated_at": { "type": "string" },
+        "goos": { "type": "string" },
+        "goarch": { "type": "string" },
+        "harness": { "type": "string" },
+        "model": { "type": "string" },
+        "account_tier": { "type": "string" },
+        "reinframe_commit": { "type": "string" }
+      }
+    },
+    "scenarios": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "detail"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "enum": ["PASS", "FAIL", "INCONCLUSIVE", "NOT_RUN"] },
+          "detail": { "type": "string" },
+          "requested_model": { "type": "string" },
+          "reported_model": { "type": "string" },
+          "fallback_allowed": { "type": "boolean" },
+          "host_outcome": { "type": "string" },
+          "at": { "type": "string" },
+          "side_effect_verified": { "type": "boolean" },
+          "context_bounded": { "type": "boolean" },
+          "process_cleaned": { "type": "boolean" }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "passed",
+        "failed",
+        "inconclusive"
+      ],
+      "properties": {
+        "total": { "type": "integer" },
+        "passed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "inconclusive": { "type": "integer" }
+      }
+    },
+    "final_disposition": {
+      "enum": ["GO", "LIMITED_GO", "MORE_DATA", "NO_GO"]
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

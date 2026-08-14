@@ -88,6 +88,8 @@ func NewClassifierProviderFromConfig(cfg config.ClassifierProviderConfig, opts P
 			MaxOutputBytes:      cfg.MaxOutputBytes,
 			CapabilitiesProfile: cfg.CapabilitiesProfile,
 			EgressProfile:       cfg.EgressProfile,
+			SparkEntitled:       cfg.SparkEntitled,
+			ReasoningEffort:     cfg.ReasoningEffort,
 			HTTPClient:          opts.HTTPClient,
 			LookupEnv:           opts.LookupEnv,
 			Sleep:               opts.Sleep,

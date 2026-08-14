@@ -101,6 +101,8 @@ const (
 type ChallengeRecord struct {
 	SchemaVersion      string         `json:"schema_version"`
 	ChallengeID        string         `json:"challenge_id"`
+	ChallengeNonce     string         `json:"challenge_nonce,omitempty"`
+	SuggestedFix       string         `json:"suggested_fix,omitempty"`
 	SessionID          string         `json:"session_id"`
 	ActionFingerprint  string         `json:"action_fingerprint"`
 	OriginalActionID   string         `json:"original_action_id"`
@@ -183,16 +185,18 @@ type ChallengeEvent struct {
 
 // OpenRequest opens a challenge after a productivity BLOCK.
 type OpenRequest struct {
-	SessionID        string
-	Proposed         adapter.ProposedAction
-	BlockClass       string
-	ReasonCode       string
-	PolicyClass      string
-	RequiredClaims   []string
-	PolicyVersion    string
-	RulesetHash      string
-	Branch           string
-	KnownEvidenceIDs []string
+	SessionID             string
+	Proposed              adapter.ProposedAction
+	BlockClass            string
+	ReasonCode            string
+	SuggestedFix          string
+	ChallengeNonce        string
+	PolicyClass           string
+	RequiredClaims        []string
+	PolicyVersion         string
+	RulesetHash           string
+	Branch                string
+	KnownEvidenceIDs      []string
 	// ExpiresAfterSequences: if >0, challenge expires when store sequence reaches created+N.
 	ExpiresAfterSequences int64
 	CorrelationID         string
@@ -200,8 +204,10 @@ type OpenRequest struct {
 
 // RetryRequest attempts one semantically equivalent retry.
 type RetryRequest struct {
-	ChallengeID string
-	SessionID   string
+	ChallengeID    string
+	ChallengeNonce string
+	RequireNonce   bool
+	SessionID      string
 	// Branch when non-empty must match the challenge binding (ownership).
 	Branch string
 	// RetryRequestID optional dedicated id for attempt identity (bounded).

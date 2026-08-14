@@ -418,6 +418,8 @@ func (s *Store) ReplayFromStore(challengeID string) (ChallengeRecord, error) {
 		if ev.Type == "opened" && ok {
 			rec.ActionFingerprint = snap.ActionFingerprint
 			rec.OriginalActionID = snap.OriginalActionID
+			rec.ChallengeNonce = snap.ChallengeNonce
+			rec.SuggestedFix = snap.SuggestedFix
 			rec.BlockClass = snap.BlockClass
 			rec.ReasonCode = snap.ReasonCode
 			rec.Appealability = snap.Appealability

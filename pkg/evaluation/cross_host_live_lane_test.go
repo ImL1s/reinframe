@@ -43,6 +43,66 @@ func TestAttachLiveGrok167Lane_MoreDataNoRanking(t *testing.T) {
 	}
 }
 
+func TestAttachLiveCodex164Lane_MoreDataNoRanking(t *testing.T) {
+	t.Parallel()
+	pin := evaluation.DefaultLiveCodex164Pin()
+	rep := evaluation.AttachLiveCodex164Lane("testcommit", pin)
+	if rep.Disposition != "MORE-DATA" {
+		t.Fatalf("disposition=%s", rep.Disposition)
+	}
+	if !rep.LiveHostsUsed {
+		t.Fatal("expected live hosts used")
+	}
+	if err := evaluation.ValidatePartialLiveReport(rep); err != nil {
+		t.Fatal(err)
+	}
+	var liveAllow bool
+	for _, row := range rep.Rows {
+		if row.HostLane == evaluation.HostLaneCodexLive164 && row.ScenarioID == "harmless_allow" {
+			liveAllow = row.OK && row.AllowOK
+		}
+		if row.ACK.Explicit != 0 {
+			t.Fatal("explicit ACK forbidden")
+		}
+		if row.TunnelingScore != 0 {
+			t.Fatal("ranking score forbidden")
+		}
+	}
+	if !liveAllow {
+		t.Fatal("live allow row missing for codex")
+	}
+}
+
+func TestAttachLiveClaude120Lane_MoreDataNoRanking(t *testing.T) {
+	t.Parallel()
+	pin := evaluation.DefaultLiveClaude120Pin()
+	rep := evaluation.AttachLiveClaude120Lane("testcommit", pin)
+	if rep.Disposition != "MORE-DATA" {
+		t.Fatalf("disposition=%s", rep.Disposition)
+	}
+	if !rep.LiveHostsUsed {
+		t.Fatal("expected live hosts used")
+	}
+	if err := evaluation.ValidatePartialLiveReport(rep); err != nil {
+		t.Fatal(err)
+	}
+	var liveAllow bool
+	for _, row := range rep.Rows {
+		if row.HostLane == evaluation.HostLaneClaudeLive120 && row.ScenarioID == "harmless_allow" {
+			liveAllow = row.OK && row.AllowOK
+		}
+		if row.ACK.Explicit != 0 {
+			t.Fatal("explicit ACK forbidden")
+		}
+		if row.TunnelingScore != 0 {
+			t.Fatal("ranking score forbidden")
+		}
+	}
+	if !liveAllow {
+		t.Fatal("live allow row missing for claude")
+	}
+}
+
 func TestValidateCrossHostReport_StillForbidsLiveInFakeCI(t *testing.T) {
 	t.Parallel()
 	rep := evaluation.RunCrossHostEvalFake("c")

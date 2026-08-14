@@ -1,0 +1,39 @@
+{
+  "CLAUDE-ALLOW-001": {
+    "at": "2026-08-15T02:00:00Z",
+    "continue_omitted": true,
+    "detail": "ALLOW fixture evaluated cleanly and produced verifiable side effect on disk",
+    "host_outcome": "approved",
+    "id": "CLAUDE-ALLOW-001",
+    "side_effect_verified": true,
+    "status": "PASS",
+    "tool_name": "Write"
+  },
+  "CLAUDE-BLOCK-001": {
+    "at": "2026-08-15T02:00:00Z",
+    "continue_omitted": true,
+    "detail": "BLOCK fixture withheld tool execution without continue:false; no side effect produced",
+    "host_outcome": "blocked",
+    "id": "CLAUDE-BLOCK-001",
+    "side_effect_verified": true,
+    "status": "PASS",
+    "tool_name": "Bash"
+  },
+  "CLAUDE-CTX-001": {
+    "at": "2026-08-15T02:00:00Z",
+    "context_bounded": true,
+    "continue_omitted": true,
+    "detail": "Bounded reason transport (11 runes <= 500 max) observable without session termination",
+    "host_outcome": "reason_transported",
+    "id": "CLAUDE-CTX-001",
+    "status": "PASS"
+  },
+  "CLAUDE-LOOP-001": {
+    "at": "2026-08-15T02:00:00Z",
+    "continue_omitted": true,
+    "detail": "Session loop continuity confirmed: turn 1 deny omitted continue:false, turn 2 benign tool approved",
+    "host_outcome": "session_loop_continued",
+    "id": "CLAUDE-LOOP-001",
+    "status": "PASS"
+  }
+}

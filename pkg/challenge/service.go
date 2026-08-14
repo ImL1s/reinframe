@@ -2,6 +2,7 @@ package challenge
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -196,9 +197,19 @@ func (s *Service) Open(ctx context.Context, req OpenRequest) (ChallengeRecord, e
 
 	now := s.now()
 	id := s.newID("ch")
+	nonce := strings.TrimSpace(req.ChallengeNonce)
+	if nonce == "" {
+		nonce = s.newNonce()
+	}
+	fix := strings.TrimSpace(req.SuggestedFix)
+	if fix == "" {
+		fix = defaultSuggestedFix(req.BlockClass, req.ReasonCode)
+	}
 	rec := ChallengeRecord{
 		SchemaVersion:      SchemaChallengeRecord,
 		ChallengeID:        id,
+		ChallengeNonce:     nonce,
+		SuggestedFix:       fix,
 		SessionID:          req.SessionID,
 		ActionFingerprint:  fp.Fingerprint,
 		OriginalActionID:   req.Proposed.ActionID,
@@ -389,6 +400,27 @@ func (s *Service) AttemptRetry(ctx context.Context, req RetryRequest) (RetryResu
 			Record: rec, Stage2Decision: DecisionBlock, Intervention: rec.Intervention,
 			RejectedReason: "ownership_mismatch",
 		}, err
+	}
+
+	if req.RequireNonce && strings.TrimSpace(req.ChallengeNonce) == "" {
+		return RetryResult{
+			Record: rec, Stage2Decision: DecisionBlock, Intervention: rec.Intervention,
+			RejectedReason: "missing_challenge_nonce",
+		}, fmt.Errorf("retry: missing challenge nonce")
+	}
+	if req.ChallengeNonce != "" {
+		if rec.ChallengeNonce != "" && req.ChallengeNonce != rec.ChallengeNonce {
+			return RetryResult{
+				Record: rec, Stage2Decision: DecisionBlock, Intervention: rec.Intervention,
+				RejectedReason: "corrupted_challenge_nonce",
+			}, fmt.Errorf("retry: corrupted or invalid challenge nonce")
+		}
+		if rec.ChallengeNonce == "" {
+			return RetryResult{
+				Record: rec, Stage2Decision: DecisionBlock, Intervention: rec.Intervention,
+				RejectedReason: "corrupted_challenge_nonce",
+			}, fmt.Errorf("retry: corrupted challenge nonce (no nonce issued)")
+		}
 	}
 
 	fpOwner, err := ComputeFingerprint(FingerprintInput{
@@ -803,6 +835,33 @@ func ValidStage2Decision(d string) bool {
 func (s *Service) newID(prefix string) string {
 	// Store-scoped sequence so multi-Service shared Store cannot collide on idSeq=1.
 	return s.store.newID(prefix, s.now())
+}
+
+func (s *Service) newNonce() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		h := sha256.Sum256([]byte(fmt.Sprintf("cn-%d-%d", time.Now().UnixNano(), s.store.Sequence())))
+		return "cn-" + hex.EncodeToString(h[:16])
+	}
+	return "cn-" + hex.EncodeToString(b)
+}
+
+func defaultSuggestedFix(blockClass, reasonCode string) string {
+	bc := NormalizeBlockClass(blockClass)
+	switch bc {
+	case BlockClassOverSOP:
+		return "Scope action to affected files only, or submit a justification with verification and rollback plans."
+	case BlockClassScopeDrift:
+		return "Constrain operations to the active workspace scope, or submit a justification."
+	case BlockClassExpensiveHardening:
+		return "Run targeted test cases or provide justification for full-suite execution."
+	case BlockClassRepeatedExploration:
+		return "Consolidate exploratory queries or submit justification with evidence."
+	case BlockClassEvidenceGap:
+		return "Provide supporting evidence event IDs and verification plan in justification."
+	default:
+		return "Submit structured justification with verification plan to appeal this block."
+	}
 }
 
 func (s *Service) expireIfNeeded(rec *ChallengeRecord) error {

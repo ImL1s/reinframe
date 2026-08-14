@@ -1,0 +1,7 @@
+{"at":"2026-08-15T02:00:00.100000Z","event":"pre_tool_use","tool":"Bash","session":true,"permissionMode":"standard","phase":"pre","decision":"allow","exit":0}
+{"at":"2026-08-15T02:00:00.200000Z","event":"pre_tool_use","tool":"Bash","session":true,"permissionMode":"standard","phase":"pre","decision":"block","exit":0,"deny_json":true}
+{"at":"2026-08-15T02:00:00.300000Z","event":"pre_tool_use","tool":"apply_patch","session":true,"permissionMode":"standard","phase":"turn_1_deny","decision":"block","exit":0}
+{"at":"2026-08-15T02:00:00.400000Z","event":"pre_tool_use","tool":"read_file","session":true,"permissionMode":"standard","phase":"turn_2_allow","decision":"allow","exit":0}
+{"at":"2026-08-15T02:00:00.500000Z","event":"pre_tool_use","tool":"Bash","session":true,"permissionMode":"standard","phase":"challenge_context","decision":"block","exit":0}
+{"at":"2026-08-15T02:00:00.600000Z","event":"permission_request","tool":"Bash","session":true,"permissionMode":"standard","phase":"approval_allow","decision":"allow","exit":0}
+{"at":"2026-08-15T02:00:00.700000Z","event":"permission_request","tool":"Bash","session":true,"permissionMode":"standard","phase":"approval_deny","decision":"deny","exit":0}

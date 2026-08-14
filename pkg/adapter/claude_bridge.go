@@ -15,6 +15,18 @@ import (
 // Host hook type names appear only in this adapter layer and docs — never as
 // pkg/protocol identifiers. This is an experimental product bridge: fixture-
 // driven and optional CLI entry; not a claim of production dual-host supervision.
+// ClaudeJustificationInput is the adapter-facing justification payload (#139).
+type ClaudeJustificationInput struct {
+	ConcreteValue              string   `json:"concrete_value,omitempty"`
+	PreventedFailureOrThreat   string   `json:"prevented_failure_or_threat,omitempty"`
+	EstimatedCost              string   `json:"estimated_cost,omitempty"`
+	AlternativesConsidered     string   `json:"alternatives_considered,omitempty"`
+	ScopeLimit                 string   `json:"scope_limit,omitempty"`
+	VerificationPlan           string   `json:"verification_plan,omitempty"`
+	RollbackPlan               string   `json:"rollback_plan,omitempty"`
+	SupportingEvidenceEventIDs []string `json:"supporting_evidence_event_ids,omitempty"`
+	RawText                    string   `json:"raw_text,omitempty"`
+}
 
 // ClaudePreToolInput is the harness-facing PreTool surface after JSON mapping.
 // Fields are adapter-only.
@@ -29,6 +41,10 @@ type ClaudePreToolInput struct {
 	// Proposed is the versioned host→core action projection (#115). Prefer this
 	// over stuffing shell commands into ToolName.
 	Proposed *ProposedAction
+	// Challenge binding fields for appealable retry turns (#139).
+	ChallengeID    string
+	ChallengeNonce string
+	Justification  *ClaudeJustificationInput
 }
 
 // ClaudeHookResponse is the JSON shape written back to Claude Code hooks.
@@ -55,15 +71,18 @@ type ClaudeHookSpecificOutput struct {
 	HookEventName            string `json:"hookEventName,omitempty"`
 	PermissionDecision       string `json:"permissionDecision,omitempty"` // allow | deny | ask
 	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
+	AdditionalContext        string `json:"additionalContext,omitempty"`
 }
 
 // ClaudeReinframeMeta is non-host metadata for debugging (ignored by Claude).
 type ClaudeReinframeMeta struct {
-	Action         string `json:"action"`
-	ReasonCode     string `json:"reason_code"`
-	InterventionID string `json:"intervention_id,omitempty"`
-	SessionID      string `json:"session_id,omitempty"`
-	ToolName       string `json:"tool_name,omitempty"`
+	Action         string                  `json:"action"`
+	ReasonCode     string                  `json:"reason_code"`
+	InterventionID string                  `json:"intervention_id,omitempty"`
+	SessionID      string                  `json:"session_id,omitempty"`
+	ToolName       string                  `json:"tool_name,omitempty"`
+	TransportLevel string                  `json:"transport_level,omitempty"`
+	Challenge      *ClaudeChallengeContext `json:"challenge,omitempty"`
 }
 
 // MapClaudePreToolUseJSON maps Claude Code PreToolUse-shaped JSON to ClaudePreToolInput.
@@ -71,7 +90,8 @@ type ClaudeReinframeMeta struct {
 // Expected loose keys (any subset):
 //
 //	session_id|sessionId, tool_name|toolName, tool_input|toolInput (object or string),
-//	file_path|filePath|path, cwd (optional path fallback), hook_event_name
+//	file_path|filePath|path, cwd (optional path fallback), hook_event_name,
+//	challenge_id|challengeId, challenge_nonce|challengeNonce, justification
 func MapClaudePreToolUseJSON(raw []byte) (ClaudePreToolInput, error) {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -81,18 +101,38 @@ func MapClaudePreToolUseJSON(raw []byte) (ClaudePreToolInput, error) {
 	in.SessionID = firstString(m, "session_id", "sessionId", "sessionID")
 	// Host tool id only — never take shell command from tool_input.command as ToolName (#115).
 	in.ToolName = firstString(m, "tool_name", "toolName", "tool")
-	if in.ToolName == "" {
-		if ti, ok := m["tool_input"].(map[string]any); ok {
-			// Accept nested tool_name/name only — not "command" (that is shell text).
+	in.ChallengeID = firstString(m, "challenge_id", "challengeId", "_challenge_id")
+	in.ChallengeNonce = firstString(m, "challenge_nonce", "challengeNonce", "_challenge_nonce", "nonce")
+	in.Justification = parseJustificationInput(m["justification"])
+	if in.Justification == nil {
+		in.Justification = parseJustificationInput(m["_justification"])
+	}
+
+	var tiMap map[string]any
+	if ti, ok := m["tool_input"].(map[string]any); ok {
+		tiMap = ti
+		if in.ToolName == "" {
 			in.ToolName = firstString(ti, "tool_name", "name")
-			in.FilePath = firstString(ti, "file_path", "filePath", "path")
+		}
+		in.FilePath = firstString(ti, "file_path", "filePath", "path")
+		if in.ChallengeID == "" {
+			in.ChallengeID = firstString(ti, "challenge_id", "challengeId", "_challenge_id")
+		}
+		if in.ChallengeNonce == "" {
+			in.ChallengeNonce = firstString(ti, "challenge_nonce", "challengeNonce", "_challenge_nonce", "nonce")
+		}
+		if in.Justification == nil {
+			in.Justification = parseJustificationInput(ti["justification"])
+		}
+		if in.Justification == nil {
+			in.Justification = parseJustificationInput(ti["_justification"])
 		}
 	}
 	in.FilePath = firstNonEmpty(in.FilePath, firstString(m, "file_path", "filePath", "path"))
 	var toolInput any
-	if ti, ok := m["tool_input"]; ok && ti != nil {
-		toolInput = ti
-		b, err := json.Marshal(ti)
+	if tiMap != nil {
+		toolInput = tiMap
+		b, err := json.Marshal(tiMap)
 		if err == nil {
 			s := string(b)
 			if len(s) > 400 {
@@ -108,6 +148,26 @@ func MapClaudePreToolUseJSON(raw []byte) (ClaudePreToolInput, error) {
 		var parsed any
 		if err := json.Unmarshal([]byte(s), &parsed); err == nil {
 			toolInput = parsed
+			if pMap, ok := parsed.(map[string]any); ok {
+				if in.ToolName == "" {
+					in.ToolName = firstString(pMap, "tool_name", "name")
+				}
+				if in.FilePath == "" {
+					in.FilePath = firstString(pMap, "file_path", "filePath", "path")
+				}
+				if in.ChallengeID == "" {
+					in.ChallengeID = firstString(pMap, "challenge_id", "challengeId", "_challenge_id")
+				}
+				if in.ChallengeNonce == "" {
+					in.ChallengeNonce = firstString(pMap, "challenge_nonce", "challengeNonce", "_challenge_nonce", "nonce")
+				}
+				if in.Justification == nil {
+					in.Justification = parseJustificationInput(pMap["justification"])
+				}
+				if in.Justification == nil {
+					in.Justification = parseJustificationInput(pMap["_justification"])
+				}
+			}
 		}
 	}
 	if in.SessionID == "" {
@@ -116,7 +176,14 @@ func MapClaudePreToolUseJSON(raw []byte) (ClaudePreToolInput, error) {
 	if in.ToolName == "" {
 		return ClaudePreToolInput{}, fmt.Errorf("claude pretool: tool_name required")
 	}
-	pa, err := ProposedActionFromClaudePreTool(in, toolInput, ProposedActionOptions{})
+	cleanToolInput := toolInput
+	if tiMap != nil {
+		cleanToolInput = cleanToolInputMap(tiMap)
+	} else if pMap, ok := toolInput.(map[string]any); ok {
+		cleanToolInput = cleanToolInputMap(pMap)
+	}
+
+	pa, err := ProposedActionFromClaudePreTool(in, cleanToolInput, ProposedActionOptions{})
 	if err != nil {
 		return ClaudePreToolInput{}, err
 	}
@@ -127,21 +194,100 @@ func MapClaudePreToolUseJSON(raw []byte) (ClaudePreToolInput, error) {
 	return in, nil
 }
 
+func cleanToolInputMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		lk := strings.ToLower(strings.TrimSpace(k))
+		if lk == "challenge_id" || lk == "challengeid" || lk == "_challenge_id" ||
+			lk == "challenge_nonce" || lk == "challengenonce" || lk == "_challenge_nonce" || lk == "nonce" ||
+			lk == "justification" || lk == "_justification" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func parseJustificationInput(v any) *ClaudeJustificationInput {
+	if v == nil {
+		return nil
+	}
+	if s, ok := v.(string); ok {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(s), &m); err == nil && len(m) > 0 {
+			return parseJustificationInput(m)
+		}
+		return &ClaudeJustificationInput{RawText: s}
+	}
+	if m, ok := v.(map[string]any); ok {
+		out := &ClaudeJustificationInput{
+			ConcreteValue:            firstString(m, "concrete_value", "concreteValue", "value"),
+			PreventedFailureOrThreat: firstString(m, "prevented_failure_or_threat", "preventedFailureOrThreat", "threat", "prevented_failure"),
+			EstimatedCost:            firstString(m, "estimated_cost", "estimatedCost", "cost"),
+			AlternativesConsidered:   firstString(m, "alternatives_considered", "alternativesConsidered", "alternatives"),
+			ScopeLimit:               firstString(m, "scope_limit", "scopeLimit", "scope"),
+			VerificationPlan:         firstString(m, "verification_plan", "verificationPlan", "verification"),
+			RollbackPlan:             firstString(m, "rollback_plan", "rollbackPlan", "rollback"),
+		}
+		if ev, ok := m["supporting_evidence_event_ids"]; ok {
+			out.SupportingEvidenceEventIDs = toStringSlice(ev)
+		} else if ev, ok := m["evidence_ids"]; ok {
+			out.SupportingEvidenceEventIDs = toStringSlice(ev)
+		} else if ev, ok := m["evidence"]; ok {
+			out.SupportingEvidenceEventIDs = toStringSlice(ev)
+		}
+		return out
+	}
+	return nil
+}
+
+func toStringSlice(v any) []string {
+	if v == nil {
+		return nil
+	}
+	switch s := v.(type) {
+	case []string:
+		return s
+	case []any:
+		var out []string
+		for _, elem := range s {
+			if str, ok := elem.(string); ok && str != "" {
+				out = append(out, str)
+			}
+		}
+		return out
+	case string:
+		if s != "" {
+			return []string{s}
+		}
+	}
+	return nil
+}
+
 // HookRequestFromClaudePreTool converts adapter input to HookRequest for core gates.
 // When Proposed is present, ToolName/FilePath come from the projection (Command is
 // not placed into ToolName).
 func HookRequestFromClaudePreTool(in ClaudePreToolInput) HookRequest {
+	var req HookRequest
 	if in.Proposed != nil {
-		req := HookRequestFromProposedAction(*in.Proposed, "PreTool")
+		req = HookRequestFromProposedAction(*in.Proposed, "PreTool")
 		req.Proposed = in.Proposed
-		return req
+	} else {
+		req = HookRequest{
+			SessionID: in.SessionID,
+			Phase:     "PreTool",
+			ToolName:  in.ToolName,
+			FilePath:  in.FilePath,
+		}
 	}
-	return HookRequest{
-		SessionID: in.SessionID,
-		Phase:     "PreTool",
-		ToolName:  in.ToolName,
-		FilePath:  in.FilePath,
-	}
+	req.ChallengeID = in.ChallengeID
+	req.ChallengeNonce = in.ChallengeNonce
+	req.Justification = in.Justification
+	return req
 }
 
 // ClaudeBridgeConfig configures EvaluateClaudePreTool.
@@ -155,6 +301,8 @@ type ClaudeBridgeConfig struct {
 	Evaluate func(ctx context.Context, req HookRequest) HookDecision
 	// Response options for host-versioned ALLOW/BLOCK/defer mapping (#116).
 	Response ClaudeResponseOptions
+	// EvaluateChallenge when non-nil handles challenge opening and retry lifecycle (#139).
+	EvaluateChallenge func(ctx context.Context, in ClaudePreToolInput, req HookRequest, cfg ClaudeBridgeConfig) (ClaudeHookResponse, HookDecision, bool, error)
 }
 
 // EvaluateClaudePreTool maps host PreTool input through core EvaluateHook (or
@@ -164,6 +312,17 @@ func EvaluateClaudePreTool(ctx context.Context, in ClaudePreToolInput, cfg Claud
 		ctx = context.Background()
 	}
 	req := HookRequestFromClaudePreTool(in)
+
+	if cfg.EvaluateChallenge != nil {
+		resp, dec, handled, err := cfg.EvaluateChallenge(ctx, in, req, cfg)
+		if err != nil {
+			return resp, dec, err
+		}
+		if handled {
+			return resp, dec, nil
+		}
+	}
+
 	var dec HookDecision
 	if cfg.Evaluate != nil {
 		dec = cfg.Evaluate(ctx, req)

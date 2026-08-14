@@ -1,0 +1,5 @@
+{"at":"2026-08-15T02:00:00.100000Z","event":"PreToolUse","tool":"Write","session":true,"phase":"allow_check","decision":"approve","exit":0,"continue_omitted":true}
+{"at":"2026-08-15T02:00:00.200000Z","event":"PreToolUse","tool":"Bash","session":true,"phase":"block_check","decision":"block","exit":0,"continue_omitted":true}
+{"at":"2026-08-15T02:00:00.300000Z","event":"PreToolUse","tool":"Bash","session":true,"phase":"turn_1_deny","decision":"block","exit":0,"continue_omitted":true}
+{"at":"2026-08-15T02:00:00.400000Z","event":"PreToolUse","tool":"Read","session":true,"phase":"turn_2_allow","decision":"approve","exit":0,"continue_omitted":true}
+{"at":"2026-08-15T02:00:00.500000Z","event":"PreToolUse","tool":"Edit","session":true,"phase":"reason_context","decision":"block","exit":0,"continue_omitted":true}

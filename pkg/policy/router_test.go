@@ -527,7 +527,8 @@ func TestDualLaneRouter_ConcurrencyAndRaceSafety(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
-				if workerID%3 == 0 {
+				switch workerID % 3 {
+				case 0:
 					// Agent turn on Lane A
 					_, _ = r.ResolveRoute(context.Background(), policy.RouteRequest{
 						Role:   policy.RoleAgent,
@@ -536,7 +537,7 @@ func TestDualLaneRouter_ConcurrencyAndRaceSafety(t *testing.T) {
 							ModelID: "gpt-5.3-codex",
 						},
 					})
-				} else if workerID%3 == 1 {
+				case 1:
 					// Classifier assessment on Lane B
 					_, _ = r.ResolveRoute(context.Background(), policy.RouteRequest{
 						Role:   policy.RoleClassifier,
@@ -545,7 +546,7 @@ func TestDualLaneRouter_ConcurrencyAndRaceSafety(t *testing.T) {
 							ModelID: "gpt-4o",
 						},
 					})
-				} else {
+				default:
 					// Dynamic catalog / auth update
 					if j%2 == 0 {
 						cat := makeTestCatalog()

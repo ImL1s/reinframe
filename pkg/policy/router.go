@@ -505,11 +505,12 @@ func (r *DualLaneRouter) resolveRouteLocked(ctx context.Context, req RouteReques
 				targetLane = LaneCodexSubscription
 			}
 		default:
-			if req.CredentialClass == CredentialClassSubscription {
+			switch req.CredentialClass {
+			case CredentialClassSubscription:
 				targetLane = LaneCodexSubscription
-			} else if req.CredentialClass == CredentialClassAPIKey {
+			case CredentialClassAPIKey:
 				targetLane = LaneOpenAIResponses
-			} else {
+			default:
 				return RouteDecision{}, fmt.Errorf("%w: cannot infer lane for role %q", ErrNoRouteAvailable, role)
 			}
 		}
@@ -574,7 +575,7 @@ func (r *DualLaneRouter) resolveSubscriptionLane(
 
 	// Resolve Model
 	selectedModel := req.ModelSelection.ModelID
-	var resolvedCaps uint64 = r.subLane.Capabilities
+	resolvedCaps := r.subLane.Capabilities
 
 	if r.subLane.Catalog != nil {
 		if selectedModel == "" {
@@ -676,7 +677,7 @@ func (r *DualLaneRouter) resolveAPIResponsesLane(
 	}
 
 	selectedModel := req.ModelSelection.ModelID
-	var resolvedCaps uint64 = r.apiLane.Capabilities
+	resolvedCaps := r.apiLane.Capabilities
 
 	if r.apiLane.Catalog != nil {
 		if selectedModel == "" {
@@ -811,7 +812,7 @@ func (r *DualLaneRouter) ResolveFallback(
 
 	// 3. Same-Lane Fallback Evaluation
 	var fbModel string
-	var reqCaps uint64 = orig.RequiredCapabilities
+	reqCaps := orig.RequiredCapabilities
 	if len(opts) > 0 {
 		if opts[0].FallbackModelID != "" {
 			fbModel = opts[0].FallbackModelID

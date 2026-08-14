@@ -12,15 +12,22 @@
 | Classifier provider foundation | **#132 / PR #150** | Generic OpenAI-compatible cache-neutral |
 | Native OpenAI/Anthropic/Gemini/xAI | **#134–#137** | Classifier adapters only; direct API keys (/v1/responses); not ChatGPT OAuth; xAI ≠ Grok host |
 | Exact assessment cache | **#138** + fixes | Process-local; default off; panic-safe singleflight |
-| Challenge/cache offline eval | **#140** A/B, **#141** | MORE-DATA |
+| Challenge/cache offline eval | **#140** A/B, **#141** | Completed (#140 benchmark on main) |
 | Codex EventSource | **#95/#107/#118** | JSONL observe-only L0 |
-| Claude PreTool bridge | **#96/#106/#117** | Experimental; not live smoke |
+| Claude PreTool bridge | **#96/#106/#117** | Experimental; #139 appealable retry on main |
 | Host roadmap sync | **#170** | Public status for Codex/Grok lanes |
-| Codex project-local hooks | **#163** | Shipped foundation; live **#164** |
+| Codex project-local hooks | **#163** / **#164** | Shipped foundation & live evidence on main |
+| Claude project-local hooks | **#120** / **#139** | Shipped foundation, live evidence & retry bridge on main |
 | Grok Build native hooks | **#165** | Foundation; host fail-open; live **#167** |
 | Grok Build ACP stdio | **#166** + residual **#180**; hardening **#191** | Foundation on main; #191 fixes delegated-auth, canonical levels, official headless argv, Windows Job Object tree; live **#167** |
-| Cross-host eval framework | **#168** | Fake + historical Grok pin; disposition **MORE-DATA**; no ranking; open until matched Codex/Claude live |
+| Cross-host eval framework | **#168** | Synthesized tri-host evaluation report on main; disposition **MORE-DATA**; no ranking |
 | Codex OAuth/Spark governance sync | **#190** | **CLOSED** on main — normative boundaries across README, CURRENT, Epic #80/#182, 3-axis mapping; ADR 006 accepted |
+| Codex App Server runtime | **#184** | **CLOSED** on main — bounded stdio JSON-RPC 2.0 runtime bridge, job objects, 1MB limit |
+| Dynamic model catalog | **#185** | **CLOSED** on main — entitlement-aware dynamic model discovery & snapshots |
+| Dual-lane routing | **#186** | **CLOSED** on main — strict subscription vs direct API isolation, zero cross-lane fallback |
+| Spark Pro live qualification | **#187** | **CLOSED** on main — pinned live evidence & qualification report, exact identity GO |
+| Spark API profile | **#188** | **CLOSED** on main — capability-gated direct OpenAI API profile for entitled projects |
+| Subscription churn test suite | **#189** | **CLOSED** on main — 6-dimension integration churn test suite passing 100% |
 
 ## Residual open work
 

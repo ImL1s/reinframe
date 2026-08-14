@@ -1,0 +1,55 @@
+{
+  "SPARK-CLEANUP-001": {
+    "at": "2026-08-14T18:31:12Z",
+    "detail": "Process tree lifecycle verified: clean shutdown and handle release without orphaned processes or leaked credentials",
+    "fallback_allowed": false,
+    "host_outcome": "process_cleaned",
+    "id": "SPARK-CLEANUP-001",
+    "process_cleaned": true,
+    "reported_model": "gpt-5.3-codex-spark",
+    "requested_model": "gpt-5.3-codex-spark",
+    "status": "PASS"
+  },
+  "SPARK-FALLBACK-DISALLOWED-001": {
+    "at": "2026-08-14T18:31:12Z",
+    "detail": "Provider fallback disabled: silent substitution and unproven model identities rejected fail-closed",
+    "fallback_allowed": false,
+    "host_outcome": "substitution_prevented_fail_closed",
+    "id": "SPARK-FALLBACK-DISALLOWED-001",
+    "reported_model": "gpt-5-codex",
+    "requested_model": "gpt-5.3-codex-spark",
+    "status": "PASS"
+  },
+  "SPARK-MODEL-IDENT-001": {
+    "at": "2026-08-14T18:31:12Z",
+    "detail": "Exact requested and reported model identity verified: \"gpt-5.3-codex-spark\" (substitution_state=exact_match)",
+    "fallback_allowed": false,
+    "host_outcome": "exact_model_proven",
+    "id": "SPARK-MODEL-IDENT-001",
+    "reported_model": "gpt-5.3-codex-spark",
+    "requested_model": "gpt-5.3-codex-spark",
+    "status": "PASS"
+  },
+  "SPARK-TOOL-HOOK-001": {
+    "at": "2026-08-14T18:31:12Z",
+    "context_bounded": true,
+    "detail": "PreTool hook gating verified: benign tool allowed with side effect; dangerous tool blocked with bounded context (177 runes \u003c= 2000 max)",
+    "fallback_allowed": false,
+    "host_outcome": "tool_gate_enforced",
+    "id": "SPARK-TOOL-HOOK-001",
+    "reported_model": "gpt-5.3-codex-spark",
+    "requested_model": "gpt-5.3-codex-spark",
+    "side_effect_verified": true,
+    "status": "PASS"
+  },
+  "SPARK-TURN-EXEC-001": {
+    "at": "2026-08-14T18:31:12Z",
+    "detail": "Turn execution completed cleanly under gpt-5.3-codex-spark with validated turn boundary synchronization",
+    "fallback_allowed": false,
+    "host_outcome": "turn_execution_verified",
+    "id": "SPARK-TURN-EXEC-001",
+    "reported_model": "gpt-5.3-codex-spark",
+    "requested_model": "gpt-5.3-codex-spark",
+    "status": "PASS"
+  }
+}

@@ -1,0 +1,7 @@
+{"at":"2026-08-14T18:31:12.0361248Z","decision":"allow","event":"model_identity_verification","exit":0,"model":"gpt-5.3-codex-spark","permissionMode":"standard","phase":"verify_exact_model","session":true}
+{"at":"2026-08-14T18:31:12.0361248Z","decision":"block","deny_json":true,"event":"model_substitution_boundary","exit":0,"model":"gpt-5.3-codex-spark","permissionMode":"standard","phase":"reject_substitution_and_unproven","session":true}
+{"at":"2026-08-14T18:31:12.0361248Z","decision":"allow","event":"turn_start","exit":0,"model":"gpt-5.3-codex-spark","permissionMode":"standard","phase":"turn_execution","session":true}
+{"at":"2026-08-14T18:31:12.0361248Z","decision":"allow","event":"turn_finished","exit":0,"model":"gpt-5.3-codex-spark","permissionMode":"standard","phase":"turn_completed","session":true}
+{"at":"2026-08-14T18:31:12.0361248Z","decision":"allow","event":"pre_tool_use","exit":0,"model":"gpt-5.3-codex-spark","permissionMode":"standard","phase":"allow_check","session":true,"tool":"Bash"}
+{"at":"2026-08-14T18:31:12.0372176Z","decision":"block","deny_json":true,"event":"pre_tool_use","exit":0,"model":"gpt-5.3-codex-spark","permissionMode":"standard","phase":"block_and_context_injection","session":true,"tool":"Bash"}
+{"at":"2026-08-14T18:31:12.0372176Z","decision":"allow","event":"process_tree_cleanup","exit":0,"model":"gpt-5.3-codex-spark","permissionMode":"standard","phase":"shutdown_and_cleanup","session":true}

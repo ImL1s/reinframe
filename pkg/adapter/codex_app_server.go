@@ -1324,6 +1324,8 @@ func mapServerRPCError(rpcErr *jsonRPCError) *AppServerError {
 		return NewAppServerError(ErrCodeRequestTimeout, msg)
 	case strings.Contains(lower, "oversized") || strings.Contains(lower, "message too large"):
 		return NewAppServerError(ErrCodeProtocolOversized, msg)
+	case strings.Contains(lower, "runtime_crashed") || strings.Contains(lower, "process crashed") || strings.Contains(lower, "crashed"):
+		return NewAppServerError(ErrCodeRuntimeCrashed, msg)
 	default:
 		return NewAppServerError(ErrCodeProtocolMalformed, fmt.Sprintf("server error (%d): %s", rpcErr.Code, msg))
 	}

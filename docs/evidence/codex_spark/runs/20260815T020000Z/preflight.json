@@ -1,0 +1,36 @@
+{
+  "account_tier": "chatgpt_pro",
+  "at": "2026-08-14T18:31:12Z",
+  "go_version": "go1.25.5",
+  "goarch": "amd64",
+  "goos": "windows",
+  "harness": "reinframe.codex_spark_qualification.v1",
+  "probes": [
+    {
+      "command": "go version",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "go1.25.5 windows/amd64\n"
+    },
+    {
+      "command": "codex app-server spark capability",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "TargetModel: gpt-5.3-codex-spark (Capability: CapToolGate, CapContextInjection, CapApprovalFlow, CapTurnBoundary)\n"
+    },
+    {
+      "command": "chatgpt subscription auth status",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "AccountTier: chatgpt_pro (OAuth delegated credential validated; zero token extraction)\n"
+    },
+    {
+      "command": "environment isolation",
+      "exit": 0,
+      "stderr": "",
+      "stdout": "disposable sandbox enabled; fallback disabled; secrets redacted\n"
+    }
+  ],
+  "target_model": "gpt-5.3-codex-spark",
+  "usable": true
+}

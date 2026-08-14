@@ -701,7 +701,7 @@ func validateCodexRuntime(cr CodexRuntimeConfig) error {
 			return fmt.Errorf("codex_runtime.binary_sha256 must be 64 hex characters")
 		}
 		for _, r := range h {
-			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
 				return fmt.Errorf("codex_runtime.binary_sha256 contains non-hex characters")
 			}
 		}

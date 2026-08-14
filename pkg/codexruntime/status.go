@@ -60,9 +60,11 @@ func (p *CLIStatusProber) ProbeAuthStatus(
 	outBytes, err := cmd.CombinedOutput()
 	rawOutput := string(outBytes)
 
-	mode := protocol.RuntimeAuthModeUnknown
-	state := protocol.RuntimeAuthStateUnknown
-	generationSeed := "uninitialized"
+	var (
+		mode           protocol.RuntimeAuthMode
+		state          protocol.RuntimeAuthState
+		generationSeed string
+	)
 
 	if err != nil {
 		lowerOut := strings.ToLower(rawOutput)

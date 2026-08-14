@@ -4,12 +4,10 @@ package adapter_test
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"testing"
 	"time"
 

@@ -31,6 +31,21 @@ func TestDefault_Validate(t *testing.T) {
 	if !cfg.HookGate.FailOpen {
 		t.Fatal("HookGate.FailOpen default expected true for observe-friendly foundation")
 	}
+	if cfg.CodexRuntime.Enabled {
+		t.Fatal("CodexRuntime.Enabled default must be false")
+	}
+	if cfg.CodexRuntime.Executable != "codex" {
+		t.Fatalf("CodexRuntime.Executable = %q, want codex", cfg.CodexRuntime.Executable)
+	}
+	if cfg.CodexRuntime.CredentialOwner != "codex_process" {
+		t.Fatalf("CodexRuntime.CredentialOwner = %q, want codex_process", cfg.CodexRuntime.CredentialOwner)
+	}
+	if cfg.CodexRuntime.RequiredAuth != "chatgpt_subscription" {
+		t.Fatalf("CodexRuntime.RequiredAuth = %q, want chatgpt_subscription", cfg.CodexRuntime.RequiredAuth)
+	}
+	if cfg.CodexRuntime.AllowInteractiveLogin {
+		t.Fatal("CodexRuntime.AllowInteractiveLogin default must be false")
+	}
 }
 
 func TestJSONRoundTrip_Default(t *testing.T) {
@@ -123,6 +138,7 @@ func TestYAMLTagsPresent(t *testing.T) {
 		"Reviewer":      "reviewer",
 		"Secrets":       "secrets",
 		"Workspace":     "workspace",
+		"CodexRuntime":  "codex_runtime",
 	}
 	for name, wantYAML := range fields {
 		f, ok := typ.FieldByName(name)
@@ -291,3 +307,176 @@ func TestClassifierProviderConfig_Validate(t *testing.T) {
 		t.Fatal("raw secret in json")
 	}
 }
+
+func TestValidate_CodexRuntime(t *testing.T) {
+	t.Parallel()
+
+	// Default is valid
+	cfg := config.Default()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default config failed validation: %v", err)
+	}
+
+	// Enabled with valid configurations
+	cfg.CodexRuntime.Enabled = true
+	cfg.CodexRuntime.Executable = "codex"
+	cfg.CodexRuntime.CredentialOwner = "codex_process"
+	cfg.CodexRuntime.RequiredAuth = "chatgpt_subscription"
+	cfg.CodexRuntime.AllowInteractiveLogin = false
+	cfg.CodexRuntime.RuntimeProfile = "default"
+	cfg.CodexRuntime.StatusCheckTimeoutMS = 5000
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid enabled codex runtime config failed: %v", err)
+	}
+
+	// reinframe_env and api_key are valid closed enums
+	cfg.CodexRuntime.CredentialOwner = "reinframe_env"
+	cfg.CodexRuntime.RequiredAuth = "api_key"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid env/api_key config failed: %v", err)
+	}
+
+	// Valid SHA256 hex digest
+	cfg.CodexRuntime.BinarySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid sha256 failed: %v", err)
+	}
+
+	// Illegal shell metacharacters in executable name/path
+	for _, badExec := range []string{
+		"codex; rm -rf /",
+		"codex | bash",
+		"codex && evil",
+		"`evil`",
+		"$(evil)",
+		"codex > out",
+		"codex\nmalicious",
+		`codex"`,
+	} {
+		badCfg := cfg
+		badCfg.CodexRuntime.Executable = badExec
+		if err := badCfg.Validate(); err == nil {
+			t.Fatalf("expected error for shell metacharacters in executable %q", badExec)
+		}
+	}
+
+	// Invalid credential owner
+	for _, badOwner := range []string{"root", "shared", "oauth", "other"} {
+		badCfg := cfg
+		badCfg.CodexRuntime.CredentialOwner = badOwner
+		if err := badCfg.Validate(); err == nil {
+			t.Fatalf("expected error for invalid credential owner %q", badOwner)
+		}
+	}
+
+	// Invalid required auth
+	for _, badAuth := range []string{"oauth2", "cookie", "token", "password"} {
+		badCfg := cfg
+		badCfg.CodexRuntime.RequiredAuth = badAuth
+		if err := badCfg.Validate(); err == nil {
+			t.Fatalf("expected error for invalid required auth %q", badAuth)
+		}
+	}
+
+	// Timeout out of bounds
+	badCfg := cfg
+	badCfg.CodexRuntime.StatusCheckTimeoutMS = -1
+	if err := badCfg.Validate(); err == nil {
+		t.Fatal("expected error for negative status_check_timeout_ms")
+	}
+	badCfg.CodexRuntime.StatusCheckTimeoutMS = 70000
+	if err := badCfg.Validate(); err == nil {
+		t.Fatal("expected error for status_check_timeout_ms > 60000")
+	}
+
+	// Invalid binary SHA256 (not 64 hex characters)
+	badCfg = cfg
+	badCfg.CodexRuntime.BinarySHA256 = "not-a-valid-sha256"
+	if err := badCfg.Validate(); err == nil {
+		t.Fatal("expected error for non-hex sha256")
+	}
+}
+
+func TestValidate_CodexRuntime_ProhibitedSecretKeys(t *testing.T) {
+	t.Parallel()
+
+	// Direct raw secret fields in JSON must be rejected by UnmarshalJSONDocument
+	prohibitedJSONs := []string{
+		`{"schema_version":1,"store":{"busy_timeout":"5s"},"reviewer":{"mode":"local"},"codex_runtime":{"enabled":true,"oauth_token":"gho_secret"}}`,
+		`{"schema_version":1,"store":{"busy_timeout":"5s"},"reviewer":{"mode":"local"},"codex_runtime":{"enabled":true,"refresh_token":"rt_secret"}}`,
+		`{"schema_version":1,"store":{"busy_timeout":"5s"},"reviewer":{"mode":"local"},"codex_runtime":{"enabled":true,"api_key":"sk-secret"}}`,
+		`{"schema_version":1,"store":{"busy_timeout":"5s"},"reviewer":{"mode":"local"},"codex_runtime":{"enabled":true,"cookie":"session=123"}}`,
+		`{"schema_version":1,"store":{"busy_timeout":"5s"},"reviewer":{"mode":"local"},"oauth_token":"root_secret"}`,
+	}
+
+	for _, badJSON := range prohibitedJSONs {
+		_, err := config.UnmarshalJSONDocument([]byte(badJSON))
+		if err == nil {
+			t.Fatalf("expected UnmarshalJSONDocument to reject prohibited secret in JSON:\n%s", badJSON)
+		}
+		if !strings.Contains(err.Error(), "security violation") {
+			t.Fatalf("expected security violation error message, got: %v", err)
+		}
+	}
+}
+
+func TestValidateUntrustedProjectOverride(t *testing.T) {
+	t.Parallel()
+
+	base := config.Default()
+	base.CodexRuntime.Executable = "/usr/local/bin/codex"
+	base.CodexRuntime.CredentialOwner = "codex_process"
+	base.CodexRuntime.BinarySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	base.Workspace.ManagedWorktreeRoot = "/var/worktrees/wt1"
+	base.Workspace.EnforceIsolation = true
+
+	// Safe project config (matching base constraints)
+	safeProject := config.Default()
+	safeProject.CodexRuntime.Executable = "/usr/local/bin/codex"
+	safeProject.CodexRuntime.CredentialOwner = "codex_process"
+	safeProject.CodexRuntime.BinarySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	safeProject.Workspace.ManagedWorktreeRoot = "/var/worktrees/wt1"
+	safeProject.Workspace.EnforceIsolation = true
+
+	if err := config.ValidateUntrustedProjectOverride(base, safeProject); err != nil {
+		t.Fatalf("expected safe project override to pass, got: %v", err)
+	}
+
+	// Untrusted override: attempting to change executable
+	badExecProject := safeProject
+	badExecProject.CodexRuntime.Executable = "/tmp/malicious/codex"
+	if err := config.ValidateUntrustedProjectOverride(base, badExecProject); err == nil {
+		t.Fatal("expected error when project overrides codex_runtime.executable")
+	}
+
+	// Untrusted override: attempting to change credential owner
+	badOwnerProject := safeProject
+	badOwnerProject.CodexRuntime.CredentialOwner = "reinframe_env"
+	if err := config.ValidateUntrustedProjectOverride(base, badOwnerProject); err == nil {
+		t.Fatal("expected error when project overrides codex_runtime.credential_owner")
+	}
+
+	// Untrusted override: attempting to change binary sha256
+	badHashProject := safeProject
+	badHashProject.CodexRuntime.BinarySHA256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	if err := config.ValidateUntrustedProjectOverride(base, badHashProject); err == nil {
+		t.Fatal("expected error when project overrides codex_runtime.binary_sha256")
+	}
+
+	// Untrusted override: attempting to disable worktree isolation
+	badIsoProject := safeProject
+	badIsoProject.Workspace.EnforceIsolation = false
+	if err := config.ValidateUntrustedProjectOverride(base, badIsoProject); err == nil {
+		t.Fatal("expected error when project disables workspace.enforce_isolation")
+	}
+
+	// Untrusted override: attempting to inject raw secrets into secrets.refs
+	badSecretProject := safeProject
+	badSecretProject.Secrets.Refs = map[string]string{
+		"injected": "raw_secret_password",
+	}
+	if err := config.ValidateUntrustedProjectOverride(base, badSecretProject); err == nil {
+		t.Fatal("expected error when project injects raw secrets into secrets.refs")
+	}
+}
+

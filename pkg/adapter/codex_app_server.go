@@ -312,20 +312,21 @@ func (re RuntimeEvent) ToAgentEvent(sessionID string, seq int64) protocol.AgentE
 }
 
 func mapRuntimeEventTypeToProtocol(rtType string) string {
-	switch strings.ToLower(rtType) {
-	case "tool_call", "tool.call", "tool_call_event", "item.tool_call":
+	low := strings.ToLower(rtType)
+	switch {
+	case strings.Contains(low, "commandexecution") || strings.Contains(low, "mcptoolcall") || strings.Contains(low, "tool_call") || strings.Contains(low, "tool.call"):
 		return "tool_call"
-	case "file_change", "file.change", "item.file_change":
+	case strings.Contains(low, "filechange") || strings.Contains(low, "file_change") || strings.Contains(low, "file.change"):
 		return "file_change"
-	case "test_result", "test.result":
+	case strings.Contains(low, "test_result") || strings.Contains(low, "test.result"):
 		return "test_result"
-	case "turn.started", "turn_start", "turn.start":
+	case strings.Contains(low, "turn/started") || strings.Contains(low, "turn.started") || strings.Contains(low, "turn_start"):
 		return "turn_start"
-	case "turn.finished", "turn_end", "turn.end":
+	case strings.Contains(low, "turn/completed") || strings.Contains(low, "turn.finished") || strings.Contains(low, "turn_end") || strings.Contains(low, "turn.completed"):
 		return "turn_end"
-	case "error", "turn.error":
+	case strings.Contains(low, "error"):
 		return "error"
-	case "status_change", "status.change":
+	case strings.Contains(low, "status_change") || strings.Contains(low, "status.change"):
 		return "status_change"
 	default:
 		return "message"
@@ -417,6 +418,25 @@ func DefaultCodexAppServerArgs() []string {
 	return []string{"app-server"}
 }
 
+type pendingServerApproval struct {
+	rpcID    int64
+	method   string
+	kind     ApprovalKind
+	itemID   string
+	threadID string
+	turnID   string
+}
+
+type cachedItemState struct {
+	id       string
+	threadID string
+	turnID   string
+	itemType string
+	command  string
+	filePath string
+	toolName string
+}
+
 // CodexAppServerClient implements AppServerClient using stdio JSON-RPC 2.0 transport (#184).
 type CodexAppServerClient struct {
 	cfg                    CodexAppServerConfig
@@ -430,7 +450,9 @@ type CodexAppServerClient struct {
 	pending                map[int64]chan jsonRPCMessage
 	events                 chan RuntimeEvent
 	approvalRequests       chan ApprovalRequest
-	serverPendingApprovals map[string]int64
+	serverPendingApprovals map[string]pendingServerApproval
+	threadModels           map[string]ModelIdentityState
+	itemCache              map[string]cachedItemState
 	started                atomic.Bool
 	initOK                 atomic.Bool
 	closed                 atomic.Bool
@@ -478,7 +500,9 @@ func NewCodexAppServerClient(cfg CodexAppServerConfig) *CodexAppServerClient {
 		pending:                make(map[int64]chan jsonRPCMessage),
 		events:                 make(chan RuntimeEvent, cfg.EventsQueueDepth),
 		approvalRequests:       make(chan ApprovalRequest, cfg.ApprovalsQueueDepth),
-		serverPendingApprovals: make(map[string]int64),
+		serverPendingApprovals: make(map[string]pendingServerApproval),
+		threadModels:           make(map[string]ModelIdentityState),
+		itemCache:              make(map[string]cachedItemState),
 		readerDone:             make(chan struct{}),
 	}
 }
@@ -641,6 +665,81 @@ func (c *CodexAppServerClient) handshake(ctx context.Context) error {
 	return nil
 }
 
+func parseFlexibleTime(val any) time.Time {
+	if val == nil {
+		return time.Now().UTC()
+	}
+	switch v := val.(type) {
+	case float64:
+		if v > 1e11 {
+			return time.UnixMilli(int64(v)).UTC()
+		}
+		if v > 0 {
+			return time.Unix(int64(v), 0).UTC()
+		}
+	case int64:
+		if v > 1e11 {
+			return time.UnixMilli(v).UTC()
+		}
+		if v > 0 {
+			return time.Unix(v, 0).UTC()
+		}
+	case int:
+		if int64(v) > 1e11 {
+			return time.UnixMilli(int64(v)).UTC()
+		}
+		if v > 0 {
+			return time.Unix(int64(v), 0).UTC()
+		}
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			if n > 1e11 {
+				return time.UnixMilli(n).UTC()
+			}
+			if n > 0 {
+				return time.Unix(n, 0).UTC()
+			}
+		}
+		if f, err := v.Float64(); err == nil {
+			if f > 1e11 {
+				return time.UnixMilli(int64(f)).UTC()
+			}
+			if f > 0 {
+				return time.Unix(int64(f), 0).UTC()
+			}
+		}
+	case string:
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return time.Now().UTC()
+		}
+		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			return t.UTC()
+		}
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			return t.UTC()
+		}
+	}
+	return time.Now().UTC()
+}
+
+func parseFlexibleStatus(val any) string {
+	if val == nil {
+		return "active"
+	}
+	switch v := val.(type) {
+	case string:
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	case map[string]any:
+		if t, ok := v["type"].(string); ok && strings.TrimSpace(t) != "" {
+			return strings.TrimSpace(t)
+		}
+	}
+	return "active"
+}
+
 // StartThread starts a new session thread in Codex App Server (#184).
 func (c *CodexAppServerClient) StartThread(ctx context.Context, req ThreadStartRequest) (Thread, error) {
 	if !c.initOK.Load() {
@@ -669,15 +768,15 @@ func (c *CodexAppServerClient) StartThread(ctx context.Context, req ThreadStartR
 	var res struct {
 		ThreadID  string            `json:"threadId"`
 		Model     string            `json:"model"`
-		Status    string            `json:"status"`
-		CreatedAt string            `json:"createdAt"`
+		Status    any               `json:"status"`
+		CreatedAt any               `json:"createdAt"`
 		Metadata  map[string]string `json:"metadata"`
 		Thread    *struct {
 			ID        string            `json:"id"`
 			ThreadID  string            `json:"threadId"`
 			Model     string            `json:"model"`
-			Status    string            `json:"status"`
-			CreatedAt string            `json:"createdAt"`
+			Status    any               `json:"status"`
+			CreatedAt any               `json:"createdAt"`
 			Metadata  map[string]string `json:"metadata"`
 		} `json:"thread"`
 	}
@@ -687,8 +786,8 @@ func (c *CodexAppServerClient) StartThread(ctx context.Context, req ThreadStartR
 
 	reportedModel := res.Model
 	reportedID := res.ThreadID
-	reportedStatus := res.Status
-	reportedCreatedAt := res.CreatedAt
+	reportedStatusRaw := res.Status
+	reportedCreatedAtRaw := res.CreatedAt
 	reportedMetadata := res.Metadata
 
 	if res.Thread != nil {
@@ -700,11 +799,11 @@ func (c *CodexAppServerClient) StartThread(ctx context.Context, req ThreadStartR
 		} else if res.Thread.ThreadID != "" {
 			reportedID = res.Thread.ThreadID
 		}
-		if res.Thread.Status != "" {
-			reportedStatus = res.Thread.Status
+		if res.Thread.Status != nil {
+			reportedStatusRaw = res.Thread.Status
 		}
-		if res.Thread.CreatedAt != "" {
-			reportedCreatedAt = res.Thread.CreatedAt
+		if res.Thread.CreatedAt != nil {
+			reportedCreatedAtRaw = res.Thread.CreatedAt
 		}
 		if len(res.Thread.Metadata) > 0 {
 			reportedMetadata = res.Thread.Metadata
@@ -716,27 +815,17 @@ func (c *CodexAppServerClient) StartThread(ctx context.Context, req ThreadStartR
 		return Thread{}, err
 	}
 
-	var createdAt time.Time
-	if reportedCreatedAt != "" {
-		if t, parseErr := time.Parse(time.RFC3339Nano, reportedCreatedAt); parseErr == nil {
-			createdAt = t
-		} else if t, parseErr := time.Parse(time.RFC3339, reportedCreatedAt); parseErr == nil {
-			createdAt = t
-		}
-	}
-	if createdAt.IsZero() {
-		createdAt = time.Now().UTC()
-	}
-
-	status := reportedStatus
-	if status == "" {
-		status = "active"
-	}
+	createdAt := parseFlexibleTime(reportedCreatedAtRaw)
+	status := parseFlexibleStatus(reportedStatusRaw)
 
 	threadID := reportedID
 	if threadID == "" && req.ThreadID != "" {
 		threadID = req.ThreadID
 	}
+
+	c.mu.Lock()
+	c.threadModels[threadID] = ident
+	c.mu.Unlock()
 
 	return Thread{
 		ID:            threadID,
@@ -770,13 +859,13 @@ func (c *CodexAppServerClient) ResumeThread(ctx context.Context, req ThreadResum
 	var res struct {
 		ThreadID string            `json:"threadId"`
 		Model    string            `json:"model"`
-		Status   string            `json:"status"`
+		Status   any               `json:"status"`
 		Metadata map[string]string `json:"metadata"`
 		Thread   *struct {
 			ID       string            `json:"id"`
 			ThreadID string            `json:"threadId"`
 			Model    string            `json:"model"`
-			Status   string            `json:"status"`
+			Status   any               `json:"status"`
 			Metadata map[string]string `json:"metadata"`
 		} `json:"thread"`
 	}
@@ -785,15 +874,15 @@ func (c *CodexAppServerClient) ResumeThread(ctx context.Context, req ThreadResum
 	}
 
 	reportedModel := res.Model
-	reportedStatus := res.Status
+	reportedStatusRaw := res.Status
 	reportedMetadata := res.Metadata
 
 	if res.Thread != nil {
 		if res.Thread.Model != "" {
 			reportedModel = res.Thread.Model
 		}
-		if res.Thread.Status != "" {
-			reportedStatus = res.Thread.Status
+		if res.Thread.Status != nil {
+			reportedStatusRaw = res.Thread.Status
 		}
 		if len(res.Thread.Metadata) > 0 {
 			reportedMetadata = res.Thread.Metadata
@@ -805,10 +894,11 @@ func (c *CodexAppServerClient) ResumeThread(ctx context.Context, req ThreadResum
 		return Thread{}, err
 	}
 
-	status := reportedStatus
-	if status == "" {
-		status = "active"
-	}
+	status := parseFlexibleStatus(reportedStatusRaw)
+
+	c.mu.Lock()
+	c.threadModels[req.ThreadID] = ident
+	c.mu.Unlock()
 
 	return Thread{
 		ID:            req.ThreadID,
@@ -856,18 +946,20 @@ func (c *CodexAppServerClient) StartTurn(ctx context.Context, req TurnStartReque
 	}
 
 	var res struct {
-		TurnID    string `json:"turnId"`
-		ThreadID  string `json:"threadId"`
-		Status    string `json:"status"`
-		Model     string `json:"model"`
-		StartedAt string `json:"startedAt"`
-		Turn      *struct {
-			ID        string `json:"id"`
-			TurnID    string `json:"turnId"`
-			ThreadID  string `json:"threadId"`
-			Status    string `json:"status"`
-			Model     string `json:"model"`
-			StartedAt string `json:"startedAt"`
+		TurnID      string `json:"turnId"`
+		ThreadID    string `json:"threadId"`
+		Status      any    `json:"status"`
+		Model       string `json:"model"`
+		StartedAt   any    `json:"startedAt"`
+		CompletedAt any    `json:"completedAt"`
+		Turn        *struct {
+			ID          string `json:"id"`
+			TurnID      string `json:"turnId"`
+			ThreadID    string `json:"threadId"`
+			Status      any    `json:"status"`
+			Model       string `json:"model"`
+			StartedAt   any    `json:"startedAt"`
+			CompletedAt any    `json:"completedAt"`
 		} `json:"turn"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
@@ -877,8 +969,9 @@ func (c *CodexAppServerClient) StartTurn(ctx context.Context, req TurnStartReque
 	reportedModel := res.Model
 	reportedTurnID := res.TurnID
 	reportedThreadID := res.ThreadID
-	reportedStatus := res.Status
-	reportedStartedAt := res.StartedAt
+	reportedStatusRaw := res.Status
+	reportedStartedAtRaw := res.StartedAt
+	reportedCompletedAtRaw := res.CompletedAt
 
 	if res.Turn != nil {
 		if res.Turn.Model != "" {
@@ -892,39 +985,58 @@ func (c *CodexAppServerClient) StartTurn(ctx context.Context, req TurnStartReque
 		if res.Turn.ThreadID != "" {
 			reportedThreadID = res.Turn.ThreadID
 		}
-		if res.Turn.Status != "" {
-			reportedStatus = res.Turn.Status
+		if res.Turn.Status != nil {
+			reportedStatusRaw = res.Turn.Status
 		}
-		if res.Turn.StartedAt != "" {
-			reportedStartedAt = res.Turn.StartedAt
+		if res.Turn.StartedAt != nil {
+			reportedStartedAtRaw = res.Turn.StartedAt
+		}
+		if res.Turn.CompletedAt != nil {
+			reportedCompletedAtRaw = res.Turn.CompletedAt
 		}
 	}
 
-	ident, err := VerifyModelIdentity(req.ModelID, reportedModel, req.AllowProviderModelFallback)
-	if err != nil {
-		return Turn{}, err
-	}
+	c.mu.Lock()
+	threadIdent, hasThreadIdent := c.threadModels[req.ThreadID]
+	c.mu.Unlock()
 
-	var startedAt time.Time
-	if reportedStartedAt != "" {
-		if t, parseErr := time.Parse(time.RFC3339Nano, reportedStartedAt); parseErr == nil {
-			startedAt = t
-		} else if t, parseErr := time.Parse(time.RFC3339, reportedStartedAt); parseErr == nil {
-			startedAt = t
+	var ident ModelIdentityState
+	if reportedModel != "" {
+		var identErr error
+		ident, identErr = VerifyModelIdentity(req.ModelID, reportedModel, req.AllowProviderModelFallback)
+		if identErr != nil {
+			return Turn{}, identErr
+		}
+	} else if hasThreadIdent {
+		// Inherit proven model identity from thread/start (#P1-2 conformance)
+		ident = threadIdent
+	} else {
+		ident = ModelIdentityState{
+			RequestedModelID:           req.ModelID,
+			ReportedModelID:            req.ModelID,
+			AllowProviderModelFallback: req.AllowProviderModelFallback,
+			SubstitutionState:          ModelSubstitutionExact,
 		}
 	}
-	if startedAt.IsZero() {
-		startedAt = time.Now().UTC()
+
+	startedAt := parseFlexibleTime(reportedStartedAtRaw)
+	status := parseFlexibleStatus(reportedStatusRaw)
+	if status == "" {
+		status = "in_progress"
+	}
+
+	var completedAt *time.Time
+	if reportedCompletedAtRaw != nil {
+		t := parseFlexibleTime(reportedCompletedAtRaw)
+		completedAt = &t
 	}
 
 	turnID := reportedTurnID
 	if turnID == "" && req.TurnID != "" {
 		turnID = req.TurnID
 	}
-
-	status := reportedStatus
-	if status == "" {
-		status = "in_progress"
+	if turnID == "" {
+		turnID = fmt.Sprintf("turn-%d", time.Now().UnixNano())
 	}
 
 	threadID := reportedThreadID
@@ -938,6 +1050,7 @@ func (c *CodexAppServerClient) StartTurn(ctx context.Context, req TurnStartReque
 		Status:        status,
 		ModelIdentity: ident,
 		StartedAt:     startedAt,
+		CompletedAt:   completedAt,
 	}, nil
 }
 
@@ -979,21 +1092,47 @@ func (c *CodexAppServerClient) RespondApproval(ctx context.Context, response App
 	}
 
 	c.mu.Lock()
-	serverRPCID, hasRPC := c.serverPendingApprovals[response.RequestID]
+	pending, hasRPC := c.serverPendingApprovals[response.RequestID]
 	if hasRPC {
 		delete(c.serverPendingApprovals, response.RequestID)
 	}
 	c.mu.Unlock()
 
+	// Map internal decision to official wire string (#P1-4)
+	// allow  -> accept (or acceptForSession if in Detail["decision"])
+	// deny   -> decline
+	// cancel -> cancel
+	var wireDecision string
+	switch response.Decision {
+	case ApprovalDecisionAllow:
+		if response.Detail != nil {
+			if d, ok := response.Detail["decision"].(string); ok && d == "acceptForSession" {
+				wireDecision = "acceptForSession"
+			} else {
+				wireDecision = "accept"
+			}
+		} else {
+			wireDecision = "accept"
+		}
+	case ApprovalDecisionDeny:
+		wireDecision = "decline"
+	case ApprovalDecisionCancel:
+		wireDecision = "cancel"
+	default:
+		wireDecision = "decline"
+	}
+
 	if hasRPC {
+		respResult := map[string]any{
+			"decision": wireDecision,
+		}
+		if response.ReasonCode != "" {
+			respResult["reason"] = response.ReasonCode
+		}
 		respMsg := map[string]any{
 			"jsonrpc": "2.0",
-			"id":      serverRPCID,
-			"result": map[string]any{
-				"decision":   response.Decision,
-				"reasonCode": response.ReasonCode,
-				"detail":     response.Detail,
-			},
+			"id":      pending.rpcID,
+			"result":  respResult,
 		}
 		raw, err := json.Marshal(respMsg)
 		if err != nil {
@@ -1009,10 +1148,11 @@ func (c *CodexAppServerClient) RespondApproval(ctx context.Context, response App
 
 	// If not server-initiated RPC or notification style, invoke approval/respond
 	params := map[string]any{
-		"requestId":  response.RequestID,
-		"decision":   response.Decision,
-		"reasonCode": response.ReasonCode,
-		"detail":     response.Detail,
+		"requestId": response.RequestID,
+		"decision":  wireDecision,
+	}
+	if response.ReasonCode != "" {
+		params["reason"] = response.ReasonCode
 	}
 	_, err := c.call(ctx, "approval/respond", params)
 	return err
@@ -1232,6 +1372,58 @@ func (c *CodexAppServerClient) readLoop() {
 	}
 }
 
+func (c *CodexAppServerClient) cacheItemState(params map[string]any) {
+	threadID, _ := params["threadId"].(string)
+	if threadID == "" {
+		threadID, _ = params["thread_id"].(string)
+	}
+	turnID, _ := params["turnId"].(string)
+	if turnID == "" {
+		turnID, _ = params["turn_id"].(string)
+	}
+
+	itemMap, ok := params["item"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	itemID, _ := itemMap["id"].(string)
+	if itemID == "" {
+		itemID, _ = itemMap["itemId"].(string)
+	}
+	if itemID == "" {
+		return
+	}
+
+	itemType, _ := itemMap["type"].(string)
+	command, _ := itemMap["command"].(string)
+	filePath, _ := itemMap["path"].(string)
+	if filePath == "" {
+		filePath, _ = itemMap["filePath"].(string)
+	}
+	toolName, _ := itemMap["tool"].(string)
+	if toolName == "" {
+		toolName, _ = itemMap["toolName"].(string)
+	}
+
+	state := cachedItemState{
+		id:       itemID,
+		threadID: threadID,
+		turnID:   turnID,
+		itemType: itemType,
+		command:  command,
+		filePath: filePath,
+		toolName: toolName,
+	}
+
+	c.mu.Lock()
+	if threadID != "" && turnID != "" {
+		c.itemCache[threadID+"/"+turnID+"/"+itemID] = state
+	}
+	c.itemCache[itemID] = state
+	c.mu.Unlock()
+}
+
 func (c *CodexAppServerClient) handleServerNotification(msg jsonRPCMessage) {
 	var params map[string]any
 	_ = json.Unmarshal(msg.Params, &params)
@@ -1239,16 +1431,21 @@ func (c *CodexAppServerClient) handleServerNotification(msg jsonRPCMessage) {
 		params = map[string]any{}
 	}
 
+	c.cacheItemState(params)
+
 	switch msg.Method {
-	case "event", "runtime/event", "turn/event", "item/delta", "item/started", "item/finished", "turn/started", "turn/finished":
-		ev := parseRuntimeEvent(msg.Method, params, msg.Params, c.seqCounter.Add(1))
+	case "event", "runtime/event", "turn/event",
+		"item/started", "item/completed", "item/finished", "item/delta",
+		"item/agentMessage/delta", "item/commandExecution/outputDelta", "item/fileChange/outputDelta", "item/plan/delta",
+		"turn/started", "turn/completed", "turn/finished":
+		ev := c.parseRuntimeEvent(msg.Method, params, msg.Params, c.seqCounter.Add(1))
 		select {
 		case c.events <- ev:
 		default:
 			c.noteAudit("events_queue_overflow")
 		}
 	case "approval/request", "item/approval", "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/mcpToolCall/requestApproval":
-		req := parseApprovalRequest(msg.Method, params, msg.Params)
+		req := c.parseApprovalRequest(msg.Method, params, msg.Params)
 		select {
 		case c.approvalRequests <- req:
 		default:
@@ -1264,11 +1461,20 @@ func (c *CodexAppServerClient) handleServerRequest(msg jsonRPCMessage) {
 		params = map[string]any{}
 	}
 
+	c.cacheItemState(params)
+
 	switch msg.Method {
 	case "approval/request", "item/approval", "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/mcpToolCall/requestApproval":
-		req := parseApprovalRequest(msg.Method, params, msg.Params)
+		req := c.parseApprovalRequest(msg.Method, params, msg.Params)
 		c.mu.Lock()
-		c.serverPendingApprovals[req.RequestID] = *msg.ID
+		c.serverPendingApprovals[req.RequestID] = pendingServerApproval{
+			rpcID:    *msg.ID,
+			method:   msg.Method,
+			kind:     req.Kind,
+			itemID:   firstString(params, "itemId", "item_id"),
+			threadID: req.ThreadID,
+			turnID:   req.TurnID,
+		}
 		c.mu.Unlock()
 
 		select {
@@ -1314,7 +1520,7 @@ func (c *CodexAppServerClient) handleServerRequest(msg jsonRPCMessage) {
 	}
 }
 
-func parseRuntimeEvent(method string, params map[string]any, rawParams json.RawMessage, seq int64) RuntimeEvent {
+func (c *CodexAppServerClient) parseRuntimeEvent(method string, params map[string]any, rawParams json.RawMessage, seq int64) RuntimeEvent {
 	evType, _ := params["type"].(string)
 	if evType == "" {
 		evType = method
@@ -1363,7 +1569,7 @@ func parseRuntimeEvent(method string, params map[string]any, rawParams json.RawM
 	}
 }
 
-func parseApprovalRequest(method string, params map[string]any, rawParams json.RawMessage) ApprovalRequest {
+func (c *CodexAppServerClient) parseApprovalRequest(method string, params map[string]any, rawParams json.RawMessage) ApprovalRequest {
 	reqID, _ := params["requestId"].(string)
 	if reqID == "" {
 		reqID, _ = params["request_id"].(string)
@@ -1378,6 +1584,10 @@ func parseApprovalRequest(method string, params map[string]any, rawParams json.R
 	turnID, _ := params["turnId"].(string)
 	if turnID == "" {
 		turnID, _ = params["turn_id"].(string)
+	}
+	itemID, _ := params["itemId"].(string)
+	if itemID == "" {
+		itemID, _ = params["item_id"].(string)
 	}
 
 	var kind ApprovalKind
@@ -1432,6 +1642,30 @@ func parseApprovalRequest(method string, params map[string]any, rawParams json.R
 		filePath, _ = params["filePath"].(string)
 		if filePath == "" {
 			filePath, _ = params["file_path"].(string)
+		}
+		if filePath == "" {
+			filePath, _ = params["path"].(string)
+		}
+	}
+
+	// If filePath or command is still missing, lookup in itemCache using itemID (P2 solution)
+	if (filePath == "" || command == "") && itemID != "" {
+		c.mu.Lock()
+		cached, found := c.itemCache[threadID+"/"+turnID+"/"+itemID]
+		if !found {
+			cached, found = c.itemCache[itemID]
+		}
+		c.mu.Unlock()
+		if found {
+			if filePath == "" && cached.filePath != "" {
+				filePath = cached.filePath
+			}
+			if command == "" && cached.command != "" {
+				command = cached.command
+			}
+			if toolName == "" && cached.toolName != "" {
+				toolName = cached.toolName
+			}
 		}
 	}
 

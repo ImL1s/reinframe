@@ -237,15 +237,23 @@ func (b *ClaudeChallengeBridge) handleRetry(ctx context.Context, in adapter.Clau
 		reEval = &ReEvalContext{UserException: true}
 	}
 
+	attemptID := in.ToolUseID
+	if attemptID == "" && in.Proposed != nil {
+		attemptID = in.Proposed.ActionID
+	}
+	if attemptID == "" {
+		attemptID = "inv-1"
+	}
+
 	retryReq := RetryRequest{
 		ChallengeID:    in.ChallengeID,
 		ChallengeNonce: in.ChallengeNonce,
 		RequireNonce:   true,
 		SessionID:      in.SessionID,
 		Branch:         b.opts.Branch,
-		RetryRequestID: in.SessionID + "-retry-" + in.ChallengeID,
+		RetryRequestID: in.SessionID + "-retry-" + in.ChallengeID + "-" + attemptID,
 		Proposed:       pa,
-		CorrelationID:  in.ChallengeID + "-retry",
+		CorrelationID:  in.ChallengeID + "-retry-" + attemptID,
 		ReEval:         reEval,
 	}
 
@@ -265,7 +273,7 @@ func (b *ClaudeChallengeBridge) handleRetry(ctx context.Context, in adapter.Clau
 		opts := cfg.Response
 		opts.TransportLevel = adapter.ClaudeTransportHookAdditionalContext
 		resp := adapter.ClaudeHookResponseFromDecisionOpts(in, dec, opts)
-		return resp, dec, true, rErr
+		return resp, dec, true, nil
 	}
 
 	if res.Stage2Decision == DecisionAllow {

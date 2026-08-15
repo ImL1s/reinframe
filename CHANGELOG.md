@@ -5,6 +5,22 @@ All notable changes to Reinframe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Planned for v0.1.1: Official App Server Protocol Conformance & Claude Durable Challenge CLI
+
+#### Fixed & Conformance
+- **Codex App Server Official Schema Conformance**:
+  - `thread/start` & `thread/resume`: Added support for numeric timestamps (`createdAt` Unix ms/s) and object statuses (`{"type": "active"}`).
+  - `turn/start`: Decoupled `Turn` response parsing from `turn.model` and `turn.threadId` fields (inheriting proven thread model identity), matching official OpenAPI specs.
+  - Item Approval Path Resolution: Introduced client item state cache `(threadID, turnID, itemID) -> (path, command)` from `item/started` events so `item/fileChange/requestApproval` accurately resolves file paths even when params omit nested item details.
+  - Wire Approval Decisions: Translated internal decisions (`allow`/`deny`/`cancel`) to official schema results (`accept`/`acceptForSession`/`decline`/`cancel`).
+  - Full Lifecycle Routing: Added handling for `item/completed`, `turn/completed`, `item/agentMessage/delta`, and `item/commandExecution/outputDelta`.
+- **Claude Durable Challenge & Appeal Subcommand**:
+  - Persistent Challenge Store: Added atomic `SaveToFile` and `LoadFromFile` for `challenge.Store` across process lifetimes.
+  - `claudebridge appeal` CLI: Added standalone subcommand for submitting structured justifications with cryptographic nonce validation.
+  - One-Shot Retry Identity: Scoped retry request and correlation IDs with tool use ID, preventing idempotent replay bypass.
+
 ---
 
 ## [v0.1.0] - 2026-08-15

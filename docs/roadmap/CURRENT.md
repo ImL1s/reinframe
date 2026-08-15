@@ -68,13 +68,14 @@ Epic #182 (Codex OAuth / App Server / Spark Qualification) — ACTIVE (Foundatio
 
 Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 + residual follow-ups**.
 
-### Environment / live evidence (completed on main)
+### Environment / live evidence tracking (active)
 
 | Issue | Status | Notes |
 |-------|---------|-------|
-| **#164** | **CLOSED** | Pinned live Codex control evidence on main (`docs/evidence/codex/`) |
-| **#120** | **CLOSED** | Pinned live Claude control evidence on main (`docs/evidence/claude/`) |
-| **#139** | **CLOSED** | Claude challenge delivery & 1-shot retry bridge on main |
+| **#164** | **ACTIVE** | Codex live project-local hooks qualification tracking; synthetic harness and test runner on main (`cmd/codexlive`) |
+| **#120** | **ACTIVE** | Claude live project-local hooks qualification tracking; synthetic harness and test runner on main (`cmd/claudelive`) |
+| **#139** | **ACTIVE** | Claude durable challenge delivery & 1-shot retry bridge; `claudebridge appeal` CLI and durable store on main |
+| **#187** | **ACTIVE** | GPT-5.3-Codex-Spark Pro qualification tracking; synthetic runner on main (`cmd/sparklive`) |
 | **#140** | **CLOSED** | Challenge benchmark runner & 20/20 bypass vectors resistance on main |
 
 ### Recently merged (Grok campaign) — claims bounded by residual issues
@@ -88,16 +89,16 @@ Completed honesty order: **#201 → #199 → #200 → #205–#207 → #208+#209 
 
 ### Evaluation
 
-| Issue | Blocker | Notes |
-|-------|---------|-------|
-| **#168** live match | #164/#120 matched data + Grok session reliability | Grok historical + v2 live pins present; #168 disposition **MORE-DATA**; no ranking; latest clean-quota pin `20260811T130935Z` re-eval **NO_GO** under executable-binding gate (older pins remain **NO_GO**); none of these strengthen ranking |
+| Issue | Status | Blocker | Notes |
+|-------|--------|---------|-------|
+| **#168** live match | **ACTIVE** | #164/#120/#187 matched live data + Grok session reliability | Tri-host comparative synthesis report on main; disposition **MORE-DATA**; no cross-host ranking without matched live campaigns |
 
 ### Epics
 
-| Issue | Notes |
-|-------|-------|
-| **#80** | Core external supervision epic; open until residual environment/product close criteria are met |
-| **#182** | Dynamic Codex OAuth, App Server runtime, and Spark qualification epic; #190 closed on main |
+| Issue | Status | Notes |
+|-------|--------|-------|
+| **#80** | **ACTIVE** | Core external supervision epic; open until residual environment/product close criteria are met |
+| **#182** | **ACTIVE** | Dynamic Codex OAuth, App Server runtime, and Spark qualification epic; foundation code and full protocol conformance on main |
 
 ## Explicit non-claims
 

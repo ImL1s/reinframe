@@ -31,12 +31,11 @@ type ClaudeJustificationInput struct {
 // ClaudePreToolInput is the harness-facing PreTool surface after JSON mapping.
 // Fields are adapter-only.
 type ClaudePreToolInput struct {
-	SessionID string
-	ToolName  string
-	FilePath  string
-	// Phase is always PreTool for this mapper (informational).
-	Phase string
-	// RawToolInput is optional tool_input object JSON for audit (truncated).
+	Phase        string
+	SessionID    string
+	ToolName     string
+	ToolUseID    string
+	FilePath     string
 	RawToolInput string
 	// Proposed is the versioned host→core action projection (#115). Prefer this
 	// over stuffing shell commands into ToolName.
@@ -89,7 +88,7 @@ type ClaudeReinframeMeta struct {
 //
 // Expected loose keys (any subset):
 //
-//	session_id|sessionId, tool_name|toolName, tool_input|toolInput (object or string),
+//	session_id|sessionId, tool_name|toolName, tool_use_id|toolUseId, tool_input|toolInput (object or string),
 //	file_path|filePath|path, cwd (optional path fallback), hook_event_name,
 //	challenge_id|challengeId, challenge_nonce|challengeNonce, justification
 func MapClaudePreToolUseJSON(raw []byte) (ClaudePreToolInput, error) {
@@ -101,6 +100,7 @@ func MapClaudePreToolUseJSON(raw []byte) (ClaudePreToolInput, error) {
 	in.SessionID = firstString(m, "session_id", "sessionId", "sessionID")
 	// Host tool id only — never take shell command from tool_input.command as ToolName (#115).
 	in.ToolName = firstString(m, "tool_name", "toolName", "tool")
+	in.ToolUseID = firstString(m, "tool_use_id", "toolUseId", "id")
 	in.ChallengeID = firstString(m, "challenge_id", "challengeId", "_challenge_id")
 	in.ChallengeNonce = firstString(m, "challenge_nonce", "challengeNonce", "_challenge_nonce", "nonce")
 	in.Justification = parseJustificationInput(m["justification"])

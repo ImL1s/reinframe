@@ -23,3 +23,5 @@ tmp/
 # Runtime Agent Workspaces & Logs
 .agents/*
 !.agents/README.md
+.reinframe/
+

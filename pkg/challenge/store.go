@@ -3,7 +3,10 @@ package challenge
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -39,13 +42,23 @@ type Store struct {
 // Side/Targets/OpDigest bind RelBypass-equivalent deletes (tool-name variants)
 // so Bash vs Shell hard-denies cover the same semantic delete.
 type barrierEntry struct {
-	Note            string
-	PolicyVersion   string
-	RulesetHash     string
-	MarkSeq         int64
-	SideEffectClass string
-	TargetResources []string
-	OperationDigest string
+	Note            string   `json:"note"`
+	PolicyVersion   string   `json:"policy_version"`
+	RulesetHash     string   `json:"ruleset_hash"`
+	MarkSeq         int64    `json:"mark_seq"`
+	SideEffectClass string   `json:"side_effect_class"`
+	TargetResources []string `json:"target_resources"`
+	OperationDigest string   `json:"operation_digest"`
+}
+
+type storeSerialized struct {
+	Seq              int64                      `json:"seq"`
+	Events           []ChallengeEvent           `json:"events"`
+	ByID             map[string]ChallengeRecord `json:"by_id"`
+	Justifications   map[string]Justification   `json:"justifications"`
+	OpenByFP         map[string]string          `json:"open_by_fp"`
+	NonAppealBarrier map[string]barrierEntry    `json:"non_appeal_barrier"`
+	IDSeq            uint64                     `json:"id_seq"`
 }
 
 // NewStore creates an empty store.
@@ -57,6 +70,101 @@ func NewStore() *Store {
 		terminalCh:       make(map[string]chan struct{}),
 		nonAppealBarrier: make(map[string]barrierEntry),
 	}
+}
+
+// SaveToFile serializes the Store state to a JSON file atomically using a temporary file.
+func (s *Store) SaveToFile(filePath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.idMu.Lock()
+	idSeq := s.idSeq
+	s.idMu.Unlock()
+
+	records := make(map[string]ChallengeRecord, len(s.byID))
+	for k, v := range s.byID {
+		if v != nil {
+			records[k] = *v
+		}
+	}
+
+	snap := storeSerialized{
+		Seq:              s.seq,
+		Events:           append([]ChallengeEvent(nil), s.events...),
+		ByID:             records,
+		Justifications:   s.justifications,
+		OpenByFP:         s.openByFP,
+		NonAppealBarrier: s.nonAppealBarrier,
+		IDSeq:            idSeq,
+	}
+
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal challenge store: %w", err)
+	}
+
+	dir := filepath.Dir(filePath)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("mkdir challenge store dir: %w", err)
+		}
+	}
+
+	tmpFile := fmt.Sprintf("%s.tmp.%d", filePath, time.Now().UnixNano())
+	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+		return fmt.Errorf("write challenge store tmp: %w", err)
+	}
+
+	if err := os.Rename(tmpFile, filePath); err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("rename challenge store: %w", err)
+	}
+	return nil
+}
+
+// LoadFromFile loads and replaces the Store state from a JSON file. If the file does not exist, it does nothing and returns nil.
+func (s *Store) LoadFromFile(filePath string) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read challenge store: %w", err)
+	}
+
+	var snap storeSerialized
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return fmt.Errorf("unmarshal challenge store: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.idMu.Lock()
+	s.idSeq = snap.IDSeq
+	s.idMu.Unlock()
+
+	s.seq = snap.Seq
+	s.events = snap.Events
+	s.byID = make(map[string]*ChallengeRecord, len(snap.ByID))
+	for k, v := range snap.ByID {
+		rec := v
+		s.byID[k] = &rec
+	}
+	s.justifications = snap.Justifications
+	if s.justifications == nil {
+		s.justifications = make(map[string]Justification)
+	}
+	s.openByFP = snap.OpenByFP
+	if s.openByFP == nil {
+		s.openByFP = make(map[string]string)
+	}
+	s.nonAppealBarrier = snap.NonAppealBarrier
+	if s.nonAppealBarrier == nil {
+		s.nonAppealBarrier = make(map[string]barrierEntry)
+	}
+	if s.terminalCh == nil {
+		s.terminalCh = make(map[string]chan struct{})
+	}
+	return nil
 }
 
 func barrierKey(sessionID, fingerprint string) string {

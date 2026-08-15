@@ -44,6 +44,9 @@ func fakeAppServer(
 		idFloat, hasID := req["id"].(float64)
 		idInt := int64(idFloat)
 		params, _ := req["params"].(map[string]any)
+		if params == nil {
+			params = req
+		}
 
 		if customHandler != nil {
 			result, rpcErr, handled := customHandler(method, idInt, params)
@@ -901,7 +904,7 @@ func main() {
 	}
 }
 
-func TestCodexAppServer_NestedThreadAndTurnResponse(t *testing.T) {
+func TestCodexAppServer_OfficialGeneratedSchemaConformance(t *testing.T) {
 	c2sR, c2sW := io.Pipe()
 	s2cR, s2cW := io.Pipe()
 	defer c2sR.Close()
@@ -914,12 +917,13 @@ func TestCodexAppServer_NestedThreadAndTurnResponse(t *testing.T) {
 	go fakeAppServer(t, c2sR, s2cW, func(method string, id int64, params map[string]any) (any, map[string]any, bool) {
 		switch method {
 		case "thread/start":
+			// Official schema: createdAt is number (ms), status is object {type: "active"}
 			return map[string]any{
 				"thread": map[string]any{
-					"id":        "th_nested_1",
+					"id":        "th_official_1",
 					"model":     "gpt-5.3-codex",
-					"status":    "active",
-					"createdAt": "2026-08-15T00:00:00Z",
+					"status":    map[string]any{"type": "active"},
+					"createdAt": 1723680000000,
 					"metadata": map[string]string{
 						"env": "prod",
 					},
@@ -929,13 +933,12 @@ func TestCodexAppServer_NestedThreadAndTurnResponse(t *testing.T) {
 			if inputArr, ok := params["input"].([]any); ok && len(inputArr) > 0 {
 				turnStartInputSent = true
 			}
+			// Official TurnStartResponse: NO model, NO threadId, startedAt is number (ms)
 			return map[string]any{
 				"turn": map[string]any{
-					"id":        "tu_nested_1",
-					"threadId":  "th_nested_1",
-					"model":     "gpt-5.3-codex",
+					"id":        "tu_official_1",
 					"status":    "in_progress",
-					"startedAt": "2026-08-15T00:00:01Z",
+					"startedAt": 1723680001000,
 				},
 			}, nil, true
 		default:
@@ -959,24 +962,24 @@ func TestCodexAppServer_NestedThreadAndTurnResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartThread: %v", err)
 	}
-	if th.ID != "th_nested_1" || th.ModelIdentity.ReportedModelID != "gpt-5.3-codex" {
+	if th.ID != "th_official_1" || th.ModelIdentity.ReportedModelID != "gpt-5.3-codex" || th.Status != "active" {
 		t.Fatalf("unexpected thread: %+v", th)
 	}
 
 	tu, err := client.StartTurn(ctx, adapter.TurnStartRequest{
 		ThreadID: th.ID,
-		Prompt:   "hello nested",
+		Prompt:   "hello official turn",
 		ModelID:  "gpt-5.3-codex",
 	})
 	if err != nil {
-		t.Fatalf("StartTurn: %v", err)
+		t.Fatalf("StartTurn with official response shape failed: %v", err)
 	}
-	if tu.ID != "tu_nested_1" || tu.ThreadID != "th_nested_1" || !turnStartInputSent {
-		t.Fatalf("unexpected turn or input not sent: %+v, sent=%v", tu, turnStartInputSent)
+	if tu.ID != "tu_official_1" || tu.ThreadID != "th_official_1" || !turnStartInputSent || tu.ModelIdentity.ReportedModelID != "gpt-5.3-codex" {
+		t.Fatalf("unexpected turn: %+v, sent=%v", tu, turnStartInputSent)
 	}
 }
 
-func TestCodexAppServer_ItemApprovalMethodsAndNestedItem(t *testing.T) {
+func TestCodexAppServer_ApprovalWireFormatAndItemCacheResolution(t *testing.T) {
 	c2sR, c2sW := io.Pipe()
 	s2cR, s2cW := io.Pipe()
 	defer c2sR.Close()
@@ -984,7 +987,19 @@ func TestCodexAppServer_ItemApprovalMethodsAndNestedItem(t *testing.T) {
 	defer s2cR.Close()
 	defer s2cW.Close()
 
-	go fakeAppServer(t, c2sR, s2cW, nil)
+	responseDecisionReceived := make(chan string, 2)
+
+	go fakeAppServer(t, c2sR, s2cW, func(method string, id int64, params map[string]any) (any, map[string]any, bool) {
+		// Intercept JSON-RPC response from client
+		if id == 771 || id == 772 {
+			if res, ok := params["result"].(map[string]any); ok {
+				if d, ok := res["decision"].(string); ok {
+					responseDecisionReceived <- d
+				}
+			}
+		}
+		return nil, nil, false
+	})
 
 	client := adapter.NewCodexAppServerClientForTest(c2sW, s2cR, adapter.CodexAppServerConfig{
 		StartupTimeout: 5 * time.Second,
@@ -996,46 +1011,56 @@ func TestCodexAppServer_ItemApprovalMethodsAndNestedItem(t *testing.T) {
 	}
 	defer client.Close(ctx)
 
-	// Send item/commandExecution/requestApproval
-	writeAppServerRequest(s2cW, 881, "item/commandExecution/requestApproval", map[string]any{
-		"requestId": "appr_cmd_1",
-		"threadId":  "th-1",
-		"turnId":    "tu-1",
+	// Step 1: Server emits item/started notification caching the item file path
+	writeAppNotif(s2cW, "item/started", map[string]any{
+		"threadId": "th-cache-1",
+		"turnId":   "tu-cache-1",
 		"item": map[string]any{
-			"id":      "item-cmd-1",
-			"type":    "commandExecution",
-			"command": "git status",
+			"id":   "item-file-cached-99",
+			"type": "fileChange",
+			"path": "pkg/security/audit.go",
 		},
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Step 2: Server sends item/fileChange/requestApproval with itemId only (official shape)
+	writeAppServerRequest(s2cW, 771, "item/fileChange/requestApproval", map[string]any{
+		"requestId": "appr_file_cached",
+		"threadId":  "th-cache-1",
+		"turnId":    "tu-cache-1",
+		"itemId":    "item-file-cached-99",
 	})
 
 	select {
 	case req := <-client.ApprovalRequests():
-		if req.RequestID != "appr_cmd_1" || req.Kind != adapter.ApprovalKindCommand || req.Command != "git status" {
+		if req.RequestID != "appr_file_cached" || req.Kind != adapter.ApprovalKindFile {
 			t.Fatalf("unexpected approval request: %+v", req)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for cmd approval")
-	}
+		// Path should be resolved from itemCache!
+		if req.FilePath != "pkg/security/audit.go" {
+			t.Fatalf("expected resolved FilePath 'pkg/security/audit.go', got %q", req.FilePath)
+		}
 
-	// Send item/fileChange/requestApproval
-	writeAppServerRequest(s2cW, 882, "item/fileChange/requestApproval", map[string]any{
-		"requestId": "appr_file_1",
-		"threadId":  "th-1",
-		"turnId":    "tu-1",
-		"item": map[string]any{
-			"id":   "item-file-1",
-			"type": "fileChange",
-			"path": "pkg/foo.go",
-		},
-	})
-
-	select {
-	case req := <-client.ApprovalRequests():
-		if req.RequestID != "appr_file_1" || req.Kind != adapter.ApprovalKindFile || req.FilePath != "pkg/foo.go" {
-			t.Fatalf("unexpected file approval request: %+v", req)
+		// Respond with Allow -> Wire format must be 'accept'
+		err := client.RespondApproval(ctx, adapter.ApprovalResponse{
+			RequestID: req.RequestID,
+			Decision:  adapter.ApprovalDecisionAllow,
+		})
+		if err != nil {
+			t.Fatalf("RespondApproval: %v", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for file approval")
+	}
+
+	select {
+	case dec := <-responseDecisionReceived:
+		if dec != "accept" {
+			t.Fatalf("expected wire decision 'accept', got %q", dec)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for wire approval response")
 	}
 }
 

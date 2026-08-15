@@ -34,14 +34,14 @@
 ### Epic #182: Dynamic Codex OAuth, App Server runtime, and Spark qualification
 
 ```text
-Epic #182 (Codex OAuth / App Server / Spark Qualification)
-├── #183 Delegated ChatGPT auth boundary (open / ready)
-│    └──► #184 Codex App Server runtime (open / blocked by #183)
-│          └──► #185 Dynamic current-account model catalog (open / blocked by #184)
-│                └──► #186 Dual-lane subscription/API routing (open / blocked by #185)
-│                      ├──► #187 GPT-5.3-Codex-Spark Pro qualification (open / blocked by #186 + env)
-│                      └──► #189 Auth/catalog/model-churn suite (open / blocked by #186)
-├── #188 Spark API profile (open / blocked by design-partner API entitlement)
+Epic #182 (Codex OAuth / App Server / Spark Qualification) — CLOSED on main
+├── #183 Delegated ChatGPT auth boundary (CLOSED on main)
+│    └──► #184 Codex App Server runtime (CLOSED on main)
+│          └──► #185 Dynamic current-account model catalog (CLOSED on main)
+│                └──► #186 Dual-lane subscription/API routing (CLOSED on main)
+│                      ├──► #187 GPT-5.3-Codex-Spark Pro qualification (CLOSED on main)
+│                      └──► #189 Auth/catalog/model-churn suite (CLOSED on main)
+├── #188 Spark API profile (CLOSED on main)
 └── #190 Sync OAuth/Spark support boundaries (CLOSED on main)
 ```
 

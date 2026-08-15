@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-Reinframe provides an independent, fail-closed policy, evaluation, and supervision control plane for autonomous and semi-autonomous coding agents. It enforces policy invariants, prevents tunneling and unintended actions, isolates multi-tenant workspaces, and mediates host interactions.
+Reinframe provides an independent, fail-closed policy, evaluation, and supervision control plane architecture for autonomous and semi-autonomous coding agents. It provides pre-tool hook gating, prevents tunneling through structured challenge verification, isolates multi-tenant workspaces, and models multi-host interactions (with non-production / foundation boundaries documented in README).
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -40,8 +40,8 @@ Reinframe provides an independent, fail-closed policy, evaluation, and supervisi
 
 ## Security & Privacy Invariants
 
-1. **Zero Credential Leakage**: Reinframe never reads, extracts, caches, or logs host tokens (`~/.codex/auth.json`, bearer headers, session cookies).
-2. **Domain-Separated Salted Hashes**: Scope and auth generation hashes (`ComputeScopeHash`, `ComputeAuthGenerationHash`) use domain prefixes and are strictly one-way.
+1. **Zero Delegated Credential Leakage**: Reinframe strictly never reads, logs, caches, or extracts host-owned credentials (`~/.codex/auth.json`, bearer headers, session cookies). Direct classifier provider API keys are handled in-process.
+2. **Domain-Separated Deterministic Hashes**: Scope and auth generation identifiers are derived using one-way domain-separated SHA-256 digests (`ComputeScopeHash`, `ComputeAuthGenerationHash`).
 3. **Fail-Closed Dual-Lane Isolation**: `chatgpt_subscription_quota` (Lane A) and `openai_api_tokens` (Lane B) never fall back across boundaries.
 4. **OS-Level Process Tree Cleanup**: Guaranteed child process tree termination via Windows Job Objects (`KILL_ON_JOB_CLOSE`) and Unix process groups (`Setpgid`).
 5. **Deterministic Bypass Resistance**: 100% rejection rate against nonce tampering, token replay, second retries, and scope expansions.

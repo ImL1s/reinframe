@@ -63,8 +63,8 @@ Reinframe is a fail-closed, external supervision and policy control plane for AI
   - `cmd/streetwire`: Offline demonstration runner and integration playground.
 
 #### Security & Privacy Invariants
-- **Zero Token Leakage**: Reinframe strictly never reads, logs, caches, or extracts bearer tokens, OAuth tokens, session keys, or raw JWTs.
-- **Salted Domain Hashes**: Scope and authentication generation identifiers are derived using one-way salted SHA-256 hashes (`ComputeScopeHash`, `ComputeAuthGenerationHash`).
+- **Zero Delegated Host Token Extraction**: Reinframe strictly never reads, logs, caches, or extracts host-owned credentials (`~/.codex/auth.json`, bearer headers, session cookies). Direct classifier provider API keys are handled in-process via environment configuration and never crossed into agent session state.
+- **Domain-Separated Deterministic Hashes**: Scope and authentication generation identifiers are derived using deterministic, domain-separated SHA-256 digests (`ComputeScopeHash`, `ComputeAuthGenerationHash`).
 - **Fail-Closed Dual-Lane Routing**: Prohibits cross-lane fallback across billing boundaries during rate limits (429) or token expirations (401).
 - **Process Tree Cleanup**: Employs OS-native process tree lifecycle controls (Windows Job Objects with `KILL_ON_JOB_CLOSE`, Unix process groups with `Setpgid`).
 

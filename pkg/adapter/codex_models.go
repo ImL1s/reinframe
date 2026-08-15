@@ -102,6 +102,9 @@ func (s *ModelCatalogService) CurrentSnapshot() (ModelCatalogSnapshot, bool) {
 func (s *ModelCatalogService) GetModel(modelID string) (ModelDescriptor, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.currentSnapshot.CatalogHash == "" || s.currentSnapshot.IsExpired(time.Now().UTC()) {
+		return ModelDescriptor{}, false
+	}
 	norm := strings.ToLower(strings.TrimSpace(modelID))
 	if norm == "" {
 		return ModelDescriptor{}, false
@@ -114,6 +117,9 @@ func (s *ModelCatalogService) GetModel(modelID string) (ModelDescriptor, bool) {
 func (s *ModelCatalogService) IsSelectable(modelID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.currentSnapshot.CatalogHash == "" || s.currentSnapshot.IsExpired(time.Now().UTC()) {
+		return false
+	}
 	norm := strings.ToLower(strings.TrimSpace(modelID))
 	if norm == "" {
 		return false
@@ -125,6 +131,9 @@ func (s *ModelCatalogService) IsSelectable(modelID string) bool {
 func (s *ModelCatalogService) FindQualified(capability uint64) []ModelDescriptor {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.currentSnapshot.CatalogHash == "" || s.currentSnapshot.IsExpired(time.Now().UTC()) {
+		return nil
+	}
 	var out []ModelDescriptor
 	for _, m := range s.currentSnapshot.Models {
 		if (m.Capabilities&capability) == capability && m.IsSelectable() {
@@ -138,6 +147,9 @@ func (s *ModelCatalogService) FindQualified(capability uint64) []ModelDescriptor
 func (s *ModelCatalogService) DefaultModel() (ModelDescriptor, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.currentSnapshot.CatalogHash == "" || s.currentSnapshot.IsExpired(time.Now().UTC()) {
+		return ModelDescriptor{}, false
+	}
 	return s.currentSnapshot.DefaultModel()
 }
 
@@ -145,6 +157,9 @@ func (s *ModelCatalogService) DefaultModel() (ModelDescriptor, bool) {
 func (s *ModelCatalogService) AllModels() []ModelDescriptor {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.currentSnapshot.CatalogHash == "" || s.currentSnapshot.IsExpired(time.Now().UTC()) {
+		return nil
+	}
 	out := make([]ModelDescriptor, len(s.currentSnapshot.Models))
 	copy(out, s.currentSnapshot.Models)
 	return out

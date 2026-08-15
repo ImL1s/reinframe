@@ -672,21 +672,55 @@ func (c *CodexAppServerClient) StartThread(ctx context.Context, req ThreadStartR
 		Status    string            `json:"status"`
 		CreatedAt string            `json:"createdAt"`
 		Metadata  map[string]string `json:"metadata"`
+		Thread    *struct {
+			ID        string            `json:"id"`
+			ThreadID  string            `json:"threadId"`
+			Model     string            `json:"model"`
+			Status    string            `json:"status"`
+			CreatedAt string            `json:"createdAt"`
+			Metadata  map[string]string `json:"metadata"`
+		} `json:"thread"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return Thread{}, NewAppServerError(ErrCodeProtocolMalformed, "failed to parse thread/start response", err)
 	}
 
-	ident, err := VerifyModelIdentity(req.ModelID, res.Model, req.AllowProviderModelFallback)
+	reportedModel := res.Model
+	reportedID := res.ThreadID
+	reportedStatus := res.Status
+	reportedCreatedAt := res.CreatedAt
+	reportedMetadata := res.Metadata
+
+	if res.Thread != nil {
+		if res.Thread.Model != "" {
+			reportedModel = res.Thread.Model
+		}
+		if res.Thread.ID != "" {
+			reportedID = res.Thread.ID
+		} else if res.Thread.ThreadID != "" {
+			reportedID = res.Thread.ThreadID
+		}
+		if res.Thread.Status != "" {
+			reportedStatus = res.Thread.Status
+		}
+		if res.Thread.CreatedAt != "" {
+			reportedCreatedAt = res.Thread.CreatedAt
+		}
+		if len(res.Thread.Metadata) > 0 {
+			reportedMetadata = res.Thread.Metadata
+		}
+	}
+
+	ident, err := VerifyModelIdentity(req.ModelID, reportedModel, req.AllowProviderModelFallback)
 	if err != nil {
 		return Thread{}, err
 	}
 
 	var createdAt time.Time
-	if res.CreatedAt != "" {
-		if t, parseErr := time.Parse(time.RFC3339Nano, res.CreatedAt); parseErr == nil {
+	if reportedCreatedAt != "" {
+		if t, parseErr := time.Parse(time.RFC3339Nano, reportedCreatedAt); parseErr == nil {
 			createdAt = t
-		} else if t, parseErr := time.Parse(time.RFC3339, res.CreatedAt); parseErr == nil {
+		} else if t, parseErr := time.Parse(time.RFC3339, reportedCreatedAt); parseErr == nil {
 			createdAt = t
 		}
 	}
@@ -694,12 +728,12 @@ func (c *CodexAppServerClient) StartThread(ctx context.Context, req ThreadStartR
 		createdAt = time.Now().UTC()
 	}
 
-	status := res.Status
+	status := reportedStatus
 	if status == "" {
 		status = "active"
 	}
 
-	threadID := res.ThreadID
+	threadID := reportedID
 	if threadID == "" && req.ThreadID != "" {
 		threadID = req.ThreadID
 	}
@@ -709,7 +743,7 @@ func (c *CodexAppServerClient) StartThread(ctx context.Context, req ThreadStartR
 		ModelIdentity: ident,
 		CreatedAt:     createdAt,
 		Status:        status,
-		Metadata:      res.Metadata,
+		Metadata:      reportedMetadata,
 	}, nil
 }
 
@@ -738,17 +772,40 @@ func (c *CodexAppServerClient) ResumeThread(ctx context.Context, req ThreadResum
 		Model    string            `json:"model"`
 		Status   string            `json:"status"`
 		Metadata map[string]string `json:"metadata"`
+		Thread   *struct {
+			ID       string            `json:"id"`
+			ThreadID string            `json:"threadId"`
+			Model    string            `json:"model"`
+			Status   string            `json:"status"`
+			Metadata map[string]string `json:"metadata"`
+		} `json:"thread"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return Thread{}, NewAppServerError(ErrCodeProtocolMalformed, "failed to parse thread/resume response", err)
 	}
 
-	ident, err := VerifyModelIdentity("", res.Model, req.AllowProviderModelFallback)
+	reportedModel := res.Model
+	reportedStatus := res.Status
+	reportedMetadata := res.Metadata
+
+	if res.Thread != nil {
+		if res.Thread.Model != "" {
+			reportedModel = res.Thread.Model
+		}
+		if res.Thread.Status != "" {
+			reportedStatus = res.Thread.Status
+		}
+		if len(res.Thread.Metadata) > 0 {
+			reportedMetadata = res.Thread.Metadata
+		}
+	}
+
+	ident, err := VerifyModelIdentity("", reportedModel, req.AllowProviderModelFallback)
 	if err != nil {
 		return Thread{}, err
 	}
 
-	status := res.Status
+	status := reportedStatus
 	if status == "" {
 		status = "active"
 	}
@@ -758,7 +815,7 @@ func (c *CodexAppServerClient) ResumeThread(ctx context.Context, req ThreadResum
 		ModelIdentity: ident,
 		CreatedAt:     time.Now().UTC(),
 		Status:        status,
-		Metadata:      res.Metadata,
+		Metadata:      reportedMetadata,
 	}, nil
 }
 
@@ -775,8 +832,14 @@ func (c *CodexAppServerClient) StartTurn(ctx context.Context, req TurnStartReque
 	}
 
 	params := map[string]any{
-		"threadId":       req.ThreadID,
-		"prompt":         req.Prompt,
+		"threadId": req.ThreadID,
+		"prompt":   req.Prompt,
+		"input": []map[string]any{
+			{
+				"type": "text",
+				"text": req.Prompt,
+			},
+		},
 		"model":          req.ModelID,
 		"allowFallback":  req.AllowProviderModelFallback,
 		"interventionId": req.InterventionID,
@@ -798,21 +861,55 @@ func (c *CodexAppServerClient) StartTurn(ctx context.Context, req TurnStartReque
 		Status    string `json:"status"`
 		Model     string `json:"model"`
 		StartedAt string `json:"startedAt"`
+		Turn      *struct {
+			ID        string `json:"id"`
+			TurnID    string `json:"turnId"`
+			ThreadID  string `json:"threadId"`
+			Status    string `json:"status"`
+			Model     string `json:"model"`
+			StartedAt string `json:"startedAt"`
+		} `json:"turn"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return Turn{}, NewAppServerError(ErrCodeProtocolMalformed, "failed to parse turn/start response", err)
 	}
 
-	ident, err := VerifyModelIdentity(req.ModelID, res.Model, req.AllowProviderModelFallback)
+	reportedModel := res.Model
+	reportedTurnID := res.TurnID
+	reportedThreadID := res.ThreadID
+	reportedStatus := res.Status
+	reportedStartedAt := res.StartedAt
+
+	if res.Turn != nil {
+		if res.Turn.Model != "" {
+			reportedModel = res.Turn.Model
+		}
+		if res.Turn.ID != "" {
+			reportedTurnID = res.Turn.ID
+		} else if res.Turn.TurnID != "" {
+			reportedTurnID = res.Turn.TurnID
+		}
+		if res.Turn.ThreadID != "" {
+			reportedThreadID = res.Turn.ThreadID
+		}
+		if res.Turn.Status != "" {
+			reportedStatus = res.Turn.Status
+		}
+		if res.Turn.StartedAt != "" {
+			reportedStartedAt = res.Turn.StartedAt
+		}
+	}
+
+	ident, err := VerifyModelIdentity(req.ModelID, reportedModel, req.AllowProviderModelFallback)
 	if err != nil {
 		return Turn{}, err
 	}
 
 	var startedAt time.Time
-	if res.StartedAt != "" {
-		if t, parseErr := time.Parse(time.RFC3339Nano, res.StartedAt); parseErr == nil {
+	if reportedStartedAt != "" {
+		if t, parseErr := time.Parse(time.RFC3339Nano, reportedStartedAt); parseErr == nil {
 			startedAt = t
-		} else if t, parseErr := time.Parse(time.RFC3339, res.StartedAt); parseErr == nil {
+		} else if t, parseErr := time.Parse(time.RFC3339, reportedStartedAt); parseErr == nil {
 			startedAt = t
 		}
 	}
@@ -820,19 +917,24 @@ func (c *CodexAppServerClient) StartTurn(ctx context.Context, req TurnStartReque
 		startedAt = time.Now().UTC()
 	}
 
-	turnID := res.TurnID
+	turnID := reportedTurnID
 	if turnID == "" && req.TurnID != "" {
 		turnID = req.TurnID
 	}
 
-	status := res.Status
+	status := reportedStatus
 	if status == "" {
 		status = "in_progress"
 	}
 
+	threadID := reportedThreadID
+	if threadID == "" {
+		threadID = req.ThreadID
+	}
+
 	return Turn{
 		ID:            turnID,
-		ThreadID:      req.ThreadID,
+		ThreadID:      threadID,
 		Status:        status,
 		ModelIdentity: ident,
 		StartedAt:     startedAt,
@@ -1145,8 +1247,8 @@ func (c *CodexAppServerClient) handleServerNotification(msg jsonRPCMessage) {
 		default:
 			c.noteAudit("events_queue_overflow")
 		}
-	case "approval/request":
-		req := parseApprovalRequest(params, msg.Params)
+	case "approval/request", "item/approval", "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/mcpToolCall/requestApproval":
+		req := parseApprovalRequest(msg.Method, params, msg.Params)
 		select {
 		case c.approvalRequests <- req:
 		default:
@@ -1163,8 +1265,8 @@ func (c *CodexAppServerClient) handleServerRequest(msg jsonRPCMessage) {
 	}
 
 	switch msg.Method {
-	case "approval/request", "item/approval":
-		req := parseApprovalRequest(params, msg.Params)
+	case "approval/request", "item/approval", "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/mcpToolCall/requestApproval":
+		req := parseApprovalRequest(msg.Method, params, msg.Params)
 		c.mu.Lock()
 		c.serverPendingApprovals[req.RequestID] = *msg.ID
 		c.mu.Unlock()
@@ -1173,6 +1275,25 @@ func (c *CodexAppServerClient) handleServerRequest(msg jsonRPCMessage) {
 		case c.approvalRequests <- req:
 		default:
 			c.noteAudit("approvals_queue_overflow")
+			c.mu.Lock()
+			delete(c.serverPendingApprovals, req.RequestID)
+			c.mu.Unlock()
+
+			// Fail-closed immediate JSON-RPC deny error response to unblock server
+			errResp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      *msg.ID,
+				"error": map[string]any{
+					"code":    -32000,
+					"message": "approval queue overflow; rejected fail-closed",
+				},
+			}
+			raw, _ := json.Marshal(errResp)
+			c.writeMu.Lock()
+			if c.stdin != nil {
+				_, _ = c.stdin.Write(append(raw, '\n'))
+			}
+			c.writeMu.Unlock()
 		}
 	default:
 		// Method not found response
@@ -1211,6 +1332,25 @@ func parseRuntimeEvent(method string, params map[string]any, rawParams json.RawM
 		itemID, _ = params["item_id"].(string)
 	}
 
+	// Check if nested item object exists (App Server item events)
+	if itemMap, ok := params["item"].(map[string]any); ok {
+		if itID, ok := itemMap["id"].(string); ok && itID != "" {
+			itemID = itID
+		}
+		if itType, ok := itemMap["type"].(string); ok && itType != "" {
+			switch strings.ToLower(itType) {
+			case "commandexecution", "command_execution":
+				evType = "item/commandExecution"
+			case "filechange", "file_change":
+				evType = "item/fileChange"
+			case "mcptoolcall", "mcp_tool_call":
+				evType = "item/mcpToolCall"
+			default:
+				evType = "item/" + itType
+			}
+		}
+	}
+
 	return RuntimeEvent{
 		EventID:     fmt.Sprintf("ev-%d", seq),
 		Type:        evType,
@@ -1223,7 +1363,7 @@ func parseRuntimeEvent(method string, params map[string]any, rawParams json.RawM
 	}
 }
 
-func parseApprovalRequest(params map[string]any, rawParams json.RawMessage) ApprovalRequest {
+func parseApprovalRequest(method string, params map[string]any, rawParams json.RawMessage) ApprovalRequest {
 	reqID, _ := params["requestId"].(string)
 	if reqID == "" {
 		reqID, _ = params["request_id"].(string)
@@ -1240,25 +1380,59 @@ func parseApprovalRequest(params map[string]any, rawParams json.RawMessage) Appr
 		turnID, _ = params["turn_id"].(string)
 	}
 
-	kindStr, _ := params["kind"].(string)
 	var kind ApprovalKind
-	switch strings.ToLower(kindStr) {
-	case "command", "cmd":
-		kind = ApprovalKindCommand
-	case "file", "path":
-		kind = ApprovalKindFile
-	default:
-		kind = ApprovalKindTool
-	}
+	var toolName, command, filePath string
 
-	toolName, _ := params["toolName"].(string)
-	if toolName == "" {
-		toolName, _ = params["tool_name"].(string)
-	}
-	command, _ := params["command"].(string)
-	filePath, _ := params["filePath"].(string)
-	if filePath == "" {
-		filePath, _ = params["file_path"].(string)
+	// Check if nested item exists in params (App Server protocol shape)
+	if itemMap, ok := params["item"].(map[string]any); ok {
+		itemType, _ := itemMap["type"].(string)
+		switch strings.ToLower(itemType) {
+		case "commandexecution", "command_execution", "command":
+			kind = ApprovalKindCommand
+		case "filechange", "file_change", "file":
+			kind = ApprovalKindFile
+		default:
+			kind = ApprovalKindTool
+		}
+		command, _ = itemMap["command"].(string)
+		filePath, _ = itemMap["path"].(string)
+		if filePath == "" {
+			filePath, _ = itemMap["filePath"].(string)
+		}
+		toolName, _ = itemMap["tool"].(string)
+		if toolName == "" {
+			toolName, _ = itemMap["toolName"].(string)
+		}
+	} else {
+		// Infer from method name if specific
+		switch method {
+		case "item/commandExecution/requestApproval":
+			kind = ApprovalKindCommand
+		case "item/fileChange/requestApproval":
+			kind = ApprovalKindFile
+		case "item/mcpToolCall/requestApproval":
+			kind = ApprovalKindTool
+		default:
+			kindStr, _ := params["kind"].(string)
+			switch strings.ToLower(kindStr) {
+			case "command", "cmd":
+				kind = ApprovalKindCommand
+			case "file", "path":
+				kind = ApprovalKindFile
+			default:
+				kind = ApprovalKindTool
+			}
+		}
+
+		toolName, _ = params["toolName"].(string)
+		if toolName == "" {
+			toolName, _ = params["tool_name"].(string)
+		}
+		command, _ = params["command"].(string)
+		filePath, _ = params["filePath"].(string)
+		if filePath == "" {
+			filePath, _ = params["file_path"].(string)
+		}
 	}
 
 	return ApprovalRequest{

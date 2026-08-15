@@ -900,3 +900,200 @@ func main() {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+func TestCodexAppServer_NestedThreadAndTurnResponse(t *testing.T) {
+	c2sR, c2sW := io.Pipe()
+	s2cR, s2cW := io.Pipe()
+	defer c2sR.Close()
+	defer c2sW.Close()
+	defer s2cR.Close()
+	defer s2cW.Close()
+
+	var turnStartInputSent bool
+
+	go fakeAppServer(t, c2sR, s2cW, func(method string, id int64, params map[string]any) (any, map[string]any, bool) {
+		switch method {
+		case "thread/start":
+			return map[string]any{
+				"thread": map[string]any{
+					"id":        "th_nested_1",
+					"model":     "gpt-5.3-codex",
+					"status":    "active",
+					"createdAt": "2026-08-15T00:00:00Z",
+					"metadata": map[string]string{
+						"env": "prod",
+					},
+				},
+			}, nil, true
+		case "turn/start":
+			if inputArr, ok := params["input"].([]any); ok && len(inputArr) > 0 {
+				turnStartInputSent = true
+			}
+			return map[string]any{
+				"turn": map[string]any{
+					"id":        "tu_nested_1",
+					"threadId":  "th_nested_1",
+					"model":     "gpt-5.3-codex",
+					"status":    "in_progress",
+					"startedAt": "2026-08-15T00:00:01Z",
+				},
+			}, nil, true
+		default:
+			return nil, nil, false
+		}
+	})
+
+	client := adapter.NewCodexAppServerClientForTest(c2sW, s2cR, adapter.CodexAppServerConfig{
+		StartupTimeout: 5 * time.Second,
+	})
+
+	ctx := context.Background()
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer client.Close(ctx)
+
+	th, err := client.StartThread(ctx, adapter.ThreadStartRequest{
+		ModelID: "gpt-5.3-codex",
+	})
+	if err != nil {
+		t.Fatalf("StartThread: %v", err)
+	}
+	if th.ID != "th_nested_1" || th.ModelIdentity.ReportedModelID != "gpt-5.3-codex" {
+		t.Fatalf("unexpected thread: %+v", th)
+	}
+
+	tu, err := client.StartTurn(ctx, adapter.TurnStartRequest{
+		ThreadID: th.ID,
+		Prompt:   "hello nested",
+		ModelID:  "gpt-5.3-codex",
+	})
+	if err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	if tu.ID != "tu_nested_1" || tu.ThreadID != "th_nested_1" || !turnStartInputSent {
+		t.Fatalf("unexpected turn or input not sent: %+v, sent=%v", tu, turnStartInputSent)
+	}
+}
+
+func TestCodexAppServer_ItemApprovalMethodsAndNestedItem(t *testing.T) {
+	c2sR, c2sW := io.Pipe()
+	s2cR, s2cW := io.Pipe()
+	defer c2sR.Close()
+	defer c2sW.Close()
+	defer s2cR.Close()
+	defer s2cW.Close()
+
+	go fakeAppServer(t, c2sR, s2cW, nil)
+
+	client := adapter.NewCodexAppServerClientForTest(c2sW, s2cR, adapter.CodexAppServerConfig{
+		StartupTimeout: 5 * time.Second,
+	})
+
+	ctx := context.Background()
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer client.Close(ctx)
+
+	// Send item/commandExecution/requestApproval
+	writeAppServerRequest(s2cW, 881, "item/commandExecution/requestApproval", map[string]any{
+		"requestId": "appr_cmd_1",
+		"threadId":  "th-1",
+		"turnId":    "tu-1",
+		"item": map[string]any{
+			"id":      "item-cmd-1",
+			"type":    "commandExecution",
+			"command": "git status",
+		},
+	})
+
+	select {
+	case req := <-client.ApprovalRequests():
+		if req.RequestID != "appr_cmd_1" || req.Kind != adapter.ApprovalKindCommand || req.Command != "git status" {
+			t.Fatalf("unexpected approval request: %+v", req)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for cmd approval")
+	}
+
+	// Send item/fileChange/requestApproval
+	writeAppServerRequest(s2cW, 882, "item/fileChange/requestApproval", map[string]any{
+		"requestId": "appr_file_1",
+		"threadId":  "th-1",
+		"turnId":    "tu-1",
+		"item": map[string]any{
+			"id":   "item-file-1",
+			"type": "fileChange",
+			"path": "pkg/foo.go",
+		},
+	})
+
+	select {
+	case req := <-client.ApprovalRequests():
+		if req.RequestID != "appr_file_1" || req.Kind != adapter.ApprovalKindFile || req.FilePath != "pkg/foo.go" {
+			t.Fatalf("unexpected file approval request: %+v", req)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for file approval")
+	}
+}
+
+func TestCodexAppServer_ApprovalQueueOverflowImmediateDeny(t *testing.T) {
+	c2sR, c2sW := io.Pipe()
+	s2cR, s2cW := io.Pipe()
+	defer c2sR.Close()
+	defer c2sW.Close()
+	defer s2cR.Close()
+	defer s2cW.Close()
+
+	overflowErrReceived := make(chan bool, 1)
+
+	go fakeAppServer(t, c2sR, s2cW, func(method string, id int64, params map[string]any) (any, map[string]any, bool) {
+		// When client sends response to server request 902, method is empty, id is 902
+		if id == 902 {
+			select {
+			case overflowErrReceived <- true:
+			default:
+			}
+		}
+		return nil, nil, false
+	})
+
+	client := adapter.NewCodexAppServerClientForTest(c2sW, s2cR, adapter.CodexAppServerConfig{
+		StartupTimeout:      5 * time.Second,
+		ApprovalsQueueDepth: 1,
+	})
+
+	ctx := context.Background()
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// First approval fills queue of depth 1
+	writeAppServerRequest(s2cW, 901, "item/commandExecution/requestApproval", map[string]any{
+		"requestId": "appr_1",
+		"item": map[string]any{
+			"command": "cmd1",
+		},
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Second approval overflows queue
+	writeAppServerRequest(s2cW, 902, "item/commandExecution/requestApproval", map[string]any{
+		"requestId": "appr_2",
+		"item": map[string]any{
+			"command": "cmd2",
+		},
+	})
+
+	select {
+	case <-overflowErrReceived:
+		// Success! Got fail-closed error response for request ID 902
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected fail-closed error response for request ID 902 on overflow")
+	}
+
+	_ = client.Close(ctx)
+}

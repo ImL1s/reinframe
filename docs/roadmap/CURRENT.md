@@ -16,8 +16,8 @@
 | Codex EventSource | **#95/#107/#118** | JSONL observe-only L0 |
 | Claude PreTool bridge | **#96/#106/#117** | Experimental; #139 appealable retry on main |
 | Host roadmap sync | **#170** | Public status for Codex/Grok lanes |
-| Codex project-local hooks | **#163** / **#164** | Shipped foundation & live evidence on main |
-| Claude project-local hooks | **#120** / **#139** | Shipped foundation, live evidence & retry bridge on main |
+| Codex project-local hooks | **#163** / **#164** | Shipped foundation & synthetic contract harness on main (`cmd/codexlive`) |
+| Claude project-local hooks | **#120** / **#139** | Shipped foundation, synthetic contract harness (`cmd/claudelive`) & retry bridge on main |
 | Grok Build native hooks | **#165** | Foundation; host fail-open; live **#167** |
 | Grok Build ACP stdio | **#166** + residual **#180**; hardening **#191** | Foundation on main; #191 fixes delegated-auth, canonical levels, official headless argv, Windows Job Object tree; live **#167** |
 | Cross-host eval framework | **#168** | Synthesized tri-host evaluation report on main; disposition **MORE-DATA**; no ranking |
@@ -25,7 +25,7 @@
 | Codex App Server runtime | **#184** | **CLOSED** on main — bounded stdio JSON-RPC 2.0 runtime bridge, job objects, 1MB limit |
 | Dynamic model catalog | **#185** | **CLOSED** on main — entitlement-aware dynamic model discovery & snapshots |
 | Dual-lane routing | **#186** | **CLOSED** on main — strict subscription vs direct API isolation, zero cross-lane fallback |
-| Spark Pro live qualification | **#187** | **CLOSED** on main — pinned live evidence & qualification report, exact identity GO |
+| Spark Pro qualification | **#187** | Shipped synthetic qualification runner (`cmd/sparklive`) & contract validation on main |
 | Spark API profile | **#188** | **CLOSED** on main — capability-gated direct OpenAI API profile for entitled projects |
 | Subscription churn test suite | **#189** | **CLOSED** on main — 6-dimension integration churn test suite passing 100% |
 
@@ -34,12 +34,12 @@
 ### Epic #182: Dynamic Codex OAuth, App Server runtime, and Spark qualification
 
 ```text
-Epic #182 (Codex OAuth / App Server / Spark Qualification) — CLOSED on main
+Epic #182 (Codex OAuth / App Server / Spark Qualification) — ACTIVE (Foundation code merged; true live interactive smoke open)
 ├── #183 Delegated ChatGPT auth boundary (CLOSED on main)
 │    └──► #184 Codex App Server runtime (CLOSED on main)
 │          └──► #185 Dynamic current-account model catalog (CLOSED on main)
 │                └──► #186 Dual-lane subscription/API routing (CLOSED on main)
-│                      ├──► #187 GPT-5.3-Codex-Spark Pro qualification (CLOSED on main)
+│                      ├──► #187 GPT-5.3-Codex-Spark Pro qualification (Synthetic harness on main; live smoke open)
 │                      └──► #189 Auth/catalog/model-churn suite (CLOSED on main)
 ├── #188 Spark API profile (CLOSED on main)
 └── #190 Sync OAuth/Spark support boundaries (CLOSED on main)
@@ -51,7 +51,7 @@ Epic #182 (Codex OAuth / App Server / Spark Qualification) — CLOSED on main
 | **#184** | **CLOSED** | None | Codex App Server runtime; JSON-RPC stdio protocol for session lifecycle and turn synchronization |
 | **#185** | **CLOSED** | None | Dynamic current-account model catalog; account/scope-aware model discovery; no static OAuth inventory |
 | **#186** | **CLOSED** | None | Dual-lane subscription/API routing; explicit routing without silent credential/transport confusion |
-| **#187** | **CLOSED** | None | GPT-5.3-Codex-Spark Pro qualification; pinned live evidence on main (`docs/evidence/codex_spark/`, disposition `GO`) |
+| **#187** | **ACTIVE** | Live smoke | GPT-5.3-Codex-Spark Pro qualification; synthetic runner on main (`cmd/sparklive`); true host smoke open |
 | **#188** | **CLOSED** | None | Spark API profile; separate capability-gated API lane for entitled projects; not implied by ChatGPT Pro |
 | **#189** | **CLOSED** | None | Auth/catalog/model-churn test suite; 6-dimension integration churn suite passing 100% |
 | **#190** | **CLOSED** | None | Governance sync: 3-axis mapping, exact-model substitution, fail-closed fallback, ADR 006 on main |

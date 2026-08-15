@@ -709,6 +709,8 @@ func (r *DualLaneRouter) resolveAPIResponsesLane(
 				if !desc.SupportState.Satisfies(req.ModelSelection.RequiredSupportState) {
 					return RouteDecision{}, fmt.Errorf("%w: model %q has support state %q, requires %q", ErrModelUnavailable, selectedModel, desc.SupportState, req.ModelSelection.RequiredSupportState)
 				}
+			} else if !desc.IsSelectable() {
+				return RouteDecision{}, fmt.Errorf("%w: model %q is not in selectable support state (state: %q)", ErrModelUnavailable, selectedModel, desc.SupportState)
 			}
 			if req.RequiredCapabilities != 0 && desc.Capabilities != 0 {
 				if (desc.Capabilities & req.RequiredCapabilities) != req.RequiredCapabilities {
@@ -735,7 +737,17 @@ func (r *DualLaneRouter) resolveAPIResponsesLane(
 					return RouteDecision{}, fmt.Errorf("%w: model %q not in available API models: %w", ErrModelUnavailable, selectedModel, ErrModelSubstitutionProhibited)
 				}
 				if req.ModelSelection.FallbackModelID != "" {
-					selectedModel = req.ModelSelection.FallbackModelID
+					var fbFound bool
+					for _, m := range r.apiLane.AvailableModels {
+						if strings.EqualFold(m, req.ModelSelection.FallbackModelID) {
+							fbFound = true
+							selectedModel = m
+							break
+						}
+					}
+					if !fbFound {
+						return RouteDecision{}, fmt.Errorf("%w: fallback model %q not in available API models", ErrModelUnavailable, req.ModelSelection.FallbackModelID)
+					}
 				} else {
 					return RouteDecision{}, fmt.Errorf("%w: model %q not in available API models", ErrModelUnavailable, selectedModel)
 				}

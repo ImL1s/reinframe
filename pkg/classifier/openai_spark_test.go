@@ -215,8 +215,8 @@ func TestOpenAISpark_RequestFormattingAndReasoningEffort(t *testing.T) {
 		if wire["model"] != classifier.ModelGPT53CodexSpark {
 			t.Fatalf("model = %v", wire["model"])
 		}
-		if wire["reasoning_effort"] != effort {
-			t.Fatalf("wire reasoning_effort = %v, want %s", wire["reasoning_effort"], effort)
+		if wire["reasoning_effort"] != nil {
+			t.Fatalf("wire reasoning_effort must be omitted, got %v", wire["reasoning_effort"])
 		}
 		reasoningObj, ok := wire["reasoning"].(map[string]any)
 		if !ok || reasoningObj["effort"] != effort {

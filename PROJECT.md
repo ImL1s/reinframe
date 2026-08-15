@@ -34,7 +34,7 @@ Reinframe provides an independent, fail-closed policy, evaluation, and supervisi
 | **`pkg/detector`** | Heuristic detectors for repeated failures, verification churn, tool budgets, and hypothesis loops. |
 | **`pkg/supervisor`** | Central orchestrator integrating intake mappers, detectors, policy router, and actuation pipelines. |
 | **`pkg/evaluation`** | Benchmark harnesses, bypass resistance runners (20/20 attack vectors), and tri-host evaluation synthesizers. |
-| **`cmd/*`** | Live control harnesses: `cmd/codexlive`, `cmd/claudelive`, `cmd/sparklive`, `cmd/groklive`, `cmd/streetwire`. |
+| **`cmd/*`** | Synthetic qualification and demonstration harnesses: `cmd/codexlive`, `cmd/claudelive`, `cmd/sparklive`, `cmd/groklive`, `cmd/streetwire`. |
 
 ---
 

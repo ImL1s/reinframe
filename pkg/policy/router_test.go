@@ -891,3 +891,82 @@ func TestDualLaneRouter_EnumMethods(t *testing.T) {
 	}
 }
 
+func TestDualLaneRouter_APILaneSelectableAndFallbackValidation(t *testing.T) {
+	t.Parallel()
+
+	// 1. API lane with catalog where a model is unselectable (discovered only)
+	models := []protocol.ModelDescriptor{
+		{
+			ModelID:      "gpt-4o",
+			DisplayName:  "GPT-4o",
+			SupportState: protocol.ModelSupportStateSelectable,
+			Capabilities: 15,
+		},
+		{
+			ModelID:      "gpt-4o-unselectable",
+			DisplayName:  "Discovered Only Model",
+			SupportState: protocol.ModelSupportStateDiscovered,
+			Capabilities: 15,
+		},
+	}
+	snap, err := protocol.NewModelCatalogSnapshot(
+		"authgen1",
+		"scope1",
+		models,
+		time.Now().UTC(),
+		time.Now().UTC().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := policy.NewDualLaneRouter(policy.RouterConfig{
+		LaneAPIResponses: policy.LaneAPIResponsesConfig{
+			Enabled:         true,
+			HasAPIKey:       true,
+			Catalog:         &snap,
+			AvailableModels: []string{"gpt-4o", "gpt-4o-mini"},
+		},
+	})
+
+	// Unselectable model without explicit RequiredSupportState should fail
+	_, err = r.ResolveRoute(context.Background(), policy.RouteRequest{
+		Role:   policy.RoleClassifier,
+		Intent: policy.IntentClassifierAssessment,
+		ModelSelection: policy.ModelSelection{
+			ModelID: "gpt-4o-unselectable",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error requesting unselectable model in API lane by default")
+	}
+	if !errors.Is(err, policy.ErrModelUnavailable) {
+		t.Fatalf("expected ErrModelUnavailable, got: %v", err)
+	}
+
+	// 2. Fallback model ID not in AvailableModels should fail
+	rNoCat := policy.NewDualLaneRouter(policy.RouterConfig{
+		LaneAPIResponses: policy.LaneAPIResponsesConfig{
+			Enabled:         true,
+			HasAPIKey:       true,
+			AvailableModels: []string{"gpt-4o", "gpt-4o-mini"},
+		},
+	})
+
+	_, errFb := rNoCat.ResolveRoute(context.Background(), policy.RouteRequest{
+		Role:   policy.RoleClassifier,
+		Intent: policy.IntentClassifierAssessment,
+		ModelSelection: policy.ModelSelection{
+			ModelID:           "non-existent-model",
+			AllowSubstitution: true,
+			FallbackModelID:   "invalid-fallback-model",
+		},
+	})
+	if errFb == nil {
+		t.Fatal("expected error when fallback model not in AvailableModels allowlist")
+	}
+	if !errors.Is(errFb, policy.ErrModelUnavailable) {
+		t.Fatalf("expected ErrModelUnavailable, got: %v", errFb)
+	}
+}
+

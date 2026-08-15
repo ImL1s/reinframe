@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ImL1s/reinframe/pkg/adapter"
+	"github.com/ImL1s/reinframe/pkg/challenge"
 )
 
 func main() {
@@ -83,10 +84,14 @@ func runPretool(args []string) int {
 	if *pendingIV != "" {
 		pol.PendingAdvisoryInterventionID = *pendingIV
 	}
+	chSvc := challenge.NewService(challenge.ServiceConfig{})
+	chBridge := challenge.NewClaudeChallengeBridge(chSvc, challenge.ClaudeChallengeBridgeOptions{})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	resp, dec, err := adapter.EvaluateClaudePreToolJSON(ctx, raw, adapter.ClaudeBridgeConfig{
-		Policy: pol,
+		Policy:            pol,
+		EvaluateChallenge: chBridge.AsHookEvaluator(),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "evaluate: %v\n", err)

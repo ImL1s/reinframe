@@ -30,14 +30,15 @@ Shipped:
   #168 offline cross-host eval framework (MORE-DATA)
   #190 Codex OAuth / Spark governance boundary sync (CLOSED)
 
-Epic #182 (Codex OAuth / App Server / Spark Qualification):
-  #183 delegated auth boundary (open/ready)
-    └──► #184 App Server runtime (open/blocked)
-          └──► #185 dynamic catalog (open/blocked)
-                └──► #186 dual-lane routing (open/blocked)
-                      ├──► #187 Spark Pro qualification (open/blocked)
-                      └──► #189 churn test suite (open/blocked)
-  #188 Spark API profile (blocked by design-partner API entitlement)
+Epic #182 (Codex OAuth / App Server / Spark Qualification) — Foundations Merged:
+  #183 delegated auth boundary (ADR 006) (CLOSED)
+    └──► #184 App Server stdio runtime & protocol conformance (CLOSED)
+          └──► #185 dynamic model catalog discovery & cache partition (CLOSED)
+                └──► #186 dual-lane routing without cross-lane fallback (CLOSED)
+                      ├──► #187 Spark Pro synthetic qualification harness (ACTIVE — true live smoke open)
+                      └──► #189 6-dimension auth/catalog/churn test suite (CLOSED)
+  #188 Spark API profile (CLOSED)
+  #190 Codex OAuth / Spark governance boundary sync (CLOSED)
 
 Live / environment:
   #167 historical + clean-quota pin 20260811T130935Z re-eval NO_GO (executable-binding gate); older NO_GO pins retained — public MORE_DATA (not ranking GO)

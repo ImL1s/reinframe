@@ -403,7 +403,6 @@ func (p *OpenAIResponsesProvider) buildRequestJSON(req ProviderRequest, maxIn in
 	if p.cfg.ReasoningEffort != "" {
 		effort := strings.ToLower(strings.TrimSpace(p.cfg.ReasoningEffort))
 		body.Reasoning = &oaiResponsesReasoning{Effort: effort}
-		body.ReasoningEffort = effort
 	}
 	var cacheKeyHash string
 	isSpark := IsSparkModel(p.cfg.Model) || IsSparkProfile(p.cfg.CapabilitiesProfile)
@@ -521,7 +520,6 @@ type oaiResponsesRequest struct {
 	Input              []oaiRespInputItem     `json:"input"`
 	Temperature        float64                `json:"temperature"`
 	Reasoning          *oaiResponsesReasoning `json:"reasoning,omitempty"`
-	ReasoningEffort    string                 `json:"reasoning_effort,omitempty"`
 	Text               *oaiResponsesText      `json:"text,omitempty"`
 	PromptCacheKey     string                 `json:"prompt_cache_key,omitempty"`
 	PromptCacheOptions *oaiPromptCacheOptions `json:"prompt_cache_options,omitempty"`

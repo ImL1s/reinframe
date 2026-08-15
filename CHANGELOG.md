@@ -9,9 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.1.0] - 2026-08-15
 
-### Initial General Availability Release: Core External Supervision & Multi-Host Control Plane
+### Initial Foundations Release: Experimental Multi-Host Control-Plane & Protocol Bridges
 
-Reinframe is a fail-closed, external supervision and policy control plane for AI coding agents (OpenAI Codex, Anthropic Claude Code, xAI Grok Build).
+Reinframe provides experimental fail-closed external supervision, dynamic model discovery, and protocol foundations for AI coding agents (OpenAI Codex App Server, Anthropic Claude Code PreTool hooks, xAI Grok Build ACP stdio).
+
+> [!NOTE]
+> **Scope & Evidence Boundary**: `v0.1.0` establishes formal protocol foundations, JSON-RPC 2.0 stdio clients, capability negotiations, and offline/synthetic qualification harnesses (`cmd/codexlive`, `cmd/claudelive`, `cmd/sparklive`). It validates that local components and protocol bridges satisfy strict fail-closed invariants and schema contracts. True production interactive host containment and multi-environment live qualification remain under active development (Epics #80 and #182).
 
 #### Added
 - **Multi-Host Adapter Architecture**:

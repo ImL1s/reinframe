@@ -684,3 +684,77 @@ func TestModelCatalogService_ConcurrencyAndRaceSafety(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestModelCatalogService_HelperMethodsExpiryChecks(t *testing.T) {
+	t.Parallel()
+
+	modelsRaw := json.RawMessage(`{
+		"models": [
+			{
+				"id": "model-ttl-test",
+				"displayName": "TTL Test Model",
+				"supportState": "selectable",
+				"capabilities": 15
+			}
+		]
+	}`)
+
+	mockClient := &mockAppServerClient{
+		listModelsFn: func(ctx context.Context) (json.RawMessage, error) {
+			return modelsRaw, nil
+		},
+	}
+
+	// 50ms TTL
+	service := adapter.NewModelCatalogService(mockClient, adapter.ModelCatalogConfig{
+		TTL: 50 * time.Millisecond,
+	})
+
+	authSnap, _ := protocol.NewRuntimeAuthSnapshot(
+		protocol.CredentialOwnerCodexProcess,
+		protocol.RuntimeAuthModeChatGPTSubscription,
+		protocol.RuntimeAuthStateAuthenticated,
+		"default",
+		"1.0.0",
+		protocol.ComputeScopeHash([]string{"chatgpt_pro"}),
+		protocol.ComputeAuthGenerationHash("default", "gen-ttl"),
+		time.Now().UTC(),
+		nil,
+	)
+
+	_, err := service.Discover(context.Background(), authSnap)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	// Immediate check: model exists and is selectable
+	if _, ok := service.GetModel("model-ttl-test"); !ok {
+		t.Fatal("expected model-ttl-test to be found immediately")
+	}
+	if !service.IsSelectable("model-ttl-test") {
+		t.Fatal("expected model-ttl-test to be selectable immediately")
+	}
+	if len(service.FindQualified(1)) != 1 {
+		t.Fatal("expected 1 qualified model immediately")
+	}
+	if len(service.AllModels()) != 1 {
+		t.Fatal("expected 1 model in AllModels immediately")
+	}
+
+	// Wait for TTL to expire
+	time.Sleep(100 * time.Millisecond)
+
+	// Post-expiry: helper methods must report false/nil/empty
+	if _, ok := service.GetModel("model-ttl-test"); ok {
+		t.Fatal("expected GetModel to return false after expiry")
+	}
+	if service.IsSelectable("model-ttl-test") {
+		t.Fatal("expected IsSelectable to return false after expiry")
+	}
+	if len(service.FindQualified(1)) != 0 {
+		t.Fatal("expected FindQualified to return nil/empty after expiry")
+	}
+	if len(service.AllModels()) != 0 {
+		t.Fatal("expected AllModels to return nil/empty after expiry")
+	}
+}
